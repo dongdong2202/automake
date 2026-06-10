@@ -1,4 +1,4 @@
-.env/
-.venv1/
+.env
+.venv1/*
 *.log
 *.pyc

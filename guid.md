@@ -173,7 +173,7 @@ MySQL / Redis
     ↓
 微信端 invokeWechatPay(pay_params)
 ```
-
+1
 关系说明：
 - 支付请求依赖订单已创建，所以 `create_pay_request(order_no)` 的前置条件是 `order_main` 中已有有效订单。
 - `payment_record` 是支付流程的主记录表，依赖 `order_no`。
