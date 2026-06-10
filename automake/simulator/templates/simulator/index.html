@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="zh-hans">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>上位机通信与状态模拟器</title>
+    <!-- Google Font: Outfit & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- MQTT.js CDN -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        :root {
+            --bg-base: #0b0f19;
+            --bg-surface: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #4f46e5;
+            --primary-glow: rgba(79, 70, 229, 0.4);
+            --emerald: #10b981;
+            --emerald-glow: rgba(16, 185, 129, 0.3);
+            --rose: #f43f5e;
+            --rose-glow: rgba(244, 63, 94, 0.3);
+            --amber: #f59e0b;
+            --amber-glow: rgba(245, 158, 11, 0.3);
+            --sky: #0ea5e9;
+            --sky-glow: rgba(14, 165, 233, 0.3);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-base);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(79, 70, 229, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 2.25rem;
+            height: 2.25rem;
+            background: linear-gradient(135deg, var(--primary), var(--sky));
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: white;
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            background: linear-gradient(to right, #ffffff, #9ca3af);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-header-badges {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+        }
+
+        .badge-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .badge-online .badge-dot {
+            background-color: var(--emerald);
+            box-shadow: 0 0 8px var(--emerald);
+        }
+
+        .badge-offline .badge-dot {
+            background-color: var(--rose);
+            box-shadow: 0 0 8px var(--rose);
+        }
+
+        .badge-connecting .badge-dot {
+            background-color: var(--amber);
+            box-shadow: 0 0 8px var(--amber);
+            animation: pulse 1.5s infinite alternate;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem 2rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        @media (min-width: 1024px) {
+            main {
+                grid-template-columns: 450px 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.825rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input, select {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 0.625rem 0.875rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.925rem;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        input:focus, select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.925rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: white;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            box-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: #4338ca;
+            box-shadow: 0 4px 15px var(--primary-glow);
+        }
+
+        .btn-emerald {
+            background: var(--emerald);
+            box-shadow: 0 2px 10px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn-emerald:hover {
+            background: #059669;
+            box-shadow: 0 4px 15px var(--emerald-glow);
+        }
+
+        .btn-rose {
+            background: var(--rose);
+            box-shadow: 0 2px 10px rgba(244, 63, 94, 0.2);
+        }
+
+        .btn-rose:hover {
+            background: #e11d48;
+            box-shadow: 0 4px 15px var(--rose-glow);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-icon {
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .flex-row-center {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        /* Heartbeat Switch */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(255, 255, 255, 0.02);
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 2.75rem;
+            height: 1.5rem;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .3s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 1.125rem;
+            width: 1.125rem;
+            left: 0.1875rem;
+            bottom: 0.1875rem;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--emerald);
+        }
+
+        input:focus + .slider {
+            box-shadow: 0 0 1px var(--emerald);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(1.25rem);
+        }
+
+        /* Console Interface */
+        .console-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 130px);
+            min-height: 550px;
+        }
+
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .console-logs {
+            flex: 1;
+            background: rgba(5, 7, 12, 0.85);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.825rem;
+            line-height: 1.5;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8);
+        }
+
+        .log-entry {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.5rem;
+        }
+
+        .log-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        .log-time {
+            color: var(--text-muted);
+        }
+
+        .log-tag {
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-weight: 500;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+        }
+
+        .tag-http-out { background: rgba(14, 165, 233, 0.15); color: var(--sky); border: 1px solid rgba(14, 165, 233, 0.3); }
+        .tag-http-in { background: rgba(16, 185, 129, 0.15); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .tag-mqtt-rx { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); }
+        .tag-mqtt-tx { background: rgba(236, 72, 153, 0.15); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.3); }
+        .tag-sys { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); border: 1px solid var(--border-color); }
+        .tag-err { background: rgba(244, 63, 94, 0.15); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
+
+        .log-msg {
+            color: #e5e7eb;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-json {
+            color: #34d399;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            margin-top: 0.25rem;
+            font-size: 0.775rem;
+            border: 1px solid rgba(255, 255, 255, 0.02);
+            overflow-x: auto;
+        }
+
+        /* Active Job UI */
+        .job-display {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .job-status-pill {
+            padding: 0.25rem 0.625rem;
+            border-radius: 9999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .job-status-idle { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+        .job-status-making { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .job-status-done { background: rgba(16, 185, 129, 0.15); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .job-status-failed { background: rgba(244, 63, 94, 0.15); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 0.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(to right, var(--primary), var(--sky));
+            border-radius: 9999px;
+            width: 0%;
+            transition: width 0.4s ease;
+        }
+
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-top: 0.25rem;
+        }
+
+        .item-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.875rem;
+            padding: 0.375rem 0.5rem;
+            background: rgba(255, 255, 255, 0.01);
+            border-radius: 0.25rem;
+            border-left: 2px solid var(--primary);
+        }
+
+        .item-quantity {
+            font-weight: 600;
+            color: white;
+        }
+
+        .failure-input-area {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-section">
+            <div class="logo-icon">M</div>
+            <div>
+                <h1>上位机通信模拟器</h1>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.1rem;">AutoMachine Cloud IoT Simulator</div>
+            </div>
+        </div>
+        <div class="status-header-badges">
+            <div id="device-state-badge" class="badge badge-offline">
+                <span class="badge-dot"></span>
+                <span id="device-state-text">设备未注册</span>
+            </div>
+            <div id="mqtt-state-badge" class="badge badge-offline">
+                <span class="badge-dot"></span>
+                <span id="mqtt-state-text">MQTT 离线</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Left Side: Simulator Controls -->
+        <div>
+            <!-- Card 1: Device Configuration & Registration -->
+            <div class="card">
+                <div class="card-title">
+                    <span>1. 设备属性与注册 (HTTP API)</span>
+                    <span style="font-size: 0.75rem; font-weight: normal; color: var(--sky);">REST API</span>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="input-group">
+                        <label for="input-sn">设备序列号 (SN)</label>
+                        <input type="text" id="input-sn" value="SN001" placeholder="e.g. SN001">
+                    </div>
+                    <div class="input-group">
+                        <label for="input-name">设备名称</label>
+                        <input type="text" id="input-name" value="模拟上位机机器 #1">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="input-group">
+                        <label for="input-model">设备型号</label>
+                        <input type="text" id="input-model" value="AutoMake-CupV1">
+                    </div>
+                    <div class="input-group">
+                        <label for="input-firmware">固件版本</label>
+                        <input type="text" id="input-firmware" value="v2.1.0">
+                    </div>
+                </div>
+
+                <div class="grid-2" style="align-items: center; margin-top: 0.25rem;">
+                    <button id="btn-register" class="btn btn-primary">注册 & 上线设备</button>
+                    <div class="switch-container">
+                        <span style="font-size: 0.825rem; font-weight: 500;">定时心跳 (10s)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="switch-heartbeat">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: Active Job & Status Reporting -->
+            <div class="card">
+                <div class="card-title">
+                    <span>2. 当前制作状态模拟 (MQTT Pub)</span>
+                    <span style="font-size: 0.75rem; font-weight: normal; color: #a78bfa;">MQTT Topic</span>
+                </div>
+
+                <div class="job-display">
+                    <div class="job-header">
+                        <div>
+                            <span style="font-size: 0.825rem; color: var(--text-muted);">当前订单号：</span>
+                            <span id="active-order-no" style="font-weight: 600; color: white;">-</span>
+                        </div>
+                        <span id="job-status-pill" class="job-status-pill job-status-idle">Idle 空闲</span>
+                    </div>
+
+                    <div class="progress-bar-container">
+                        <div id="job-progress" class="progress-bar"></div>
+                    </div>
+
+                    <div class="input-group">
+                        <label>待制作商品项</label>
+                        <div id="active-item-list" class="item-list">
+                            <div style="color: var(--text-muted); font-size: 0.875rem; text-align: center; padding: 1rem 0;">
+                                暂无待制作的订单指令
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid-2" style="margin-top: 0.25rem;">
+                    <button id="btn-status-making" class="btn btn-secondary" disabled>汇报制作中 (Making)</button>
+                    <button id="btn-status-done" class="btn btn-emerald" disabled>汇报完成 (Done)</button>
+                </div>
+
+                <div class="failure-input-area">
+                    <input type="text" id="input-fail-reason" placeholder="失败原因说明..." disabled>
+                    <button id="btn-status-failed" class="btn btn-rose" style="white-space: nowrap;" disabled>汇报失败 (Failed)</button>
+                </div>
+            </div>
+
+            <!-- Card 3: Material Stock Report -->
+            <div class="card">
+                <div class="card-title">
+                    <span>3. 物料状态上报</span>
+                    <span style="font-size: 0.75rem; font-weight: normal; color: #f472b6;">MQTT Pub</span>
+                </div>
+                <div class="grid-2">
+                    <div class="input-group">
+                        <label for="input-mat-coffee">咖啡豆余量 (g)</label>
+                        <input type="number" id="input-mat-coffee" value="850">
+                    </div>
+                    <div class="input-group">
+                        <label for="input-mat-milk">牛奶余量 (ml)</label>
+                        <input type="number" id="input-mat-milk" value="2500">
+                    </div>
+                </div>
+                <button id="btn-report-material" class="btn btn-secondary">立即上报物料信息</button>
+            </div>
+        </div>
+
+        <!-- Right Side: Real-time Communication Console -->
+        <div class="card console-container">
+            <div class="console-header">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="color: var(--emerald); font-weight: bold; font-size: 1.1rem;">&gt;_</span>
+                    <span style="font-weight: 600;">实时通信数据包日志控制台</span>
+                </div>
+                <button id="btn-clear-console" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;">清空控制台</button>
+            </div>
+            <div id="console-logs" class="console-logs">
+                <div class="log-entry">
+                    <div class="log-meta">
+                        <span class="log-time" id="log-init-time"></span>
+                        <span class="log-tag tag-sys">System</span>
+                    </div>
+                    <div class="log-msg">上位机模拟器加载完成。请配置设备属性并点击 [注册 & 上线设备] 启动通信。</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Set initialization timestamp in console
+        document.getElementById('log-init-time').innerText = new Date().toLocaleTimeString();
+
+        // Configurations and State variables
+        let client = null;
+        let heartbeatInterval = null;
+        let currentOrderNo = null;
+        let isRegistered = false;
+
+        // UI DOM Elements
+        const snInput = document.getElementById('input-sn');
+        const nameInput = document.getElementById('input-name');
+        const modelInput = document.getElementById('input-model');
+        const firmwareInput = document.getElementById('input-firmware');
+        const registerBtn = document.getElementById('btn-register');
+        const heartbeatSwitch = document.getElementById('switch-heartbeat');
+        const clearConsoleBtn = document.getElementById('btn-clear-console');
+        const logsContainer = document.getElementById('console-logs');
+
+        const activeOrderSpan = document.getElementById('active-order-no');
+        const jobStatusPill = document.getElementById('job-status-pill');
+        const jobProgressBar = document.getElementById('job-progress');
+        const activeItemList = document.getElementById('active-item-list');
+        const failReasonInput = document.getElementById('input-fail-reason');
+
+        const btnStatusMaking = document.getElementById('btn-status-making');
+        const btnStatusDone = document.getElementById('btn-status-done');
+        const btnStatusFailed = document.getElementById('btn-status-failed');
+        const btnReportMaterial = document.getElementById('btn-report-material');
+
+        const deviceStateBadge = document.getElementById('device-state-badge');
+        const deviceStateText = document.getElementById('device-state-text');
+        const mqttStateBadge = document.getElementById('mqtt-state-badge');
+        const mqttStateText = document.getElementById('mqtt-state-text');
+
+        // Log Console Helper
+        function log(tag, message, jsonObject = null) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const meta = document.createElement('div');
+            meta.className = 'log-meta';
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            timeSpan.innerText = new Date().toLocaleTimeString();
+            
+            const tagSpan = document.createElement('span');
+            tagSpan.className = `log-tag tag-${tag}`;
+            tagSpan.innerText = tag;
+            
+            meta.appendChild(timeSpan);
+            meta.appendChild(tagSpan);
+            entry.appendChild(meta);
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'log-msg';
+            msgDiv.innerText = message;
+            entry.appendChild(msgDiv);
+            
+            if (jsonObject) {
+                const jsonPre = document.createElement('pre');
+                jsonPre.className = 'log-json';
+                jsonPre.innerText = JSON.stringify(jsonObject, null, 2);
+                entry.appendChild(jsonPre);
+            }
+            
+            logsContainer.appendChild(entry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+
+        // 1. Device Registration (HTTP API)
+        registerBtn.addEventListener('click', async () => {
+            const sn = snInput.value.trim();
+            const name = nameInput.value.trim();
+            const model = modelInput.value.trim();
+            const firmware = firmwareInput.value.trim();
+
+            if (!sn) {
+                alert('设备序列号 SN 不能为空');
+                return;
+            }
+
+            log('http-out', `发送设备注册请求到云端 API...`, { device_sn: sn, device_name: name, device_model: model, firmware_version: firmware });
+            
+            try {
+                const response = await fetch('/api/device/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        device_sn: sn,
+                        device_name: name,
+                        device_model: model,
+                        firmware_version: firmware
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok && data.code === 0) {
+                    log('http-in', `设备注册成功！`, data);
+                    
+                    isRegistered = true;
+                    // Update state badge
+                    deviceStateBadge.className = 'badge badge-online';
+                    deviceStateText.innerText = `设备在线 (${sn})`;
+
+                    // Connect MQTT
+                    connectMQTT(sn);
+                } else {
+                    log('err', `设备注册失败: ${data.message || response.statusText}`, data);
+                    alert(`注册失败: ${data.message || '未知错误'}`);
+                }
+            } catch (err) {
+                log('err', `网络请求故障: ${err.message}`);
+                alert(`请求失败: ${err.message}`);
+            }
+        });
+
+        // Heartbeat switch
+        heartbeatSwitch.addEventListener('change', () => {
+            if (heartbeatSwitch.checked) {
+                if (!isRegistered) {
+                    alert('请先注册并上线设备');
+                    heartbeatSwitch.checked = false;
+                    return;
+                }
+                if (!client || !client.connected) {
+                    alert('MQTT 未连接，无法开启心跳上报');
+                    heartbeatSwitch.checked = false;
+                    return;
+                }
+                log('sys', `启动自动心跳，每 10 秒发送一次...`);
+                sendHeartbeat();
+                heartbeatInterval = setInterval(sendHeartbeat, 10000);
+            } else {
+                log('sys', `关闭自动心跳`);
+                if (heartbeatInterval) {
+                    clearInterval(heartbeatInterval);
+                    heartbeatInterval = null;
+                }
+            }
+        });
+
+        async function sendHeartbeat() {
+            if (!client || !client.connected) {
+                log('err', `MQTT 未连接，跳过本次心跳发送。`);
+                return;
+            }
+            const sn = snInput.value.trim();
+            const topic = `automake/device/${sn}/status`;
+            const payload = {
+                type: 'heartbeat',
+                status: 'online'
+            };
+            log('mqtt-tx', `通过 MQTT 发送心跳数据... Topic: ${topic}`, payload);
+            client.publish(topic, JSON.stringify(payload), { qos: 1 });
+        }
+
+        // 2. MQTT Connection
+        function connectMQTT(device_sn) {
+            // Disconnect old client if exists
+            if (client) {
+                try { client.end(); } catch (e) {}
+            }
+
+            mqttStateBadge.className = 'badge badge-connecting';
+            mqttStateText.innerText = 'MQTT 连接中...';
+
+            let mqttUrl;
+            // Robust connection URL resolving
+            if (window.location.port === '8000' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                mqttUrl = `ws://${window.location.hostname}:8083/mqtt`;
+            } else {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                mqttUrl = `${protocol}//${window.location.host}/mqtt`;
+            }
+
+            log('sys', `尝试连接 MQTT 代理服务器: ${mqttUrl}`);
+            
+            try {
+                client = mqtt.connect(mqttUrl, {
+                    clientId: 'simulator_' + Math.random().toString(16).substring(2, 10),
+                    clean: true,
+                    connectTimeout: 5000
+                });
+
+                client.on('connect', () => {
+                    log('sys', `MQTT 已成功连接！`);
+                    mqttStateBadge.className = 'badge badge-online';
+                    mqttStateText.innerText = 'MQTT 在线';
+
+                    // Subscribe to command topic
+                    const topic = `automake/device/${device_sn}/command`;
+                    client.subscribe(topic, { qos: 1 }, (err) => {
+                        if (err) {
+                            log('err', `订阅主题失败: ${topic}`);
+                        } else {
+                            log('sys', `已成功订阅命令主题: ${topic}`);
+                        }
+                    });
+                });
+
+                client.on('error', (err) => {
+                    log('err', `MQTT 故障: ${err.message}`);
+                    mqttStateBadge.className = 'badge badge-offline';
+                    mqttStateText.innerText = 'MQTT 连接故障';
+                });
+
+                client.on('offline', () => {
+                    log('err', `MQTT 离线`);
+                    mqttStateBadge.className = 'badge badge-offline';
+                    mqttStateText.innerText = 'MQTT 离线';
+                });
+
+                client.on('message', (topic, message) => {
+                    try {
+                        const payload = JSON.parse(message.toString());
+                        log('mqtt-rx', `收到来自云端的发布命令! Topic: ${topic}`, payload);
+                        
+                        if (payload.type === 'make') {
+                            handleIncomingMakeCommand(payload);
+                        }
+                    } catch (e) {
+                        log('err', `解析收到的 MQTT 载荷失败: ${e.message}. 原始消息: ${message.toString()}`);
+                    }
+                });
+
+            } catch (e) {
+                log('err', `初始化 MQTT.js 失败: ${e.message}`);
+            }
+        }
+
+        // Handle incoming order command
+        function handleIncomingMakeCommand(payload) {
+            currentOrderNo = payload.order_no;
+            activeOrderSpan.innerText = currentOrderNo;
+            
+            // Render items list
+            activeItemList.innerHTML = '';
+            if (payload.items && payload.items.length > 0) {
+                payload.items.forEach(item => {
+                    const row = document.createElement('div');
+                    row.className = 'item-row';
+                    row.innerHTML = `
+                        <span>${item.item_name} (${item.sku_name || '常规'})</span>
+                        <span class="item-quantity">x${item.quantity}</span>
+                    `;
+                    activeItemList.appendChild(row);
+                });
+            } else {
+                activeItemList.innerText = '命令内容为空';
+            }
+
+            // Set job status to pending/received
+            jobStatusPill.className = 'job-status-pill job-status-making';
+            jobStatusPill.innerText = 'Received 已接收';
+            jobProgressBar.style.width = '10%';
+
+            // Enable action buttons
+            btnStatusMaking.disabled = false;
+            btnStatusDone.disabled = false;
+            btnStatusFailed.disabled = false;
+            failReasonInput.disabled = false;
+        }
+
+        // Report status via MQTT publish
+        async function publishStatus(status, messageStr = '') {
+            if (!client || !client.connected) {
+                alert('MQTT 未连接，无法发送状态消息！');
+                return;
+            }
+            if (!currentOrderNo) {
+                alert('当前无活动订单，无法发送状态！');
+                return;
+            }
+
+            const sn = snInput.value.trim();
+            const topic = `automake/device/${sn}/status`;
+            const payload = {
+                type: 'order_status',
+                order_no: currentOrderNo,
+                status: status,
+                message: messageStr
+            };
+
+            log('mqtt-tx', `向上位机状态主题发布状态消息... Topic: ${topic}`, payload);
+            client.publish(topic, JSON.stringify(payload), { qos: 1 });
+        }
+
+        // Event Listeners for status reporting buttons
+        btnStatusMaking.addEventListener('click', () => {
+            jobStatusPill.className = 'job-status-pill job-status-making';
+            jobStatusPill.innerText = 'Making 制作中';
+            jobProgressBar.style.width = '50%';
+            publishStatus('making', '咖啡机已开始研磨及萃取...');
+        });
+
+        btnStatusDone.addEventListener('click', () => {
+            jobStatusPill.className = 'job-status-pill job-status-done';
+            jobStatusPill.innerText = 'Done 制作完成';
+            jobProgressBar.style.width = '100%';
+            publishStatus('done', '饮品已制作完毕，杯门已打开，请取杯。');
+
+            // Disable buttons after completion
+            btnStatusMaking.disabled = true;
+            btnStatusDone.disabled = true;
+            btnStatusFailed.disabled = true;
+            failReasonInput.disabled = true;
+        });
+
+        btnStatusFailed.addEventListener('click', () => {
+            const reason = failReasonInput.value.trim() || '物料用尽，制作中断';
+            jobStatusPill.className = 'job-status-pill job-status-failed';
+            jobStatusPill.innerText = 'Failed 制作异常';
+            jobProgressBar.style.width = '0%';
+            publishStatus('failed', reason);
+
+            // Disable buttons after completion
+            btnStatusMaking.disabled = true;
+            btnStatusDone.disabled = true;
+            btnStatusFailed.disabled = true;
+            failReasonInput.disabled = true;
+        });
+
+        // 3. Material Report via MQTT
+        btnReportMaterial.addEventListener('click', () => {
+            if (!client || !client.connected) {
+                alert('MQTT 未连接，无法上报物料！');
+                return;
+            }
+
+            const sn = snInput.value.trim();
+            const topic = `automake/device/${sn}/material`;
+            const coffeeVal = parseInt(document.getElementById('input-mat-coffee').value) || 0;
+            const milkVal = parseInt(document.getElementById('input-mat-milk').value) || 0;
+
+            const payload = {
+                materials: [
+                    { code: 'coffee_bean', name: '咖啡豆', quantity: coffeeVal, unit: 'g' },
+                    { code: 'fresh_milk', name: '鲜牛奶', quantity: milkVal, unit: 'ml' }
+                ]
+            };
+
+            log('mqtt-tx', `向上报主题发布物料库存状态... Topic: ${topic}`, payload);
+            client.publish(topic, JSON.stringify(payload), { qos: 1 });
+            alert('物料库存已成功上报！');
+        });
+
+        // Clear console
+        clearConsoleBtn.addEventListener('click', () => {
+            logsContainer.innerHTML = '';
+            log('sys', '控制台日志已清空。');
+        });
+    </script>
+</body>
+</html>
