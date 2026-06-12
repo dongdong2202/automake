@@ -8,6 +8,7 @@ from django.db import models
 
 
 class Store(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name='门店ID')
     """
     门店表
 
@@ -18,6 +19,7 @@ class Store(models.Model):
     - status：运营状态，下线门店不允许点单
     - business_hours：营业时间（JSON 格式，按星期存储）
     - contact_phone：门店联系电话
+    - code: 用于注册机器的code，  
     """
 
     # 运营状态常量
@@ -42,6 +44,8 @@ class Store(models.Model):
         max_digits=10, decimal_places=6, null=True, blank=True, verbose_name='经度'
     )
     contact_phone = models.CharField(max_length=20, blank=True, verbose_name='联系电话')
+    code = models.CharField(max_length=64, unique=True, null=True, blank=True, verbose_name='门店注册码')
+    
     # 营业时间（JSON 格式）示例：{"mon": "08:00-22:00", "tue": "08:00-22:00", ...}
     business_hours = models.JSONField(default=dict, blank=True, verbose_name='营业时间')
     status = models.CharField(
@@ -68,3 +72,22 @@ class Store(models.Model):
     def is_open(self):
         """判断门店是否处于营业状态"""
         return self.status == self.STATUS_OPEN
+
+    def clean(self):
+        super().clean()
+        if self.id is not None:
+            if self.id < 100000 or self.id > 999999:
+                from django.core.exceptions import ValidationError
+                raise ValidationError({'id': '门店ID必须是6位数字（100000 ~ 999999）'})
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            # 自动生成 6 位数字的 ID，如果库中无数据则从 100000 开始
+            max_id = Store.objects.aggregate(max_id=models.Max('id'))['max_id']
+            if max_id is None:
+                self.id = 100000
+            else:
+                self.id = max_id + 1
+                if self.id > 999999:
+                    raise ValueError("门店ID已超出6位数字限制")
+        super().save(*args, **kwargs)

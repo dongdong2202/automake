@@ -37,30 +37,35 @@ class OrderMain(models.Model):
     """
 
     # ---- 订单状态枚举 ----
-    STATUS_PENDING_PAY = 'pending_pay'       # 待支付
-    STATUS_PAID = 'paid'                     # 已支付，待生产
-    STATUS_MAKING = 'making'                 # 制作中
-    STATUS_DONE = 'done'                     # 已完成（出杯）
-    STATUS_CANCELLED = 'cancelled'           # 已取消
+    STATUS_PENDING_PAY = 'created'           # 待支付 / 已创建 (CREATED)
+    STATUS_PAID = 'pending_dispense'         # 预扣成功 / 等待出货 (PENDING_DISPENSE)
+    STATUS_MAKING = 'making'                 # 制作中 (MAKING)
+    STATUS_DONE = 'success'                  # 已完成 / 出货成功 (SUCCESS)
+    STATUS_CANCELLED = 'cancelled'           # 已取消 (CANCELLED)
     STATUS_REFUNDING = 'refunding'           # 退款中
     STATUS_REFUNDED = 'refunded'             # 已退款
-    STATUS_EXCEPTION = 'exception'           # 异常
+    STATUS_EXCEPTION = 'failed'              # 异常 / 出货失败 (FAILED)
 
     STATUS_CHOICES = [
-        (STATUS_PENDING_PAY, '待支付'),
-        (STATUS_PAID, '已支付'),
+        (STATUS_PENDING_PAY, '已创建'),
+        (STATUS_PAID, '待出货'),
         (STATUS_MAKING, '制作中'),
         (STATUS_DONE, '已完成'),
         (STATUS_CANCELLED, '已取消'),
         (STATUS_REFUNDING, '退款中'),
         (STATUS_REFUNDED, '已退款'),
-        (STATUS_EXCEPTION, '异常'),
+        (STATUS_EXCEPTION, '已失败'),
     ]
 
     # 订单号（对外展示用，全局唯一）
     order_no = models.CharField(
         max_length=32, unique=True, default=generate_order_no,
         db_index=True, verbose_name='订单号'
+    )
+    # 订单Token（全局唯一，防重/幂等校验）
+    order_token = models.CharField(
+        max_length=64, unique=True, db_index=True, null=True, blank=True,
+        verbose_name='订单Token'
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
@@ -134,6 +139,10 @@ class OrderItem(models.Model):
     sku = models.ForeignKey(
         'menus.MenuSku', on_delete=models.PROTECT,
         null=True, blank=True, related_name='order_items', verbose_name='规格'
+    )
+    # 支持多规格选项选择
+    skus = models.ManyToManyField(
+        'menus.MenuSku', blank=True, related_name='order_item_list', verbose_name='规格列表'
     )
     # 下单时快照的商品名和规格名（防止菜单修改后历史订单展示异常）
     item_name = models.CharField(max_length=128, verbose_name='商品名称快照')

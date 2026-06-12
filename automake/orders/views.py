@@ -34,13 +34,17 @@ class OrderPrecheckView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        
         serializer = CreateOrderSerializer(data=request.data)
+
         if not serializer.is_valid():
             return error(str(serializer.errors), code=4001)
 
         store_id = serializer.validated_data['store_id']
         items_data = serializer.validated_data['items']
-
+        
+        print(store_id, items_data)
+        
         try:
             result = precheck_order(store_id, items_data)
         except ValueError as e:
@@ -53,7 +57,7 @@ class OrderPrecheckView(APIView):
             'items': [
                 {
                     'item_name': item['item_name'],
-                    'sku_name': item['sku_name'],
+                    'sku_name': ", ".join(item['sku_names']) if item['sku_names'] else '常规',
                     'unit_price': item['unit_price'],
                     'quantity': item['quantity'],
                     'subtotal': item['subtotal'],

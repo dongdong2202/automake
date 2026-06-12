@@ -59,12 +59,12 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # 角色常量定义
     SUPER_ADMIN = 'super_admin'  # 超级管理员
-    ADMIN = 'admin'              # 管理员（门店级）
+    ADMIN = 'admin'              # 门店管理员
     CUSTOMER = 'customer'        # 客户（微信小程序用户）
 
     ROLE_CHOICES = [
         (SUPER_ADMIN, '超级管理员'),
-        (ADMIN, '管理员'),
+        (ADMIN, '门店管理员'),
         (CUSTOMER, '客户'),
     ]
 
@@ -151,6 +151,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_customer(self):
         """判断是否为普通客户"""
         return self.role == self.CUSTOMER
+
+    def save(self, *args, **kwargs):
+        # 如果是超级管理员或门店管理员，自动允许登录后台
+        if self.role in (self.SUPER_ADMIN, self.ADMIN):
+            self.is_staff = True
+        super().save(*args, **kwargs)
 
 
 class UserProfile(models.Model):

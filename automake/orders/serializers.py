@@ -11,19 +11,13 @@ class OrderItemInputSerializer(serializers.Serializer):
     下单时的商品输入格式
 
     每个 item 对应购物车中的一条记录：
-    { "sku_id": 1, "quantity": 2 }
-    或无规格商品：
-    { "item_id": 1, "quantity": 1 }
+    { "item": 3, "sku": [6, 7], "quantity": 1 }
     """
-    item_id = serializers.IntegerField(required=False)
-    sku_id = serializers.IntegerField(required=False)
-    quantity = serializers.IntegerField(min_value=1, max_value=99)
-
-    def validate(self, attrs):
-        # item_id 和 sku_id 至少要有一个
-        if not attrs.get('item_id') and not attrs.get('sku_id'):
-            raise serializers.ValidationError('item_id 和 sku_id 至少填一个')
-        return attrs
+    item = serializers.IntegerField(required=True, help_text="MenuItem ID")
+    sku = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list, help_text="List of MenuSku IDs"
+    )
+    quantity = serializers.IntegerField(min_value=1, max_value=99, default=1, required=False)
 
 
 class CreateOrderSerializer(serializers.Serializer):

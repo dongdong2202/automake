@@ -37,7 +37,7 @@ class UpperMachineSimulator:
     上位机与业务流程模拟器类
     """
 
-    def __init__(self, server_url="http://127.0.0.1:8000", mqtt_host="127.0.0.1", mqtt_port=1883, device_sn="SN001"):
+    def __init__(self, server_url="http://127.0.0.1:8000", mqtt_host="127.0.0.1", mqtt_port=1883, device_sn="SN001", key_code="", store_id=1):
         """
         初始化模拟器
         """
@@ -45,6 +45,8 @@ class UpperMachineSimulator:
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
         self.device_sn = device_sn
+        self.key_code = key_code
+        self.store_id = store_id
 
         # 购物车，格式：{sku_id: quantity}
         self.cart = {}
@@ -63,8 +65,7 @@ class UpperMachineSimulator:
 
         # 默认物料配方（每杯饮品消耗的原料量）
         self.recipes = {
-            "美式咖啡": {"coffee_bean": 15.0},
-            "拿铁咖啡": {"coffee_bean": 15.0, "fresh_milk": 150.0},
+
         }
 
         # 强制制作失败标志
@@ -96,25 +97,60 @@ class UpperMachineSimulator:
     # 微信用户点单端模拟 (HTTP/HTTPS)
     # ============================================================
 
-    def add_to_cart(self, sku_id: int, quantity: int = 1):
-        """
-        向购物车中添加商品 SKU
-        """
-        if sku_id in self.cart:
-            self.cart[sku_id] += quantity
-        else:
-            self.cart[sku_id] = quantity
-        logger.info(f"[购物车] 已添加 SKU ID: {sku_id}，数量: {quantity}，当前购物车: {self.cart}")
+    def _find_item_by_sku(self, sku_id: int):
+        if not hasattr(self, 'categories') or not self.categories:
+            return None
+        for cat in self.categories:
+            for item in cat.get('items', []):
+                for sku in item.get('skus', []):
+                    if sku['id'] == sku_id:
+                        return item['id']
+        return None
 
-    def remove_from_cart(self, sku_id: int, quantity: int = 1):
+    def add_to_cart(self, item_id: int = None, sku_ids: list = None, sku_id: int = None, quantity: int = 1):
+        """
+        向购物车中添加商品及其规格列表
+        """
+        if sku_id is not None:
+            found_item_id = self._find_item_by_sku(sku_id)
+            if found_item_id is not None:
+                item_id = found_item_id
+                sku_ids = [sku_id]
+            else:
+                item_id = sku_id
+                sku_ids = [sku_id]
+        elif item_id is None:
+            raise ValueError("item_id or sku_id must be provided")
+
+        if sku_ids is None:
+            sku_ids = []
+
+        key = (item_id, tuple(sku_ids))
+        if key in self.cart:
+            self.cart[key] += quantity
+        else:
+            self.cart[key] = quantity
+        logger.info(f"[购物车] 已添加商品 ID: {item_id}, 规格: {sku_ids}，数量: {quantity}，当前购物车: {self.cart}")
+
+    def remove_from_cart(self, sku_id: int = None, item_id: int = None, sku_ids: list = None, quantity: int = 1):
         """
         从购物车减少/移除商品
         """
-        if sku_id in self.cart:
-            self.cart[sku_id] -= quantity
-            if self.cart[sku_id] <= 0:
-                del self.cart[sku_id]
-        logger.info(f"[购物车] 已移除/减少 SKU ID: {sku_id}，减少数量: {quantity}，当前购物车: {self.cart}")
+        if sku_id is not None:
+            found_item_id = self._find_item_by_sku(sku_id)
+            if found_item_id is not None:
+                item_id = found_item_id
+                sku_ids = [sku_id]
+            else:
+                item_id = sku_id
+                sku_ids = [sku_id]
+
+        key = (item_id, tuple(sku_ids or []))
+        if key in self.cart:
+            self.cart[key] -= quantity
+            if self.cart[key] <= 0:
+                del self.cart[key]
+        logger.info(f"[购物车] 已移除/减少商品 ID: {item_id}, 规格: {sku_ids}，数量: {quantity}，当前购物车: {self.cart}")
 
     def clear_cart(self):
         """
@@ -139,8 +175,9 @@ class UpperMachineSimulator:
                     for cat in categories:
                         print(f"--- 分类: {cat['name']} ---")
                         for item in cat.get('items', []):
-                            sku_str = ", ".join([f"{sku['name']}(ID:{sku['id']}) 价格:{sku['final_price']/100:.2f}元" for sku in item.get('skus', [])])
+                            sku_str = ", ".join([f"{sku['name']}(ID:{sku['id']})({sku['category']}) 价格:{(item['base_price'] + sku['price_delta'])/100:.2f}元" for sku in item.get('skus', [])])
                             print(f" 商品: {item['name']} (ID:{item['id']}) 基准价:{item['base_price']/100:.2f}元 | 规格: [{sku_str}]")
+                    self.categories = categories
                     return categories
             logger.error(f"[点单端] 拉取菜单接口响应错误: {response.status_code} - {response.text}")
         except Exception as e:
@@ -155,7 +192,13 @@ class UpperMachineSimulator:
             logger.warning("[预校验] 购物车为空，无法校验")
             return {}
 
-        items_payload = [{"sku_id": sku_id, "quantity": qty} for sku_id, qty in self.cart.items()]
+        items_payload = []
+        for (item_id, sku_ids), qty in self.cart.items():
+            items_payload.append({
+                "item": item_id,
+                "sku": list(sku_ids),
+                "quantity": qty
+            })
         payload = {
             "store_id": store_id,
             "items": items_payload
@@ -186,7 +229,13 @@ class UpperMachineSimulator:
             logger.warning("[下单] 购物车为空，无法创建订单")
             return ""
 
-        items_payload = [{"sku_id": sku_id, "quantity": qty} for sku_id, qty in self.cart.items()]
+        items_payload = []
+        for (item_id, sku_ids), qty in self.cart.items():
+            items_payload.append({
+                "item": item_id,
+                "sku": list(sku_ids),
+                "quantity": qty
+            })
         payload = {
             "store_id": store_id,
             "items": items_payload,
@@ -317,6 +366,8 @@ class UpperMachineSimulator:
         url = f"{self.server_url}/api/device/register"
         payload = {
             "device_sn": self.device_sn,
+            'key_code':   self.key_code,
+            'store_id':   self.store_id,
             "device_name": f"模拟上位机咖啡机 {self.device_sn}",
             "device_version": "v2.1.0",
             "device_address": "北京市海淀区西二旗软件园"
@@ -343,8 +394,9 @@ class UpperMachineSimulator:
         """
         if materials is None:
             materials = [
-                {"material_code": "coffee_bean", "material_name": "咖啡豆", "quantity": 1000.0, "unit": "g"},
-                {"material_code": "fresh_milk", "material_name": "鲜牛奶", "quantity": 5000.0, "unit": "ml"}
+                {"material_code": "coffee_bean", "quantity": 1000.0, "unit": "ml"},
+                {"material_code": "fresh_milk",   "quantity": 5000.0, "unit": "ml"},
+                {"material_code": "sugar",   "quantity": 5000.0, "unit": "g"}
             ]
 
         url = f"{self.server_url}/api/device/inventory/report"
@@ -379,8 +431,9 @@ class UpperMachineSimulator:
         topic = f"automake/device/{self.device_sn}/material"
         payload = {
             "materials": [
-                { "code": "coffee_bean", "name": "咖啡豆", "quantity": coffee_val, "unit": "g" },
-                { "code": "fresh_milk", "name": "鲜牛奶", "quantity": milk_val, "unit": "ml" }
+                {"material_code": "coffee_bean", "quantity": 1000.0, "unit": "ml"},
+                {"material_code": "fresh_milk",   "quantity": 5000.0, "unit": "ml"},
+                {"material_code": "sugar",   "quantity": 5000.0, "unit": "g"}
             ]
         }
 
@@ -692,54 +745,70 @@ if __name__ == '__main__':
 
     # 1. 初始化模拟器，连至本地测试服务器 30002
     sim = UpperMachineSimulator(
-        server_url="http://127.0.0.1:30002",
+        server_url="http://127.0.0.1:8000",
         mqtt_host="127.0.0.1",
         mqtt_port=1883,
-        device_sn="SN001"
+        device_sn="sn001",
+        key_code="first1",
+        store_id=100000
     )
 
     # 2. 启动上位机的 MQTT 客户端以连接代理，订阅命令并自动定时发心跳
     sim.start_mqtt_client()
-    time.sleep(1.0) # 等待 MQTT 建立连接
+    time.sleep(10.0) # 等待 MQTT 建立连接
 
     # 确保上位机已经在云端注册并上线
     reg_ok = sim.register_device()
     if not reg_ok:
-        logger.error("设备注册上线失败，请确保 Django 服务器运行在 30002 端口且已启动！")
+        logger.error("设备注册上线失败，请确保 Django已启动！")
         sim.stop_mqtt_client()
         sys.exit(1)
 
+    # exit()
     # 上位机通过 HTTPS POST 上报当前物料库存（服务器库存由上位机上报，无需手动维护）
-    report_ok = sim.report_inventory()
+    # report_ok = sim.report_inventory()
+    report_ok = sim.report_inventory_mqtt()
     if not report_ok:
         logger.warning("设备物料库存上报失败，继续后续测试...")
 
     print("\n--- 模拟开始 ---")
     try:
         # 3. 模拟微信点单端：获取门店菜单
-        sim.get_menu(store_id=1)
-        time.sleep(0.5)
+        t = sim.get_menu(store_id=100000)
+        time.sleep(1.5)
 
-        # 4. 模拟点单端：往购物车添加 1 杯美式和 1 杯拿铁
-        print("\n--- 购物车选品 ---")
-        sim.add_to_cart(sku_id=1, quantity=1) # 美式咖啡
-        sim.add_to_cart(sku_id=2, quantity=1) # 拿铁咖啡
-        time.sleep(0.5)
+        # 提取所有可用的 SKU ID
+        sku_ids = []
+        for cat in t:
+            for item in cat.get('items', []):
+                for sku in item.get('skus', []):
+                    sku_ids.append(sku['id'])
+
+
+        # 4. 模拟点单端：往购物车添加 1 杯苹果汁和 1 杯美式咖啡
+        print(f"\n--- 购物车选品 ---")
+        # 苹果汁 (ID:3), 规格: 标准(6) 和 大杯(7)
+        sim.add_to_cart(item_id=3, sku_ids=[6, 7], quantity=1)
+        # 美式咖啡 (ID:1), 规格: 大杯(3), 小杯(4), 热(5)
+        # sim.add_to_cart(item_id=1, sku_ids=[3, 4, 5], quantity=1)
+
 
         # 5. 模拟点单端：订单预校验 (precheck)
         print("\n--- 订单预结算校验 ---")
-        precheck_res = sim.precheck_order(store_id=1)
+        precheck_res = sim.precheck_order(store_id=100000)
+        print(precheck_res)
         if not precheck_res:
             raise ValueError("预校验失败")
         time.sleep(0.5)
 
         # 6. 模拟点单端：正式下单创建订单
         print("\n--- 创建正式订单 ---")
-        order_no = sim.create_order(store_id=1, remark="来一杯美式，一杯拿铁")
+        order_no = sim.create_order(store_id=100000, remark="来一杯美式，一杯拿铁")
         if not order_no:
             raise ValueError("创建订单失败")
         time.sleep(0.5)
-
+        print(order_no)
+        
         # 6.5 发起支付请求以在数据库中创建支付挂起记录 (PaymentRecord)
         print("\n--- 申请获取预支付参数 ---")
         pay_params = sim.create_pay_request(order_no)
@@ -753,7 +822,7 @@ if __name__ == '__main__':
         pay_ok = sim.simulate_payment(order_no, pay_amount_cents)
         if not pay_ok:
             raise ValueError("支付失败")
-
+        exit()
         # 8. 等待上位机接收命令并异步制作
         print("\n--- 等待设备端制作与通信反馈 ---")
         # 制作一般消耗大约 3 秒以上
@@ -765,8 +834,15 @@ if __name__ == '__main__':
         print("="*50)
 
         sim.clear_cart()
-        sim.add_to_cart(sku_id=2, quantity=1) # 拿铁咖啡
-        order_no_fail = sim.create_order(store_id=1, remark="这杯要异常失败")
+        if len(sku_ids) >= 2:
+            sim.add_to_cart(sku_id=sku_ids[1], quantity=1) # 拿铁咖啡
+        else:
+            sim.add_to_cart(sku_id=2, quantity=1)
+        
+        precheck_fail_res = sim.precheck_order(store_id=100000)
+        pay_amount_fail = precheck_fail_res.get('pay_amount', 1800)
+
+        order_no_fail = sim.create_order(store_id=100000, remark="这杯要异常失败")
         if order_no_fail:
             # 发起支付请求以在数据库中创建支付挂起记录
             sim.create_pay_request(order_no_fail)
@@ -777,7 +853,7 @@ if __name__ == '__main__':
             sim.fail_reason = "咖啡杯感应器硬件松动故障"
 
             # 模拟支付
-            sim.simulate_payment(order_no_fail, 1800) # 18元
+            sim.simulate_payment(order_no_fail, pay_amount_fail)
             time.sleep(5.0)
 
     except KeyboardInterrupt:

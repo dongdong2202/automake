@@ -1,3 +1,107 @@
 from django.contrib import admin
+from unfold.admin import ModelAdmin
+from .models import Device, DeviceCommand, DeviceStatusLog, DeviceAlarm, DeviceMaterialStock
 
-# Register your models here.
+
+class ReadOnlyStoreScopedDeviceAdmin(ModelAdmin):
+    """
+    设备相关数据的只读、门店过滤后台管理基类
+    """
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            if request.user.store:
+                if hasattr(self.model, 'store'):
+                    return qs.filter(store=request.user.store)
+                elif hasattr(self.model, 'device'):
+                    return qs.filter(device__store=request.user.store)
+            return qs.none()
+        return qs
+
+    def has_view_permission(self, request, obj=None):
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            if obj is not None:
+                if hasattr(obj, 'store'):
+                    if obj.store != request.user.store:
+                        return False
+                elif hasattr(obj, 'device'):
+                    if obj.device.store != request.user.store:
+                        return False
+            return True
+        return super().has_view_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_add_permission(self, request):
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            return False
+        return super().has_add_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            return False
+        return super().has_delete_permission(request, obj)
+
+    def has_module_permission(self, request):
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            return True
+        return super().has_module_permission(request)
+
+
+@admin.register(Device)
+class DeviceAdmin(ReadOnlyStoreScopedDeviceAdmin):
+    list_display = ('id', 'device_sn', 'device_name', 'store', 'device_type', 'status', 'firmware_version', 'key_code', 'last_heartbeat_at')
+    search_fields = ('device_sn', 'device_name', 'key_code')
+    list_filter = ('status', 'store', 'device_type')
+    readonly_fields = ('last_heartbeat_at', 'created_at', 'updated_at')
+
+    # 使用 fieldsets 分组呈现，更具友好性
+    fieldsets = (
+        ('设备基本属性', {
+            'fields': ('device_sn', 'device_name', 'device_model', 'device_type', 'store', 'status', 'key_code')
+        }),
+        ('固件与通信配置', {
+            'fields': ('firmware_version', 'resource_version', 'mqtt_topic_prefix', 'extra_config')
+        }),
+        ('状态更新时间', {
+            'fields': ('last_heartbeat_at', 'created_at', 'updated_at')
+        }),
+    )
+
+
+@admin.register(DeviceCommand)
+class DeviceCommandAdmin(ReadOnlyStoreScopedDeviceAdmin):
+    list_display = ('id', 'device', 'command_type', 'status', 'sent_at', 'confirmed_at')
+    search_fields = ('device__device_sn', 'command_type')
+    list_filter = ('command_type', 'status')
+    readonly_fields = ('device', 'order', 'command_type', 'payload', 'status', 'sent_at', 'confirmed_at', 'created_at')
+
+
+@admin.register(DeviceStatusLog)
+class DeviceStatusLogAdmin(ReadOnlyStoreScopedDeviceAdmin):
+    list_display = ('id', 'device', 'status', 'remark', 'created_at')
+    search_fields = ('device__device_sn', 'status', 'remark')
+    list_filter = ('status',)
+    readonly_fields = ('device', 'status', 'remark', 'raw_payload', 'created_at')
+
+
+@admin.register(DeviceAlarm)
+class DeviceAlarmAdmin(ReadOnlyStoreScopedDeviceAdmin):
+    list_display = ('id', 'device', 'alarm_type', 'is_resolved', 'resolved_at', 'created_at')
+    search_fields = ('device__device_sn', 'alarm_type', 'detail')
+    list_filter = ('alarm_type', 'is_resolved')
+    readonly_fields = ('device', 'alarm_type', 'detail', 'created_at', 'resolved_at')
+
+
+@admin.register(DeviceMaterialStock)
+class DeviceMaterialStockAdmin(ReadOnlyStoreScopedDeviceAdmin):
+    list_display = ('id', 'device', 'material_code', 'material_name', 'quantity', 'updated_at')
+    search_fields = ('device__device_sn', 'material_code', 'material_name')
+    list_filter = ('device', 'material_code')
+    readonly_fields = ('device', 'material_code', 'material_name', 'quantity', 'created_at', 'updated_at')
+
+
+

@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',         # JWT 认证
     'drf_spectacular',                  # OpenAPI 3.0 接口文档生成
     # 业务应用
+    'global_config',                    # 全局控制与定义
     'users',                            # 用户、权限
     'stores',                           # 门店
     'menus',                            # 菜单
@@ -324,7 +325,7 @@ LOGGING = {
         # 数据库 SQL 语句追踪日志（仅在 DEBUG=True 时有效且会大量输出）
         'django.db.backends': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'WARNING',
             'propagate': False,
         },
         # 各个业务模块的日志配置
@@ -379,3 +380,13 @@ AUTHENTICATION_BACKENDS = [
 # 自定义用户模型（必须在 migrate 前设置好，之后不可轻易更改）
 # ============================================================
 AUTH_USER_MODEL = 'users.User'
+
+# ============================================================
+# Unfold 后台主题与美化配置
+# ============================================================
+UNFOLD = {
+    "SITE_TITLE": "AutoMake 智能制造系统后台",
+    "SITE_HEADER": "AutoMake 后台管理",
+    # "THEME": "light",  # 若要强制使用浅色主题（并禁用右上角的主题切换按钮），可以取消此行注释。可选值: "light" 或 "dark"
+}
+
