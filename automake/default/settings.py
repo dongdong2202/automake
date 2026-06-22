@@ -75,6 +75,8 @@ INSTALLED_APPS = [
     'rest_framework',                   # Django REST Framework
     'rest_framework_simplejwt',         # JWT 认证
     'drf_spectacular',                  # OpenAPI 3.0 接口文档生成
+    'channels',                         # Django Channels：WebSocket 支持
+    'daphne',                           # Daphne：ASGI 服务器（Channels 推荐）
     # 业务应用
     'global_config',                    # 全局控制与定义
     'users',                            # 用户、权限
@@ -84,6 +86,9 @@ INSTALLED_APPS = [
     'payments',                         # 支付
     'devices',                          # 设备
     'simulator',                        # 上位机通信模拟器
+    'notifications',                    # 消息通知（微信订阅消息、取餐码、告警）
+    'inventory',                        # 物料仓库与进销存管理
+    'ws_device',                        # 上位机 WebSocket 通信模块
 ]
 
 # ============================================================
@@ -167,6 +172,36 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'default.wsgi.application'
+
+# ============================================================
+# ASGI / WebSocket 配置（Django Channels）
+# ============================================================
+# 指定 ASGI 应用入口（替代 WSGI，支持 HTTP + WebSocket 双协议）
+ASGI_APPLICATION = 'default.asgi.application'
+
+# Channel Layer 配置：使用 Redis 作为消息后端（db=3，避免与缓存/Celery 冲突）
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [{
+                # Redis URL（db=3 专用于 WebSocket Channel Layer）
+                'address': os.environ.get('REDIS_WS_URL', 'redis://127.0.0.1:6379/3'),
+                # 禁用读超时：channels_redis 使用 Pub/Sub 长连接，必须设为 None
+                # 否则空闲超过 socket_timeout 秒后会抛出 TimeoutError
+                'socket_timeout': None,
+                # 连接建立超时（秒）
+                'socket_connect_timeout': 5,
+                # TCP Keepalive，防止 NAT/防火墙切断空闲 TCP 连接
+                'socket_keepalive': True,
+            }],
+            # 单个 Channel Group 最大消息容量
+            'capacity': 1000,
+            # 消息过期时间（秒）
+            'expiry': 60,
+        },
+    },
+}
 
 
 # ============================================================
@@ -277,7 +312,7 @@ WECHAT_PAY_API_V3_KEY = os.environ.get('WECHAT_PAY_API_V3_KEY', '')      # APIv3
 WECHAT_PAY_CERT_SERIAL = os.environ.get('WECHAT_PAY_CERT_SERIAL', '')    # 证书序列号
 WECHAT_PAY_PRIVATE_KEY_PATH = os.environ.get(                             # 商户私钥文件路径
     'WECHAT_PAY_PRIVATE_KEY_PATH',
-    str(BASE_DIR.parent / 'cert' / 'apiclient_key.pem')
+    str(BASE_DIR.parent / 'cert' / 'apiClient_key.pem')
 )
 WECHAT_PAY_NOTIFY_URL = os.environ.get(                                   # 支付回调地址
     'WECHAT_PAY_NOTIFY_URL',
@@ -364,6 +399,12 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': True,
         },
+        # 上位机 WebSocket 通信模块日志
+        'ws_device': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
     },
 }
 
@@ -389,4 +430,38 @@ UNFOLD = {
     "SITE_HEADER": "AutoMake 后台管理",
     # "THEME": "light",  # 若要强制使用浅色主题（并禁用右上角的主题切换按钮），可以取消此行注释。可选值: "light" 或 "dark"
 }
+
+# ============================================================
+# Celery 异步任务队列配置
+# ============================================================
+# 消息中间件（Broker）配置，使用 Redis（db=2 避免与其他缓存或 Session 冲突）
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/2')
+# 结果存储后端（Result Backend）配置，使用 Redis
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/2')
+
+# 接受的内容格式限制，保证安全
+CELERY_ACCEPT_CONTENT = ['json']
+# 任务序列化格式
+CELERY_TASK_SERIALIZER = 'json'
+# 结果序列化格式
+CELERY_RESULT_SERIALIZER = 'json'
+# 时区配置，与 Django 保持一致
+CELERY_TIMEZONE = TIME_ZONE
+# 任务结果过期时间，设为 24 小时（防止 Redis 内存膨胀）
+CELERY_RESULT_EXPIRES = 86400
+
+# ============================================================
+# 微信订阅消息模板 ID 配置
+# 在微信公众平台后台申请后填入，不可硬编码（从环境变量读取）
+# ============================================================
+# 订单状态变更通知模板（发给用户）
+WECHAT_TPL_ORDER_STATUS = os.environ.get('WECHAT_TPL_ORDER_STATUS', '')
+# 告警通知模板（发给管理员）
+WECHAT_TPL_ALERT = os.environ.get('WECHAT_TPL_ALERT', '')
+# 取餐码通知模板（发给用户）
+WECHAT_TPL_PICKUP = os.environ.get('WECHAT_TPL_PICKUP', '')
+
+# 取餐码有效期（分钟），默认 30 分钟
+PICKUP_CODE_EXPIRE_MINUTES = int(os.environ.get('PICKUP_CODE_EXPIRE_MINUTES', '30'))
+
 

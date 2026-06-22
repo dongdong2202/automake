@@ -87,6 +87,17 @@ def receive_device_status(device_sn: str, payload: dict):
             )
             ProductionTask.objects.filter(order=order).update(status=ProductionTask.TASK_MAKING)
             logger.info(f'已同步更新生产任务状态为: making，order_no={order_no}')
+            # 异步推送订单状态变更通知：制作中（不阻塞主流程）
+            try:
+                from notifications.services import send_order_status_notify
+                # 预估等候时间
+                from notifications.views import _estimate_wait_minutes
+                wait = _estimate_wait_minutes(order)
+                extra = f'预计还需 {wait} 分钟' if wait else ''
+                send_order_status_notify(order, OrderMain.STATUS_MAKING, extra_remark=extra)
+            except Exception as notify_exc:
+                # 通知失败不影响主流程
+                logger.warning(f'订单状态通知异常（making）: {notify_exc}')
         
         elif new_status in ('done', 'success'):
             update_order_status(
@@ -100,6 +111,13 @@ def receive_device_status(device_sn: str, payload: dict):
                 done_at=timezone.now()
             )
             logger.info(f'已同步更新生产任务状态为: done，order_no={order_no}')
+            # 异步：生成取餐码 + 推送取餐码通知给用户（包括手机鸣馓）
+            try:
+                from notifications.services import create_pickup_code, send_order_status_notify
+                create_pickup_code(order)                        # 生成取餐码并推送取餐码通知
+                send_order_status_notify(order, OrderMain.STATUS_DONE, extra_remark='请凭取餐码取餐')  # 订单完成通知
+            except Exception as notify_exc:
+                logger.warning(f'生成取餐码或通知失败（done）: {notify_exc}')
             
         elif new_status in ('failed', 'dispense_failed', 'exception'):
             # 调用 4.1 明确失败回滚
@@ -114,6 +132,21 @@ def receive_device_status(device_sn: str, payload: dict):
                 failure_reason=payload.get('message', '物理出库失败')
             )
             logger.info(f'已执行出库失败回滚，order_no={order_no}')
+            # 异步：推送订单失败通知（用户）+ 设备告警（管理员）
+            try:
+                from notifications.services import send_order_status_notify, send_device_alert
+                send_order_status_notify(
+                    order, OrderMain.STATUS_EXCEPTION,
+                    extra_remark='出餐失败，将尽快为您退款'
+                )
+                send_device_alert(
+                    device=order.device,
+                    reason=f'订单 {order_no} 出货失败: {payload.get("message", "")}'.strip(':').strip(),
+                )
+            except Exception as notify_exc:
+                logger.warning(f'订单失败通知异常: {notify_exc}')
+
+
 
 
 def receive_material_report(device_sn: str, payload: dict):

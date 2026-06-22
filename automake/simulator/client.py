@@ -733,6 +733,160 @@ class UpperMachineSimulator:
         self.is_making = False
         self.active_order_no = None
 
+    # ============================================================
+    # 消息通知模块测试 (Notification Module Tests)
+    # ============================================================
+
+    def query_order_status(self, order_no: str) -> dict:
+        """
+        查询订单当前状态与预计等候时间
+
+        调用 GET /api/notify/order/{order_no}/status/ 接口，
+        返回订单状态、等候时间预估、取餐码（如已生成）。
+
+        :param order_no: 订单号
+        :return: 接口返回的数据字典，失败时返回 {}
+        """
+        url = f"{self.server_url}/api/notify/order/{order_no}/status/"
+        logger.info(f"[消息模块] 查询订单状态: {url}")
+        try:
+            response = self.session.get(url, timeout=5)
+            if response.status_code == 200:
+                res_data = response.json()
+                if res_data.get('code') == 0:
+                    data = res_data['data']
+                    status_cn = data.get('status_display', data.get('status', '未知'))
+                    wait = data.get('wait_minutes')
+                    pickup = data.get('pickup_code')
+                    logger.info(
+                        f"[消息模块] 订单 {order_no} 当前状态: 【{status_cn}】"
+                        f"{'，预计等候 ' + str(wait) + ' 分钟' if wait else ''}"
+                        f"{'，取餐码: ' + pickup['code'] if pickup else ''}"
+                    )
+                    return data
+                else:
+                    logger.warning(f"[消息模块] 订单状态查询失败: {res_data.get('message')}")
+            else:
+                logger.error(f"[消息模块] 订单状态接口异常: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"[消息模块] 订单状态查询网络异常: {e}")
+        return {}
+
+    def verify_pickup_code(self, code: str) -> dict:
+        """
+        模拟设备扫码核销取餐码
+
+        调用 POST /api/notify/pickup/verify/ 接口，
+        传入用户出示的 6 位取餐码，返回核销结果与订单信息。
+
+        :param code: 6 位数字取餐码
+        :return: {'ok': True, 'order_no': ..., 'items': [...]} 或 {'ok': False, 'reason': ...}
+        """
+        url = f"{self.server_url}/api/notify/pickup/verify/"
+        payload = {"code": code, "device_sn": self.device_sn}
+        logger.info(f"[消息模块] 扫码核销取餐码: code={code}, device_sn={self.device_sn}")
+        try:
+            response = self.session.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                res_data = response.json()
+                if res_data.get('code') == 0:
+                    data = res_data['data']
+                    logger.info(
+                        f"[消息模块] ✅ 取餐码核销成功！"
+                        f"订单号: {data.get('order_no')}，"
+                        f"商品: {data.get('items')}"
+                    )
+                    return data
+                else:
+                    logger.warning(f"[消息模块] ❌ 取餐码核销失败: {res_data.get('message')}")
+                    return {'ok': False, 'reason': res_data.get('message')}
+            else:
+                logger.error(f"[消息模块] 核销接口异常: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"[消息模块] 扫码核销网络异常: {e}")
+        return {'ok': False, 'reason': 'network_error'}
+
+    def query_notify_events(self, level: str = None, is_handled: str = 'false') -> list:
+        """
+        查询系统通知事件列表（管理员接口）
+
+        调用 GET /api/notify/events/ 接口，列出最近的告警和通知事件。
+
+        :param level:       过滤级别 ('info' / 'warning' / 'critical')，None 表示全部
+        :param is_handled:  是否只看未处理 ('true'/'false'，默认 'false' 即未处理)
+        :return: 事件列表
+        """
+        url = f"{self.server_url}/api/notify/events/"
+        params = {'is_handled': is_handled}
+        if level:
+            params['level'] = level
+        logger.info(f"[消息模块] 查询通知事件列表: level={level or '全部'}, is_handled={is_handled}")
+        try:
+            response = self.session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                res_data = response.json()
+                if res_data.get('code') == 0:
+                    events = res_data['data'].get('results', [])
+                    logger.info(f"[消息模块] 共获取到 {len(events)} 条通知事件:")
+                    for ev in events:
+                        level_icon = {'info': 'ℹ️', 'warning': '⚠️', 'critical': '🚨'}.get(ev['level'], '📌')
+                        logger.info(
+                            f"  {level_icon} [{ev['level_display']}] {ev['title']}"
+                            f" | 订单:{ev.get('order_no') or '-'}"
+                            f" | 设备:{ev.get('device_sn') or '-'}"
+                            f" | 时间:{ev['created_at'][:19]}"
+                        )
+                    return events
+                else:
+                    logger.warning(f"[消息模块] 通知事件查询失败: {res_data.get('message')}")
+            else:
+                logger.error(f"[消息模块] 事件接口异常: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"[消息模块] 通知事件查询网络异常: {e}")
+        return []
+
+    def poll_order_until_done(
+        self, order_no: str, max_polls: int = 15, interval: float = 2.0
+    ) -> dict:
+        """
+        轮询订单状态，直到进入终态（done/failed/cancelled）或超时
+
+        模拟微信小程序端轮询订单状态的行为：
+          - 每隔 interval 秒调用一次 query_order_status()
+          - 在【制作中】时打印等候时间
+          - 在【已完成】时打印取餐码
+          - 超过 max_polls 次后退出，避免无限等待
+
+        :param order_no:   订单号
+        :param max_polls:  最大轮询次数（默认 15 次）
+        :param interval:   轮询间隔（秒，默认 2 秒）
+        :return:           最后一次状态查询结果
+        """
+        terminal = {'success', 'cancelled', 'failed', 'refunded', 'refunding'}
+        logger.info(
+            f"[消息模块] 开始轮询订单状态: order_no={order_no}"
+            f"（最多 {max_polls} 次，间隔 {interval}s）"
+        )
+        last_data = {}
+        for i in range(max_polls):
+            data = self.query_order_status(order_no)
+            last_data = data
+            status = data.get('status', '')
+            if status in terminal:
+                logger.info(
+                    f"[消息模块] 订单已进入终态: 【{data.get('status_display', status)}】"
+                    f"，停止轮询（第 {i+1} 次）"
+                )
+                # 如果已完成且有取餐码，打印取餐码
+                pickup = data.get('pickup_code')
+                if pickup and pickup.get('code'):
+                    print(f"\n  🎫 取餐码: {pickup['code']}  (有效至 {pickup.get('expires_at', '?')[:16]})")
+                break
+            time.sleep(interval)
+        else:
+            logger.warning(f"[消息模块] 订单 {order_no} 轮询超时，最后状态: {last_data.get('status')}")
+        return last_data
+
 
 # ============================================================
 # 命令行运行演示入口 (Demo execution)
@@ -784,11 +938,12 @@ if __name__ == '__main__':
                 for sku in item.get('skus', []):
                     sku_ids.append(sku['id'])
 
-
+        print(sku_ids)
         # 4. 模拟点单端：往购物车添加 1 杯苹果汁和 1 杯美式咖啡
         print(f"\n--- 购物车选品 ---")
         # 苹果汁 (ID:3), 规格: 标准(6) 和 大杯(7)
         sim.add_to_cart(item_id=3, sku_ids=[6, 7], quantity=1)
+        
         # 美式咖啡 (ID:1), 规格: 大杯(3), 小杯(4), 热(5)
         # sim.add_to_cart(item_id=1, sku_ids=[3, 4, 5], quantity=1)
 
@@ -800,7 +955,7 @@ if __name__ == '__main__':
         if not precheck_res:
             raise ValueError("预校验失败")
         time.sleep(0.5)
-
+      
         # 6. 模拟点单端：正式下单创建订单
         print("\n--- 创建正式订单 ---")
         order_no = sim.create_order(store_id=100000, remark="来一杯美式，一杯拿铁")
@@ -808,53 +963,130 @@ if __name__ == '__main__':
             raise ValueError("创建订单失败")
         time.sleep(0.5)
         print(order_no)
-        
+    
         # 6.5 发起支付请求以在数据库中创建支付挂起记录 (PaymentRecord)
         print("\n--- 申请获取预支付参数 ---")
         pay_params = sim.create_pay_request(order_no)
         if not pay_params:
             raise ValueError("预支付参数获取失败")
         time.sleep(0.5)
-
+    
         # 7. 模拟微信支付回调：对支付明文进行 GCM 加密，并向 /api/pay/callback 发送 POST
         print("\n--- 支付确认（完全加密解密流程） ---")
         pay_amount_cents = precheck_res['pay_amount']
         pay_ok = sim.simulate_payment(order_no, pay_amount_cents)
         if not pay_ok:
             raise ValueError("支付失败")
-        exit()
-        # 8. 等待上位机接收命令并异步制作
-        print("\n--- 等待设备端制作与通信反馈 ---")
-        # 制作一般消耗大约 3 秒以上
-        time.sleep(5.0)
 
-        # 9. 异常情况流程测试：再次下一单，但这一次模拟设备制作硬件故障
-        print("\n" + "="*50)
-        print("          开始模拟第二笔订单：制作突发硬件异常测试")
-        print("="*50)
+        # ============================================================
+        # 8. 消息模块测试：支付后轮询订单状态，等待设备制作完成
+        # ============================================================
+        print("\n" + "="*60)
+        print("          【消息模块测试】轮询订单状态 & 等候时间")
+        print("="*60)
+
+        # 等待设备端接收 MQTT 制作指令并开始制作（约 1 秒）
+        time.sleep(1.0)
+
+        # 小程序端行为模拟：轮询订单状态直到制作完成
+        final_status = sim.poll_order_until_done(
+            order_no,
+            max_polls=20,   # 最多等 40 秒
+            interval=2.0
+        )
+
+        # ============================================================
+        # 9. 消息模块测试：取餐码核销（模拟设备扫码）
+        # ============================================================
+        print("\n" + "="*60)
+        print("          【消息模块测试】取餐码扫码核销")
+        print("="*60)
+
+        pickup_info = final_status.get('pickup_code')
+        if pickup_info and pickup_info.get('code'):
+            pickup_code = pickup_info['code']
+            print(f"\n  → 用户出示取餐码: {pickup_code}")
+            print("  → 设备扫码核销中...")
+            verify_result = sim.verify_pickup_code(pickup_code)
+
+            # 测试重复核销（应被拒绝）
+            print("\n  → 测试重复核销（应返回失败）:")
+            verify_dup = sim.verify_pickup_code(pickup_code)
+            logger.info(f"[消息模块] 重复核销结果: {verify_dup}")
+
+            # 测试错误取餐码（应被拒绝）
+            print("\n  → 测试无效取餐码 '000000'（应返回不存在）:")
+            verify_invalid = sim.verify_pickup_code('000000')
+            logger.info(f"[消息模块] 无效取餐码核销结果: {verify_invalid}")
+        else:
+            logger.warning(
+                "[消息模块] 未获取到取餐码，可能 Celery Worker 未运行或"
+                " WECHAT_TPL_PICKUP 未配置（取餐码生成不依赖模板，但需 Celery 处理通知任务）。"
+                "\n  提示：请确认 Celery Worker 已启动: "
+                "celery -A default worker -l info"
+            )
+            # 即使没有取餐码，也直接调用接口验证取餐码查询流程
+            print("\n  → 测试无效取餐码 '000000'（应返回不存在）:")
+            sim.verify_pickup_code('000000')
+
+        # ============================================================
+        # 10. 消息模块测试：查询通知事件列表（告警 & 状态记录）
+        # ============================================================
+        print("\n" + "="*60)
+        print("          【消息模块测试】查询系统通知事件")
+        print("="*60)
+
+        # 查询所有未处理通知事件
+        print("\n  → 查询所有未处理通知事件:")
+        all_events = sim.query_notify_events(is_handled='false')
+
+        # 只查告警级别
+        print("\n  → 只看 warning/critical 告警事件:")
+        warn_events = sim.query_notify_events(level='warning', is_handled='false')
+        crit_events = sim.query_notify_events(level='critical', is_handled='false')
+
+        # ============================================================
+        # 11. 异常情况流程测试：再下一单，模拟制作硬件故障
+        #     → 验证告警消息是否触发、通知事件是否记录
+        # ============================================================
+        print("\n" + "="*60)
+        print("          【消息模块测试】模拟设备故障 → 告警通知触发")
+        print("="*60)
 
         sim.clear_cart()
         if len(sku_ids) >= 2:
-            sim.add_to_cart(sku_id=sku_ids[1], quantity=1) # 拿铁咖啡
+            sim.add_to_cart(sku_id=sku_ids[1], quantity=1)
         else:
-            sim.add_to_cart(sku_id=2, quantity=1)
-        
+            sim.add_to_cart(sku_id=sku_ids[0], quantity=1)
+
         precheck_fail_res = sim.precheck_order(store_id=100000)
-        pay_amount_fail = precheck_fail_res.get('pay_amount', 1800)
+        if not precheck_fail_res:
+            logger.warning("[消息模块] 预校验失败（可能库存不足），跳过故障测试")
+        else:
+            pay_amount_fail = precheck_fail_res.get('pay_amount', 1800)
+            order_no_fail = sim.create_order(store_id=100000, remark="这杯要触发设备故障告警")
+            if order_no_fail:
+                sim.create_pay_request(order_no_fail)
+                time.sleep(0.5)
 
-        order_no_fail = sim.create_order(store_id=100000, remark="这杯要异常失败")
-        if order_no_fail:
-            # 发起支付请求以在数据库中创建支付挂起记录
-            sim.create_pay_request(order_no_fail)
-            time.sleep(0.5)
+                # 开启强制故障标志
+                sim.force_fail = True
+                sim.fail_reason = "咖啡杯感应器硬件松动故障"
 
-            # 强制模拟设备异常故障
-            sim.force_fail = True
-            sim.fail_reason = "咖啡杯感应器硬件松动故障"
+                pay_ok_fail = sim.simulate_payment(order_no_fail, pay_amount_fail)
+                if pay_ok_fail:
+                    logger.info("[消息模块] 支付成功，等待设备处理（将触发故障）...")
+                    time.sleep(4.0)
 
-            # 模拟支付
-            sim.simulate_payment(order_no_fail, pay_amount_fail)
-            time.sleep(5.0)
+                    # 查询故障订单状态
+                    print("\n  → 查询故障订单状态:")
+                    sim.query_order_status(order_no_fail)
+
+                    # 查询新增的 critical 告警事件（设备故障触发）
+                    print("\n  → 查询故障后新增的告警事件:")
+                    sim.query_notify_events(level='critical', is_handled='false')
+
+                sim.force_fail = False  # 重置故障标志
 
     except KeyboardInterrupt:
         logger.info("模拟被用户手动中止")
@@ -863,4 +1095,4 @@ if __name__ == '__main__':
     finally:
         # 关闭 MQTT 连接
         sim.stop_mqtt_client()
-        print("--- 模拟结束 ---")
+        print("\n--- 模拟结束 ---")

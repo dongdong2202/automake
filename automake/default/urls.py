@@ -44,6 +44,10 @@ urlpatterns = [
     # 设备模块（上位机调用）
     path('api/device/', include('devices.urls')),
 
+    # 消息通知模块（取餐码、订单状态查询、事件告警）
+    path('api/notify/', include('notifications.urls')),
+
+
     # 上位机模拟器
     path('simulator/', include('simulator.urls')),
 

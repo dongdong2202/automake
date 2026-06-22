@@ -49,6 +49,25 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A default worker -l info
+    restart: always
+    env_file: .env
+    environment:
+      - MYSQL_HOST=db
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+
+
 
 volumes:
   mysql_data:

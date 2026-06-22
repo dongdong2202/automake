@@ -2,3 +2,4 @@
 .venv1/*
 *.log
 *.pyc
+*.md

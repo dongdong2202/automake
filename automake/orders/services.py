@@ -68,7 +68,6 @@ def precheck_order(store_id: int, items_data: list) -> dict:
 
     checked_items = []
     total_amount = 0
-
     for item_data in items_data:
         item_id = item_data.get('item')
         sku_ids = item_data.get('sku', [])

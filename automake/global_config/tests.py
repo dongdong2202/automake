@@ -1,4 +1,5 @@
 from django.test import TestCase, RequestFactory, Client
+from django.utils import timezone
 from stores.models import Store
 from devices.models import Device
 from .models import DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku, GlobalSkuIngredient
@@ -86,10 +87,10 @@ class GlobalMenuInheritanceTests(TestCase):
         
         # Verify SKUs
         skus = items[0]['skus']
-        self.assertEqual(len(skus), 1)
-        self.assertEqual(skus[0]['name'], "大杯/热")
-        self.assertEqual(skus[0]['category'], "杯型")
-        self.assertEqual(skus[0]['price_delta'], 300)
+        self.assertEqual(len(skus), 2)
+        sku_names = [s['name'] for s in skus]
+        self.assertIn("标准", sku_names)
+        self.assertIn("大杯/热", sku_names)
 
     def test_sync_with_unmatched_device_type(self):
         # Create a store with NO devices
@@ -210,3 +211,116 @@ class GlobalMenuInheritanceTests(TestCase):
         )
         with self.assertRaises(ValidationError):
             sku_mismatch.full_clean()
+
+
+class GlobalMenuItemTests(TestCase):
+    def test_auto_insert_standard_sku(self):
+        dev_type = DeviceType.objects.create(name="设备类型", code="test_dev_type_unique")
+        cat = GlobalMenuCategory.objects.create(device_type=dev_type, name="分类")
+        
+        # 创建一个没有 sku 的 GlobalMenuItem
+        item = GlobalMenuItem.objects.create(
+            category=cat,
+            name="新品咖啡",
+            base_price=1000
+        )
+        
+        # 验证自动创建了“标准”规格
+        self.assertTrue(item.skus.filter(name='标准').exists())
+        standard_sku = item.skus.get(name='标准')
+        self.assertEqual(standard_sku.category, 'default')
+        self.assertEqual(standard_sku.price_delta, 0)
+
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.exceptions import ValidationError
+
+class ValidateDetailImageTests(TestCase):
+    def test_image_size_validator(self):
+        from .models import validate_detail_image
+        # 1. 模拟超过 1M 的图片文件 (1.1 MB)
+        large_file = SimpleUploadedFile("detail.png", b"x" * (1024 * 1024 + 100), content_type="image/png")
+        with self.assertRaises(ValidationError) as ctx:
+            validate_detail_image(large_file)
+        self.assertIn("图片文件大小不能超过 1MB", str(ctx.exception))
+
+    def test_png_width_validator(self):
+        from .models import validate_detail_image
+        import struct
+        
+        # 2. 模拟一个非 750px 宽度的 PNG
+        # PNG IHDR 块：12-15 字节为 IHDR, 16-19 字节为宽度, 20-23 字节为高度
+        # 我们模拟一个 800x600 的 PNG 头
+        png_head = b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + struct.pack('>ii', 800, 600) + b'\x08\x06\x00\x00\x00'
+        bad_png = SimpleUploadedFile("bad.png", png_head, content_type="image/png")
+        with self.assertRaises(ValidationError) as ctx:
+            validate_detail_image(bad_png)
+        self.assertIn("详情页图片宽度必须为 750 像素", str(ctx.exception))
+
+        # 3. 模拟一个 750x1000 的 PNG 头 (应该验证通过)
+        valid_png_head = b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + struct.pack('>ii', 750, 1000) + b'\x08\x06\x00\x00\x00'
+        good_png = SimpleUploadedFile("good.png", valid_png_head, content_type="image/png")
+        # 应该不报错
+        validate_detail_image(good_png)
+
+
+from unittest.mock import patch
+import datetime
+
+class StoreBusinessHoursTests(TestCase):
+    def test_store_service_without_business_hours(self):
+        # 无营业时间，默认可提供服务
+        store = Store.objects.create(name="全天营业店", status=Store.STATUS_OPEN)
+        self.assertTrue(store.is_in_business_hours)
+        self.assertTrue(store.can_provide_service)
+
+    def test_store_service_not_open_status(self):
+        # 即使在营业时间内，如果营业状态不是 STATUS_OPEN，就不能提供服务
+        store = Store.objects.create(
+            name="关闭门店",
+            status=Store.STATUS_CLOSED,
+            business_hours={"mon": "08:00-22:00", "tue": "08:00-22:00", "wed": "08:00-22:00", "thu": "08:00-22:00", "fri": "08:00-22:00", "sat": "08:00-22:00", "sun": "08:00-22:00"}
+        )
+        self.assertFalse(store.can_provide_service)
+
+    @patch('django.utils.timezone.localtime')
+    def test_store_service_in_and_out_of_hours(self, mock_localtime):
+        # 设定当前为星期一的 10:00 (2026-06-22 是星期一)
+        # now.weekday() == 0 (Mon), now.time() == 10:00
+        mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 10, 0, 0))
+        
+        store = Store.objects.create(
+            name="周一早八晚十",
+            status=Store.STATUS_OPEN,
+            business_hours={"mon": "08:00-22:00"}
+        )
+        self.assertTrue(store.is_in_business_hours)
+        self.assertTrue(store.can_provide_service)
+
+        # 设定当前为星期一的 23:00 (超出营业时间)
+        mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 23, 0, 0))
+        self.assertFalse(store.is_in_business_hours)
+        self.assertFalse(store.can_provide_service)
+
+    @patch('django.utils.timezone.localtime')
+    def test_store_service_cross_day(self, mock_localtime):
+        # 设定当前为周一晚上 23:00，营业时间为 22:00 到次日 02:00
+        store = Store.objects.create(
+            name="跨天夜宵店",
+            status=Store.STATUS_OPEN,
+            business_hours={"mon": "22:00-02:00"}
+        )
+        mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 23, 0, 0))
+        self.assertTrue(store.is_in_business_hours)
+        self.assertTrue(store.can_provide_service)
+
+        # 设定当前为周一凌晨 01:00 (这属于周一跨天的营业时间)
+        mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 1, 0, 0))
+        self.assertTrue(store.is_in_business_hours)
+        self.assertTrue(store.can_provide_service)
+
+        # 设定当前为周一早上 08:00 (不在营业时间内)
+        mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 8, 0, 0))
+        self.assertFalse(store.is_in_business_hours)
+        self.assertFalse(store.can_provide_service)
+

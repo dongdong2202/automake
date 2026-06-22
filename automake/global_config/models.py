@@ -1,4 +1,79 @@
+import struct
 from django.db import models
+from django.core.exceptions import ValidationError
+
+def validate_detail_image(image):
+    """
+    验证详情页图片：
+    1. 图片大小必须小于 1MB
+    2. 图片宽度必须为 750px
+    支持常见 Web 格式（PNG, JPEG, WebP）的无 Pillow 高速流式解析验证。
+    """
+    # 1. 检查大小
+    limit = 1 * 1024 * 1024
+    if image.size > limit:
+        raise ValidationError('图片文件大小不能超过 1MB。')
+
+    # 2. 解析并检查宽度
+    try:
+        image.seek(0)
+        head = image.read(30)
+        width = None
+
+        if head.startswith(b'\x89PNG\r\n\x1a\n'):
+            # PNG: IHDR 块在 offset 12，宽度在 16-20
+            width, _ = struct.unpack('>ii', head[16:24])
+        elif head.startswith(b'RIFF') and head[8:12] == b'WEBP':
+            # WebP
+            chunk_type = head[12:16]
+            if chunk_type == b'VP8 ':
+                image.seek(23)
+                sof = image.read(10)
+                if sof[3:6] == b'\x9d\x01\x2a':
+                    width = struct.unpack('<H', sof[6:8])[0] & 0x3fff
+            elif chunk_type == b'VP8L':
+                image.seek(21)
+                b = image.read(5)
+                width = 1 + (((b[1] & 0x3F) << 8) | b[0])
+            elif chunk_type == b'VP8X':
+                image.seek(24)
+                b = image.read(6)
+                width = 1 + (b[0] | (b[1] << 8) | (b[2] << 16))
+        elif head.startswith(b'\xff\xd8'):
+            # JPEG: 扫描段查找 SOF0 标记
+            image.seek(0)
+            image.read(2)  # SOI
+            while True:
+                marker = image.read(2)
+                if not marker or marker[0] != 0xff:
+                    break
+                while marker[1] == 0xff:
+                    marker = b'\xff' + image.read(1)
+                if 0xc0 <= marker[1] <= 0xcf and marker[1] not in (0xc4, 0xc8, 0xcc):
+                    image.read(2)  # length
+                    image.read(1)  # precision
+                    h, w = struct.unpack('>HH', image.read(4))
+                    width = w
+                    break
+                else:
+                    len_bytes = image.read(2)
+                    if len(len_bytes) < 2:
+                        break
+                    length = struct.unpack('>H', len_bytes)[0]
+                    image.seek(length - 2, 1)
+
+        if width is not None:
+            if width != 750:
+                raise ValidationError(f'详情页图片宽度必须为 750 像素（当前上传图片宽度为 {width} 像素）。')
+        else:
+            raise ValidationError('无法读取或识别图片尺寸，请上传标准的 PNG、JPG、JPEG 或 WebP 格式图片。')
+
+    except ValidationError as ve:
+        raise ve
+    except Exception as e:
+        raise ValidationError(f'详情页图片尺寸验证失败: {str(e)}')
+    finally:
+        image.seek(0)
 
 
 class DeviceType(models.Model):
@@ -28,7 +103,15 @@ class GlobalMaterial(models.Model):
     """
     name = models.CharField(max_length=64, verbose_name='物料名称')
     code = models.CharField(max_length=64, unique=True, verbose_name='物料编码')
-    unit = models.CharField(max_length=16, default='ml', verbose_name='标准单位')
+    unit = models.CharField(max_length=16, default='cm', verbose_name='标准单位')
+
+    # 满料高度
+    initHight = models.IntegerField(default=10, verbose_name='满料高度')
+    # 设备版本
+    deviceVersion = models.CharField(max_length=128, default='1', verbose_name='设备版本')
+    # 设备编号
+    deviceSN = models.CharField(max_length=128, default='1', verbose_name='设备编号')
+
     description = models.TextField(blank=True, verbose_name='物料描述')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -69,7 +152,7 @@ class GlobalMenuCategory(models.Model):
 
 class GlobalMenuItem(models.Model):
     """
-    全局菜单商品 (必须依赖设备类型)
+    全局菜单商品
     """
     category = models.ForeignKey(
         GlobalMenuCategory, on_delete=models.CASCADE,
@@ -79,10 +162,41 @@ class GlobalMenuItem(models.Model):
     description = models.TextField(blank=True, verbose_name='商品描述')
     image_url = models.URLField(max_length=512, blank=True, verbose_name='商品图片')
     base_price = models.IntegerField(default=0, verbose_name='基础价格（分）')
+    
+    # 新增字段：主要原料、价格说明、详情页图片
+    main_ingredients = models.CharField(max_length=256, blank=True, verbose_name='主要原料')
+    price_description = models.CharField(max_length=256, blank=True, verbose_name='价格说明')
+    detail_page = models.FileField(
+        upload_to='menu_details/',
+        blank=True,
+        null=True,
+        verbose_name='商品详情页图',
+        validators=[validate_detail_image]
+    )
+
     is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
     sort_order = models.IntegerField(default=0, verbose_name='排序权重')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        # 自动关联插入一条 GlobalMenuSku 记录，name='标准'，category='default'
+        from django.apps import apps
+        GlobalMenuSkuModel = apps.get_model('global_config', 'GlobalMenuSku')
+        if is_new or not self.skus.filter(name='标准').exists():
+            GlobalMenuSkuModel.objects.get_or_create(
+                item=self,
+                name='标准',
+                defaults={
+                    'category': 'default',
+                    'price_delta': 0,
+                    'is_active': True,
+                    'sort_order': 0
+                }
+            )
 
     class Meta:
         db_table = 'global_menu_item'
@@ -156,3 +270,30 @@ class GlobalSkuIngredient(models.Model):
     @property
     def material_code(self):
         return self.material.code
+
+
+class GlobalConsumable(models.Model):
+    """
+    全局包装耗材定义表
+    用于定义杯子、杯盖、打包袋等包装耗材的规格及初始化数据
+    """
+    code = models.CharField(max_length=64, unique=True, verbose_name='耗材编号', db_index=True)
+    name = models.CharField(max_length=128, verbose_name='耗材名称')
+    initQuantity = models.IntegerField(default=0, verbose_name='初始化数量')
+    deviceSN = models.CharField(max_length=128, default='1', verbose_name='设备编号')
+    
+    description = models.TextField(blank=True, verbose_name='耗材描述')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'global_consumable'
+        verbose_name = '全局包装耗材'
+        verbose_name_plural = '全局包装耗材列表'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+
+

@@ -249,7 +249,13 @@ class WechatPayV3:
         :param description: 商品描述
         :return: 微信返回的 prepay_id 等数据
         """
-        if settings.DEBUG:
+        # 仅当处于 DEBUG 模式，且配置的是默认的 Mock 商户号/证书时，才进行本地 Mock。
+        # 这样即使本地 DEBUG=True，一旦配置了真实的商户信息，依然可以走真实的微信统一下单通道。
+        is_mock_payment = settings.DEBUG and (
+            self.mch_id == '12345678' or 
+            'mock' in self.cert_serial.lower()
+        )
+        if is_mock_payment:
             logger.info(f"[DEBUG] Mocking WeChat Pay JSAPI order creation for out_trade_no={out_trade_no}")
             import uuid
             return {"prepay_id": f"mock_prepay_{uuid.uuid4().hex}"}

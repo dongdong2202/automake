@@ -36,7 +36,7 @@ class WechatLoginSerializer(serializers.Serializer):
     )
     # 可选：小程序端通过 wx.getUserInfo 获得的用户信息（头像、昵称）
     nickname = serializers.CharField(required=False, allow_blank=True, max_length=64)
-    avatar_url = serializers.URLField(required=False, allow_blank=True)
+    avatar_url = serializers.CharField(required=False, allow_blank=True, max_length=512)
     # 可选：前端传进来的手机号
     phone = serializers.CharField(required=False, allow_blank=True, max_length=200)
     # 可选：性别 (0未知, 1男, 2女)，年龄
@@ -46,6 +46,7 @@ class WechatLoginSerializer(serializers.Serializer):
 
 class UpdateProfileSerializer(serializers.ModelSerializer):
     """更新用户扩展信息序列化器"""
+    avatar_url = serializers.CharField(required=False, allow_blank=True, max_length=512)
 
     class Meta:
         model = UserProfile

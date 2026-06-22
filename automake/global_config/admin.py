@@ -2,7 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 from .models import (
     DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem,
-    GlobalMenuSku, GlobalSkuIngredient
+    GlobalMenuSku, GlobalSkuIngredient, GlobalConsumable
 )
 
 
@@ -59,13 +59,29 @@ class GlobalMaterialAdmin(GlobalConfigAdmin):
     """
     全局物料定义后台管理
     """
-    list_display = ('id', 'name', 'code', 'unit', 'description', 'created_at')
-    search_fields = ('name', 'code')
+    list_display = ('id', 'name', 'code', 'unit', 'initHight', 'deviceVersion', 'deviceSN', 'description', 'created_at')
+    search_fields = ('name', 'code', 'deviceSN')
     ordering = ('id',)
 
     fieldsets = (
         ('基本信息', {
-            'fields': ('name', 'code', 'unit', 'description')
+            'fields': ('name', 'code', 'unit', 'initHight', 'deviceVersion', 'deviceSN', 'description')
+        }),
+    )
+
+
+@admin.register(GlobalConsumable)
+class GlobalConsumableAdmin(GlobalConfigAdmin):
+    """
+    全局包装耗材后台管理
+    """
+    list_display = ('id', 'name', 'code', 'initQuantity', 'deviceSN', 'description', 'created_at')
+    search_fields = ('name', 'code', 'deviceSN')
+    ordering = ('id',)
+
+    fieldsets = (
+        ('基本信息', {
+            'fields': ('name', 'code', 'initQuantity', 'deviceSN', 'description')
         }),
     )
 
@@ -95,15 +111,18 @@ class GlobalMenuItemAdmin(GlobalConfigAdmin):
     """
     全局菜单商品后台管理
     """
-    list_display = ('id', 'name', 'category', 'base_price', 'is_active', 'sort_order')
+    list_display = ('id', 'name', 'category', 'base_price', 'main_ingredients', 'is_active', 'sort_order')
     list_filter = ('is_active', 'category')
-    search_fields = ('name', 'description')
+    search_fields = ('name', 'description', 'main_ingredients')
     ordering = ('category', 'sort_order', 'id')
     inlines = [GlobalMenuSkuInline]
 
     fieldsets = (
         ('基本信息', {
             'fields': ('category', 'name', 'description', 'image_url')
+        }),
+        ('详情展示与配置', {
+            'fields': ('main_ingredients', 'price_description', 'detail_page')
         }),
         ('价格信息', {
             'fields': ('base_price',)

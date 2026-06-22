@@ -73,6 +73,51 @@ class Store(models.Model):
         """判断门店是否处于营业状态"""
         return self.status == self.STATUS_OPEN
 
+    @property
+    def is_in_business_hours(self):
+        """判断当前时间是否在门店营业时间内"""
+        from django.utils import timezone
+        import datetime
+
+        if not self.business_hours:
+            # 如果没有设置营业时间，默认视为全天营业以提高可用性
+            return True
+
+        # 获取当前本地时间（已应用 settings 配置的时区）
+        now = timezone.localtime()
+        weekday_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
+        current_day = weekday_map[now.weekday()]
+
+        time_range = self.business_hours.get(current_day)
+        if not time_range:
+            # 今天没有配置营业时间，视为不营业
+            return False
+
+        try:
+            # 解析时间范围，如 "08:00-22:00"
+            start_str, end_str = time_range.split('-')
+            start_time = datetime.datetime.strptime(start_str.strip(), "%H:%M").time()
+            end_time = datetime.datetime.strptime(end_str.strip(), "%H:%M").time()
+            current_time = now.time()
+
+            if start_time <= end_time:
+                # 正常不跨天营业时间
+                return start_time <= current_time <= end_time
+            else:
+                # 跨天营业时间处理（如：22:00 到次日 02:00）
+                return current_time >= start_time or current_time <= end_time
+        except Exception:
+            # 解析格式异常等容错处理
+            return False
+
+    @property
+    def can_provide_service(self):
+        """
+        判断是否可提供菜单服务
+        当处于营业状态且在营业时间内，才能提供服务
+        """
+        return self.is_open and self.is_in_business_hours
+
     def clean(self):
         super().clean()
         if self.id is not None:

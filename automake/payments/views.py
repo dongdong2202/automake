@@ -175,3 +175,48 @@ class PayCallbackView(APIView):
     def _fail_response(message: str):
         """微信要求的失败应答格式（微信会重试）"""
         return Response({'code': 'FAIL', 'message': message}, status=200)
+
+
+class PayMockSuccessView(APIView):
+    """
+    开发测试专用的模拟支付成功接口（仅在 DEBUG=True 且开发模式下可用）
+
+    POST /api/pay/mock-success
+    请求体：{ "order_no": "202506090001234" }
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.conf import settings
+        from django.utils import timezone
+        import uuid
+        
+        if not settings.DEBUG:
+            return error('仅在开发调试模式下允许调用模拟支付', code=5005, status=403)
+
+        order_no = request.data.get('order_no', '').strip()
+        if not order_no:
+            return error('order_no 不能为空', code=5001)
+
+        try:
+            from .models import PaymentRecord
+            payment = PaymentRecord.objects.get(
+                out_trade_no=order_no,
+                status=PaymentRecord.STATUS_PENDING
+            )
+        except PaymentRecord.DoesNotExist:
+            return error('未找到该订单的待支付记录', code=5006, status=404)
+
+        try:
+            process_payment_success(
+                order_no=order_no,
+                transaction_id=f"mock_tx_{uuid.uuid4().hex[:20]}",
+                pay_time=timezone.now().isoformat(),
+                wx_amount=payment.amount,
+            )
+        except Exception as e:
+            logger.exception(f"模拟支付成功处理失败: {e}")
+            return error(f"处理失败: {str(e)}", code=5007)
+
+        return ok(message="模拟支付成功，订单已进入出库流程")
+

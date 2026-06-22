@@ -34,9 +34,10 @@ class StoreMenuView(APIView):
         if not store.is_open:
             return error('门店暂未营业', code=3002, status=400)
 
+        print(store.is_open)
         # 自动拉取/同步全局配置的最新菜单及规格
         MenuItem.sync_store_menu(store)
-
+        
         # 获取当前门店所有上架的 MenuItem，并通过 select_related 预加载关联的全局信息
         local_items = (
             MenuItem.objects

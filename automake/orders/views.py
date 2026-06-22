@@ -79,12 +79,14 @@ class OrderCreateView(APIView):
 
     def post(self, request):
         serializer = CreateOrderSerializer(data=request.data)
+        print(serializer)
         if not serializer.is_valid():
             return error(str(serializer.errors), code=4001)
-
+        print(serializer.validated_data)
         store_id = serializer.validated_data['store_id']
         items_data = serializer.validated_data['items']
         remark = serializer.validated_data.get('remark', '')
+        print(store_id, items_data, remark)
 
         try:
             order = create_order(
