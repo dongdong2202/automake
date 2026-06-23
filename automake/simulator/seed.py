@@ -49,10 +49,10 @@ def seed_db():
             store.save()
         print(f"已存在门店: {store.name}")
  
-    from global_config.models import DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku
+    from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku
     
     # 2.5 创建默认设备类型
-    dev_type, dev_type_created = DeviceType.objects.get_or_create(
+    dev_type, dev_type_created = DeviceModel.objects.get_or_create(
         code='coffee_maker',
         defaults={
             'name': '智能咖啡机',
@@ -67,11 +67,10 @@ def seed_db():
         device_sn='SN001',
         defaults={
             'device_name': '智能咖啡机 SN001',
-            'device_model': 'AutoMake-CupV1',
+            'device_model': dev_type,
             'firmware_version': 'v2.1.0',
             'status': Device.STATUS_ONLINE,
             'store': store,
-            'device_type': dev_type,
             'key_code': 'first1',
             'last_heartbeat_at': timezone.now(),
             'mqtt_topic_prefix': 'automake/device/SN001',
@@ -84,27 +83,28 @@ def seed_db():
         # 确保关联到该门店且是在线状态，且 key_code 与门店一致
         device.store = store
         device.status = Device.STATUS_ONLINE
-        device.device_type = dev_type
+        device.device_model = dev_type
         device.key_code = 'first1'
         device.last_heartbeat_at = timezone.now()
         device.save()
         print(f"已存在设备: {device.device_sn}，更新关联门店与状态为在线")
 
     # 3.5 创建全局物料
-    g_bean, _ = GlobalMaterial.objects.get_or_create(
-        code='coffee_bean',
-        defaults={'name': '咖啡豆', 'unit': 'g'}
+    from inventory.models import Material
+    inv_bean, _ = Material.objects.get_or_create(
+        name='咖啡豆',
+        defaults={'code': 'coffee_bean', 'unit': 'g'}
     )
-    g_milk, _ = GlobalMaterial.objects.get_or_create(
-        code='fresh_milk',
-        defaults={'name': '鲜牛奶', 'unit': 'ml'}
+    inv_milk, _ = Material.objects.get_or_create(
+        name='鲜牛奶',
+        defaults={'code': 'fresh_milk', 'unit': 'ml'}
     )
 
 
 
     # 5. 创建全局菜单分类
     g_category, created = GlobalMenuCategory.objects.get_or_create(
-        device_type=dev_type,
+        device_model=dev_type,
         name='经典咖啡',
         defaults={
             'sort_order': 1,
@@ -155,7 +155,7 @@ def seed_db():
     # 美式咖啡
     item_americano, created = MenuItem.objects.get_or_create(
         store=store,
-        device_type=dev_type,
+        device_model=dev_type,
         global_item=g_item_americano,
         defaults={
             'base_price': 1500, # 15元
@@ -179,7 +179,7 @@ def seed_db():
     # 拿铁咖啡
     item_latte, created = MenuItem.objects.get_or_create(
         store=store,
-        device_type=dev_type,
+        device_model=dev_type,
         global_item=g_item_latte,
         defaults={
             'base_price': 1800, # 18元

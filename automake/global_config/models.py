@@ -76,62 +76,36 @@ def validate_detail_image(image):
         image.seek(0)
 
 
-class DeviceType(models.Model):
+class DeviceModel(models.Model):
     """
-    设备类型定义
-    不同类型的设备（如单头、双头咖啡机，是否支持制冰功能等）
+    设备型号定义
+    不同型号的设备（如单头、双头咖啡机，是否支持制冰功能等）
     """
-    name = models.CharField(max_length=128, verbose_name='设备类型名称')
-    code = models.CharField(max_length=64, unique=True, verbose_name='类型编码')
-    description = models.TextField(blank=True, verbose_name='类型描述')
+    name = models.CharField(max_length=128, verbose_name='设备型号名称')
+    code = models.CharField(max_length=64, unique=True, verbose_name='型号编码')
+    description = models.TextField(blank=True, verbose_name='型号描述')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
     class Meta:
-        db_table = 'global_device_type'
-        verbose_name = '全局设备类型'
-        verbose_name_plural = '全局设备类型列表'
+        db_table = 'global_device_model'
+        verbose_name = '全局设备型号'
+        verbose_name_plural = '全局设备型号列表'
 
     def __str__(self):
         return f"{self.name} ({self.code})"
 
 
-class GlobalMaterial(models.Model):
-    """
-    全局物料定义表
-    限制在配方及库存管理中能选取的物料范围
-    """
-    name = models.CharField(max_length=64, verbose_name='物料名称')
-    code = models.CharField(max_length=64, unique=True, verbose_name='物料编码')
-    unit = models.CharField(max_length=16, default='cm', verbose_name='标准单位')
 
-    # 满料高度
-    initHight = models.IntegerField(default=10, verbose_name='满料高度')
-    # 设备版本
-    deviceVersion = models.CharField(max_length=128, default='1', verbose_name='设备版本')
-    # 设备编号
-    deviceSN = models.CharField(max_length=128, default='1', verbose_name='设备编号')
-
-    description = models.TextField(blank=True, verbose_name='物料描述')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
-
-    class Meta:
-        db_table = 'global_material'
-        verbose_name = '全局物料'
-        verbose_name_plural = '全局物料列表'
-
-    def __str__(self):
-        return f"{self.name} ({self.code})"
 
 
 class GlobalMenuCategory(models.Model):
     """
-    全局菜单分类 (必须依赖设备类型)
+    全局菜单分类 (必须依赖设备型号)
     """
-    device_type = models.ForeignKey(
-        DeviceType, on_delete=models.PROTECT,
-        related_name='categories', verbose_name='设备类型'
+    device_model = models.ForeignKey(
+        DeviceModel, on_delete=models.PROTECT,
+        related_name='categories', verbose_name='设备型号'
     )
     name = models.CharField(max_length=64, verbose_name='分类名称')
     icon_url = models.FileField(upload_to='global_category_icons/', max_length=512, blank=True, verbose_name='分类图标')
@@ -147,7 +121,7 @@ class GlobalMenuCategory(models.Model):
         ordering = ['sort_order', 'id']
 
     def __str__(self):
-        return f"{self.name} ({self.device_type.name})"
+        return f"{self.name} ({self.device_model.name})"
 
 
 class GlobalMenuItem(models.Model):
@@ -246,8 +220,8 @@ class GlobalSkuIngredient(models.Model):
         related_name='ingredients', verbose_name='全局规格(SKU)'
     )
     material = models.ForeignKey(
-        GlobalMaterial, on_delete=models.PROTECT,
-        related_name='ingredients', verbose_name='物料'
+        'inventory.Material', to_field='name', on_delete=models.CASCADE,
+        db_column='material_name', related_name='ingredients', verbose_name='物料'
     )
     quantity = models.DecimalField(
         max_digits=10, decimal_places=2, verbose_name='用量'
@@ -261,11 +235,11 @@ class GlobalSkuIngredient(models.Model):
 
     def __str__(self):
         u = self.unit if self.unit else self.material.unit
-        return f"{self.material.name} ({self.quantity}{u})"
+        return f"{self.material_id} ({self.quantity}{u})"
 
     @property
     def material_name(self):
-        return self.material.name
+        return self.material_id
 
     @property
     def material_code(self):

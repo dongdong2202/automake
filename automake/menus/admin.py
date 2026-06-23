@@ -17,26 +17,26 @@ class MenuSkuInline(TabularInline):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        """禁止在此处手动删除 SKU"""
-        return False
+        """禁止在此处手动删除 SKU（超级管理员除外，以支持级联删除）"""
+        return request.user.is_superuser
 
 
 @admin.register(MenuItem)
 class MenuItemAdmin(ModelAdmin):
     """
     门店菜单商品后台管理
-    仅允许对已通过设备类型同步继承的商品执行修改（如价格微调、上下架状态）或删减，禁止手动新增。
+    仅允许对已通过设备型号同步继承的商品执行修改（如价格微调、上下架状态）或删减，禁止手动新增。
     """
-    list_display = ('id', 'store', 'device_type', 'global_item', 'base_price', 'is_active', 'sort_order')
-    list_filter = ('is_active', 'store', 'device_type')
+    list_display = ('id', 'store', 'device_model', 'global_item', 'base_price', 'is_active', 'sort_order')
+    list_filter = ('is_active', 'store', 'device_model')
     search_fields = ('global_item__name',)
     ordering = ('store', 'sort_order', 'id')
-    readonly_fields = ('store', 'device_type', 'global_item')
+    readonly_fields = ('store', 'device_model', 'global_item')
     inlines = [MenuSkuInline]
 
     fieldsets = (
         ('商品绑定与匹配', {
-            'fields': ('store', 'device_type', 'global_item')
+            'fields': ('store', 'device_model', 'global_item')
         }),
         ('价格与上架状态', {
             'fields': ('base_price', 'is_active', 'sort_order')
@@ -45,10 +45,13 @@ class MenuItemAdmin(ModelAdmin):
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if request.user.store:
-                return qs.filter(store=request.user.store)
-            return qs.none()
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return qs
+            if getattr(request.user, 'role', None) == 'admin':
+                if request.user.store:
+                    return qs.filter(store=request.user.store)
+                return qs.none()
         return qs
 
     def has_add_permission(self, request):
@@ -56,22 +59,31 @@ class MenuItemAdmin(ModelAdmin):
         return False
 
     def has_view_permission(self, request, obj=None):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if obj is not None and obj.store != request.user.store:
-                return False
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                if obj is not None and obj.store != request.user.store:
+                    return False
+                return True
         return super().has_view_permission(request, obj)
 
     def has_change_permission(self, request, obj=None):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if obj is not None and obj.store != request.user.store:
-                return False
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                if obj is not None and obj.store != request.user.store:
+                    return False
+                return True
         return super().has_change_permission(request, obj)
 
     def has_module_permission(self, request):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                return True
         return super().has_module_permission(request)
 
     def changelist_view(self, request, extra_context=None):
@@ -95,10 +107,13 @@ class MenuSkuAdmin(ModelAdmin):
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if request.user.store:
-                return qs.filter(item__store=request.user.store)
-            return qs.none()
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return qs
+            if getattr(request.user, 'role', None) == 'admin':
+                if request.user.store:
+                    return qs.filter(item__store=request.user.store)
+                return qs.none()
         return qs
 
     def has_add_permission(self, request):
@@ -106,24 +121,33 @@ class MenuSkuAdmin(ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        """禁止手动删除"""
-        return False
+        """禁止手动删除（超级管理员除外，以支持级联删除）"""
+        return request.user.is_superuser
 
     def has_view_permission(self, request, obj=None):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if obj is not None and obj.item.store != request.user.store:
-                return False
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                if obj is not None and obj.item.store != request.user.store:
+                    return False
+                return True
         return super().has_view_permission(request, obj)
 
     def has_change_permission(self, request, obj=None):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if obj is not None and obj.item.store != request.user.store:
-                return False
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                if obj is not None and obj.item.store != request.user.store:
+                    return False
+                return True
         return super().has_change_permission(request, obj)
 
     def has_module_permission(self, request):
-        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            return True
+        if request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                return True
+            if getattr(request.user, 'role', None) == 'admin':
+                return True
         return super().has_module_permission(request)

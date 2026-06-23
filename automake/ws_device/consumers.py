@@ -290,24 +290,95 @@ class DeviceConsumer(AsyncWebsocketConsumer):
 
     async def handle_status_report(self, payload):
         """
-        处理设备状态上报消息（如温度、余料量、传感器状态等）。
-        可根据业务需要持久化到数据库或推送给监控系统。
+        处理设备状态上报消息。
+
+        上位机协议约定的 data 字段结构：
+        {
+            "healthy": false,       # 整机健康状态
+            "lastTime": 0,          # 上位机时间戳（毫秒）
+            "disconnected": false,  # 是否断线
+            "memSize": {"master": 1024, "slave": 1024},
+            "abnormality": {        # 各传感器/执行机构异常状态
+                "temperature": {"mainR": 25.0, "chargeR": 25.0},
+                "ice": {"a1": false}, "transfer": {"a1": false},
+                "drop": {"a1": false}, "drain": {"a1": false},
+                "liquid": {"a1": false}, "solid": {"a1": false},
+                "press": {"a1": false}, "cover": {"a1": false},
+                "arm": {"a1": false}, "take": {"a1": false}
+            }
+        }
+
+        处理逻辑：
+          1. 解析协议字段，写入/更新 DeviceMonitorSnapshot（upsert）
+          2. 向 monitor_dashboard Channel Group 广播最新状态
+          3. 向设备回复 ack
         """
         data = payload.get('data', {})
         msg_id = payload.get('msg_id', '')
 
         logger.info(f'[WS] 设备状态上报: sn={self.sn}, data={data}')
 
-        # TODO: 可在此处将状态写入 devices 模型，或推送给监控大屏
-        # await self.save_device_status(self.sn, data)
+        # ---- 1. 持久化到监控快照表（upsert：存在则更新，不存在则创建）----
+        snapshot = await database_sync_to_async(self._upsert_monitor_snapshot)(data)
 
+        # ---- 2. 向监控大屏广播实时状态 ------------------------------------
+        # 通过 Channel Layer 向所有连接的监控大屏客户端推送最新状态
+        push_payload = {
+            'type': 'device_status',           # 前端识别的消息类型
+            'device_sn': self.sn,
+            'display_status': snapshot.display_status,  # normal / warning / fault
+            'healthy': snapshot.healthy,
+            'disconnected': snapshot.disconnected,
+            'last_time': snapshot.last_time,
+            'mem_size': snapshot.mem_size,
+            'abnormality': snapshot.abnormality,
+            'reported_at': snapshot.reported_at.isoformat(),
+        }
+        await self.channel_layer.group_send(
+            'monitor_dashboard',
+            {
+                'type': 'monitor.device_status',  # 调用 MonitorConsumer.monitor_device_status
+                'payload': push_payload,
+            }
+        )
+
+        # ---- 3. 向设备回复 ack --------------------------------------------
         await self.send_json({
             'type': 'ack',
             'msg_id': msg_id,
             'action': 'status_report',
             'sn': self.sn,
-            'message': '设备状态已收到。'
+            'message': '设备状态已收到并更新。'
         })
+
+    def _upsert_monitor_snapshot(self, data: dict):
+        """
+        同步方法：将 status_report data 写入 DeviceMonitorSnapshot（upsert）。
+        由 database_sync_to_async 包裹后在异步环境中调用。
+        """
+        from monitor.models import DeviceMonitorSnapshot
+
+        # 解析协议字段，提供默认值保证健壮性
+        healthy = data.get('healthy', True)
+        disconnected = data.get('disconnected', False)
+        last_time = data.get('lastTime', 0)
+        mem_size = data.get('memSize', {})
+        abnormality = data.get('abnormality', {})
+        
+
+        # update_or_create：以 device_sn 为唯一键执行 upsert
+        snapshot, _ = DeviceMonitorSnapshot.objects.update_or_create(
+            device_sn=self.sn,
+            defaults={
+                'healthy': healthy,
+                'disconnected': disconnected,
+                'last_time': last_time,
+                'mem_size': mem_size,
+                'abnormality': abnormality,
+                'raw_data': data,   # 完整保存原始数据便于排查
+            }
+        )
+        return snapshot
 
     # ================================================================
     # 下行消息处理方法（由 Channel Layer group_send 触发）

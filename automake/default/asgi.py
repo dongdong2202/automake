@@ -25,7 +25,8 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
 
-from ws_device.routing import websocket_urlpatterns
+from ws_device.routing import websocket_urlpatterns as device_ws_patterns
+from monitor.routing import websocket_urlpatterns as monitor_ws_patterns
 
 application = ProtocolTypeRouter({
     # HTTP 请求走标准 Django ASGI 应用
@@ -37,7 +38,8 @@ application = ProtocolTypeRouter({
     #   URLRouter                  —— 按 URL 路径分发到对应 Consumer
     'websocket': AllowedHostsOriginValidator(
         AuthMiddlewareStack(
-            URLRouter(websocket_urlpatterns)
+            URLRouter(device_ws_patterns + monitor_ws_patterns)
         )
     ),
 })
+

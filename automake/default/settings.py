@@ -65,6 +65,7 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 INSTALLED_APPS = [
     'unfold',                           # Unfold 美化后台管理 (必须放在 admin 之前)
+    'daphne',                           # Daphne：ASGI 服务器（必须在 staticfiles 之前）
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -76,7 +77,6 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',         # JWT 认证
     'drf_spectacular',                  # OpenAPI 3.0 接口文档生成
     'channels',                         # Django Channels：WebSocket 支持
-    'daphne',                           # Daphne：ASGI 服务器（Channels 推荐）
     # 业务应用
     'global_config',                    # 全局控制与定义
     'users',                            # 用户、权限
@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     'notifications',                    # 消息通知（微信订阅消息、取餐码、告警）
     'inventory',                        # 物料仓库与进销存管理
     'ws_device',                        # 上位机 WebSocket 通信模块
+    'monitor',                          # 设备监控与分析模块
 ]
 
 # ============================================================
@@ -159,7 +160,7 @@ ROOT_URLCONF = 'default.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -429,6 +430,7 @@ UNFOLD = {
     "SITE_TITLE": "AutoMake 智能制造系统后台",
     "SITE_HEADER": "AutoMake 后台管理",
     # "THEME": "light",  # 若要强制使用浅色主题（并禁用右上角的主题切换按钮），可以取消此行注释。可选值: "light" 或 "dark"
+    "DASHBOARD_CALLBACK": "global_config.dashboard.dashboard_callback",
 }
 
 # ============================================================

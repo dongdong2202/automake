@@ -37,12 +37,12 @@ class Device(models.Model):
     key_code = models.CharField(
         max_length=32,   null=True, blank=True, verbose_name='门店注册码')
     device_name = models.CharField(max_length=128, blank=True, verbose_name='设备名称')
-    # 设备型号/类型
-    device_model = models.CharField(max_length=64, blank=True, verbose_name='设备型号')
-    device_type = models.ForeignKey(
-        'global_config.DeviceType', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='devices', verbose_name='设备类型'
+    # 设备型号
+    device_model = models.ForeignKey(
+        'global_config.DeviceModel', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='devices', verbose_name='设备型号'
     )
+
     status = models.CharField(
         max_length=20, choices=STATUS_CHOICES,
         default=STATUS_OFFLINE, db_index=True, verbose_name='设备状态'
@@ -202,24 +202,29 @@ class DeviceMaterialStock(models.Model):
     """
     设备物料库存表 (DB_Book_Stock)
     
-    记录设备上各物料的账面实际库存。
     """
     device = models.ForeignKey(
         'devices.Device', on_delete=models.CASCADE,
         related_name='material_stocks', verbose_name='设备'
     )
-    material_code = models.CharField(max_length=64, db_index=True, verbose_name='物料编码')
-    material_name = models.CharField(max_length=64, blank=True, verbose_name='物料名称')
-    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name='账面库存')
+    
+    name = models.ForeignKey(
+        'inventory.Material', to_field='name',
+        on_delete=models.CASCADE, db_column='name', verbose_name='物料名称'
+    )
+    initHight = models.IntegerField(default=100, verbose_name='满料高度')
+    code = models.CharField(max_length=64, unique=True, verbose_name='物料编码')
+    unit = models.CharField(max_length=16, default='cm', verbose_name='标准单位')
+    warn_level = models.DecimalField(max_digits=10, decimal_places=2, default=10.00, verbose_name='预警高度')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
     class Meta:
         db_table = 'device_material_stock'
-        unique_together = ('device', 'material_code')
+        unique_together = ('device', 'code')
         verbose_name = '设备物料库存'
         verbose_name_plural = '设备物料库存列表'
 
     def __str__(self):
-        return f"{self.device.device_sn} - {self.material_code}: {self.quantity}"
+        return f"{self.device.device_sn} - {self.name_id} ({self.code})"
 

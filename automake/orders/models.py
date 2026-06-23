@@ -133,11 +133,11 @@ class OrderItem(models.Model):
     )
     # 商品快照（防止菜单修改后影响历史订单）
     item = models.ForeignKey(
-        'menus.MenuItem', on_delete=models.PROTECT,
+        'menus.MenuItem', on_delete=models.SET_NULL,
         null=True, related_name='order_items', verbose_name='商品'
     )
     sku = models.ForeignKey(
-        'menus.MenuSku', on_delete=models.PROTECT,
+        'menus.MenuSku', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='order_items', verbose_name='规格'
     )
     # 支持多规格选项选择

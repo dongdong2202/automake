@@ -31,10 +31,16 @@ class StoreMenuView(APIView):
         except Store.DoesNotExist:
             return error('门店不存在', code=3001, status=404)
 
-        if not store.is_open:
+        # 超级管理员 cxd 或 super_admin 可以查看任意门店菜单，且不受营业状态限制
+        is_cxd = False
+        if request.user and request.user.is_authenticated:
+            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                is_cxd = True
+
+        if not store.is_open and not is_cxd:
             return error('门店暂未营业', code=3002, status=400)
 
-        print(store.is_open)
+  
         # 自动拉取/同步全局配置的最新菜单及规格
         MenuItem.sync_store_menu(store)
         
@@ -42,13 +48,14 @@ class StoreMenuView(APIView):
         local_items = (
             MenuItem.objects
             .filter(store=store, is_active=True)
-            .select_related('global_item', 'global_item__category', 'device_type')
+            .select_related('global_item', 'global_item__category', 'device_model')
             .prefetch_related('skus', 'skus__global_sku')
             .order_by('sort_order', 'id')
         )
         
         categories_dict = {}
         for item in local_items:
+            print(item.base_price)
             if not item.is_active:
                 continue
             g_item = item.global_item
@@ -96,7 +103,10 @@ class StoreMenuView(APIView):
                 'id': item.id,
                 'name': g_item.name,
                 'description': g_item.description,
-                'image_url': g_item.image_url,
+                'image_url': g_item.image_url.url if g_item.image_url else '',
+                'main_ingredients': g_item.main_ingredients,
+                'price_description': g_item.price_description,
+                'detail_page': g_item.detail_page.url if g_item.detail_page else '',
                 'base_price': item.base_price,
                 'is_active': item.is_active,
                 'sort_order': item.sort_order,
@@ -108,9 +118,10 @@ class StoreMenuView(APIView):
         for cat in sorted_categories:
             cat['items'] = sorted(cat['items_list'], key=lambda i: (i['sort_order'], i['id']))
             del cat['items_list']
-
+        print(sorted_categories)
         return ok({
             'store_id': store.id,
             'store_name': store.name,
+            'is_in_business_hours': store.is_in_business_hours,
             'categories': sorted_categories,
         })

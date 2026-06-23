@@ -131,9 +131,7 @@ def process_payment_success(order_no: str, transaction_id: str,
     处理支付成功（由微信回调触发）。
     依据 g.md 要求执行库存原子预扣与异常冲正回滚流程。
     """
-    from devices.models import DeviceMaterialStock
     from orders.services import get_redis_stock_key, MenuSku
-    from django.db.models import F
     from decimal import Decimal
     from django_redis import get_redis_connection
     
@@ -277,19 +275,8 @@ def process_payment_success(order_no: str, transaction_id: str,
                 from_status=OrderMain.STATUS_PENDING_PAY,
                 to_status=OrderMain.STATUS_PAID,
                 operator='system',
-                remark=f'微信支付成功，扣减账面库存并下发，交易号: {transaction_id}'
+                remark=f'微信支付成功，指令已下发，交易号: {transaction_id}'
             )
-
-            # DB 乐观锁扣库存
-            for code, qty in required_materials.items():
-                updated = DeviceMaterialStock.objects.filter(
-                    device=device,
-                    material_code=code,
-                    quantity__gte=qty
-                ).update(quantity=F('quantity') - qty)
-                
-                if updated == 0:
-                    raise ValueError(f"物料 {code} 数据库账面库存不足")
 
             # 创建生产任务
             task = create_production_task(order)

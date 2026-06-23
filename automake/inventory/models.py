@@ -14,7 +14,7 @@ class Material(models.Model):
     
     记录仓库中所有原材料/物资的属性，并保存当前的库存余量及被取走的次数。
     """
-    name = models.CharField(max_length=128, verbose_name="物料名称")
+    name = models.CharField(max_length=128, unique=True, verbose_name="物料名称", help_text="名称必须规范、一致，直接影响下位机用料统计")
     code = models.CharField(max_length=64, unique=True, verbose_name="物料编号", db_index=True)
     quantity = models.DecimalField(
         max_digits=10, 
@@ -64,8 +64,8 @@ class InventoryRecord(models.Model):
     RECORD_TYPE_IN = "in"
     RECORD_TYPE_OUT = "out"
     RECORD_TYPE_CHOICES = [
-        (RECORD_TYPE_IN, "进货/入库"),
-        (RECORD_TYPE_OUT, "出货/出库"),
+        (RECORD_TYPE_IN, "入库"),
+        (RECORD_TYPE_OUT, "出库"),
     ]
 
     material = models.ForeignKey(
@@ -93,7 +93,7 @@ class InventoryRecord(models.Model):
         blank=True, 
         related_name="material_records",
         verbose_name="出库目标门店", 
-        help_text="仅在“出货/出库”时需要选择对应的门店"
+        help_text="仅在“出库”时需要选择对应的门店"
     )
     operator = models.ForeignKey(
         settings.AUTH_USER_MODEL, 

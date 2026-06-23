@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 from users.models import User
 from stores.models import Store
 from devices.models import Device
-from global_config.models import DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku, GlobalSkuIngredient
+from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku, GlobalSkuIngredient
 from menus.models import MenuItem, MenuSku
 from orders.models import OrderMain, OrderItem
 from payments.models import PaymentRecord
@@ -29,23 +29,24 @@ class PaymentAPITests(APITestCase):
             status=Store.STATUS_OPEN,
             code="STORE-PAY-1"
         )
-        self.dev_type = DeviceType.objects.create(name="咖啡机", code="coffee_maker_pay")
+        self.dev_type = DeviceModel.objects.create(name="咖啡机", code="coffee_maker_pay")
         
         self.device = Device.objects.create(
             store=self.store,
             device_sn="SN-TEST-PAY-100",
             device_name="测试支付咖啡机",
-            device_type=self.dev_type,
+            device_model=self.dev_type,
             key_code="STORE-PAY-1",
             status=Device.STATUS_ONLINE
         )
 
         # 2. 全局物料与菜单定义
-        self.bean = GlobalMaterial.objects.create(name="咖啡豆", code="coffee_bean", unit="g")
-        self.milk = GlobalMaterial.objects.create(name="鲜牛奶", code="fresh_milk", unit="ml")
+        from inventory.models import Material
+        self.inv_bean = Material.objects.create(name="咖啡豆", code="coffee_bean", unit="g")
+        self.inv_milk = Material.objects.create(name="鲜牛奶", code="fresh_milk", unit="ml")
 
         self.category = GlobalMenuCategory.objects.create(
-            device_type=self.dev_type, name="咖啡", sort_order=1, is_active=True
+            device_model=self.dev_type, name="咖啡", sort_order=1, is_active=True
         )
         self.g_item = GlobalMenuItem.objects.create(
             category=self.category, name="拿铁", base_price=1500, is_active=True
@@ -55,8 +56,8 @@ class PaymentAPITests(APITestCase):
         self.g_sku = GlobalMenuSku.objects.create(
             item=self.g_item, name="大杯/热", price_delta=300, is_active=True
         )
-        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.bean, quantity=15)
-        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.milk, quantity=150)
+        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_bean, quantity=15)
+        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_milk, quantity=150)
 
         # 4. 同步门店菜单
         MenuItem.sync_store_menu(self.store)
@@ -116,8 +117,8 @@ class PaymentAPITests(APITestCase):
 
             # 模拟出库设备物料库存准备
             from devices.models import DeviceMaterialStock
-            DeviceMaterialStock.objects.create(device=self.device, material_code="coffee_bean", quantity=100)
-            DeviceMaterialStock.objects.create(device=self.device, material_code="fresh_milk", quantity=1000)
+            DeviceMaterialStock.objects.create(device=self.device, name=self.inv_bean, code="coffee_bean")
+            DeviceMaterialStock.objects.create(device=self.device, name=self.inv_milk, code="fresh_milk")
 
             success_response = self.client.post(mock_success_url, {"order_no": self.order.order_no}, format='json')
             self.assertEqual(success_response.status_code, status.HTTP_200_OK)

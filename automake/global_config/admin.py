@@ -1,7 +1,7 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 from .models import (
-    DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem,
+    DeviceModel, GlobalMenuCategory, GlobalMenuItem,
     GlobalMenuSku, GlobalSkuIngredient, GlobalConsumable
 )
 
@@ -38,10 +38,10 @@ class GlobalConfigAdmin(ModelAdmin):
         return super().has_view_permission(request, obj)
 
 
-@admin.register(DeviceType)
-class DeviceTypeAdmin(GlobalConfigAdmin):
+@admin.register(DeviceModel)
+class DeviceModelAdmin(GlobalConfigAdmin):
     """
-    设备类型后台管理
+    设备型号后台管理
     """
     list_display = ('id', 'name', 'code', 'description', 'created_at')
     search_fields = ('name', 'code')
@@ -54,20 +54,8 @@ class DeviceTypeAdmin(GlobalConfigAdmin):
     )
 
 
-@admin.register(GlobalMaterial)
-class GlobalMaterialAdmin(GlobalConfigAdmin):
-    """
-    全局物料定义后台管理
-    """
-    list_display = ('id', 'name', 'code', 'unit', 'initHight', 'deviceVersion', 'deviceSN', 'description', 'created_at')
-    search_fields = ('name', 'code', 'deviceSN')
-    ordering = ('id',)
 
-    fieldsets = (
-        ('基本信息', {
-            'fields': ('name', 'code', 'unit', 'initHight', 'deviceVersion', 'deviceSN', 'description')
-        }),
-    )
+
 
 
 @admin.register(GlobalConsumable)
@@ -91,14 +79,14 @@ class GlobalMenuCategoryAdmin(GlobalConfigAdmin):
     """
     全局菜单分类后台管理
     """
-    list_display = ('id', 'name', 'device_type', 'sort_order', 'is_active', 'created_at')
-    list_filter = ('is_active', 'device_type')
+    list_display = ('id', 'name', 'device_model', 'sort_order', 'is_active', 'created_at')
+    list_filter = ('is_active', 'device_model')
     search_fields = ('name',)
     ordering = ('sort_order', 'id')
 
     fieldsets = (
         ('基本信息', {
-            'fields': ('device_type', 'name', 'icon_url')
+            'fields': ('device_model', 'name', 'icon_url')
         }),
         ('状态与排序', {
             'fields': ('is_active', 'sort_order')

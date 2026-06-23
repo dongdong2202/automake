@@ -598,6 +598,3 @@ receive_material_report() → create_alarm_event()
 
 
 
-
-backend-expert，修改过菜单模块， GlobalMenuItem 增加字段：主要原料、价格说明、详情页（小于1M，宽度750px ），
-  在admin页面进行对应调整，并且保存后，会自动插入到GlobalMenuSkuAdmin一条记录，name='标准'， category='default'

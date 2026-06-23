@@ -293,10 +293,8 @@ def process_dispense_failure(order: OrderMain, operator: str = 'system', remark:
     物理出库失败后的回滚机制 (Explicit Failure Rollback)
     
     1. 开启 DB 事务，将订单状态变更为 FAILED (failed)。
-    2. 利用乐观锁将 DB 库存加回。
-    3. 反向补偿 Redis 虚拟库存。
+    2. 反向补偿 Redis 虚拟库存。
     """
-    from devices.models import DeviceMaterialStock
     
     if order.status == OrderMain.STATUS_EXCEPTION: # STATUS_EXCEPTION mapped to 'failed'
         logger.info(f'订单 {order.order_no} 已经是 FAILED 状态，跳过回滚。')
@@ -338,25 +336,11 @@ def process_dispense_failure(order: OrderMain, operator: str = 'system', remark:
     redis_conn = get_redis_connection("default")
 
     for code, qty in required_materials.items():
-        # 2. 利用乐观锁将 DB 库存加回
-        updated = DeviceMaterialStock.objects.filter(
-            device=device,
-            material_code=code
-        ).update(quantity=F('quantity') + qty)
-
-        if updated == 0:
-            # 兼容处理：若不存在该物料记录，则直接创建
-            DeviceMaterialStock.objects.create(
-                device=device,
-                material_code=code,
-                quantity=qty
-            )
-
-        # 3. 反向补偿 Redis
+        # 2. 反向补偿 Redis
         key = get_redis_stock_key(device.device_sn, code)
         val = int(qty * 100)
         redis_conn.incrby(key, val)
-        logger.info(f'[ROLLBACK] 成功加回库存: order_no={order.order_no}, material={code}, qty={qty}')
+        logger.info(f'[ROLLBACK] 成功加回 Redis 库存: order_no={order.order_no}, material={code}, qty={qty}')
 
 
 @transaction.atomic

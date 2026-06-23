@@ -20,9 +20,9 @@ class MenuItem(models.Model):
         'stores.Store', on_delete=models.CASCADE,
         related_name='menu_items', verbose_name='门店'
     )
-    device_type = models.ForeignKey(
-        'global_config.DeviceType', on_delete=models.CASCADE,
-        related_name='local_items', verbose_name='设备类型'
+    device_model = models.ForeignKey(
+        'global_config.DeviceModel', on_delete=models.CASCADE,
+        related_name='local_items', verbose_name='设备型号'
     )
     global_item = models.ForeignKey(
         'global_config.GlobalMenuItem', on_delete=models.CASCADE,
@@ -52,25 +52,25 @@ class MenuItem(models.Model):
     @classmethod
     def sync_store_menu(cls, store):
         """
-        自动根据门店所拥有的物理设备类型同步全局菜单及规格 (SKU)。
+        自动根据门店所拥有的物理设备型号同步全局菜单及规格 (SKU)。
         保留门店已经做出的价格微调与激活状态修改。
         """
         from devices.models import Device
         from global_config.models import GlobalMenuCategory, GlobalMenuItem
         
-        # 获取门店目前拥有的所有已注册设备的物理设备类型
-        store_device_types = list(
-            Device.objects.filter(store=store, device_type__isnull=False)
-            .values_list('device_type_id', flat=True)
+        # 获取门店目前拥有的所有已注册设备的物理设备型号
+        store_device_models = list(
+            Device.objects.filter(store=store, device_model__isnull=False)
+            .values_list('device_model_id', flat=True)
             .distinct()
         )
-        if not store_device_types:
+        if not store_device_models:
             return
 
-        # 1. 依据设备类型获取对应的全局分类
+        # 1. 依据设备型号获取对应的全局分类
         global_categories = GlobalMenuCategory.objects.filter(
             is_active=True,
-            device_type_id__in=store_device_types
+            device_model_id__in=store_device_models
         )
 
         # 2. 继承商品
@@ -79,7 +79,7 @@ class MenuItem(models.Model):
         for g_item in global_items:
             menu_item, created = cls.objects.get_or_create(
                 store=store,
-                device_type=g_item.category.device_type,
+                device_model=g_item.category.device_model,
                 global_item=g_item,
                 defaults={
                     'base_price': g_item.base_price,
@@ -105,7 +105,7 @@ class MenuItem(models.Model):
         """
         验证逻辑：
         1. 验证 base_price 是否在全局 base_price 的 80% 到 120% 之间（上下浮动20%）。
-        2. 验证 MenuItem 的 device_type 是否与对应全局商品的分类下的 device_type 一致。
+        2. 验证 MenuItem 的 device_model 是否与对应全局商品的分类下的 device_model 一致。
         """
         super().clean()
         if self.global_item:
@@ -117,10 +117,10 @@ class MenuItem(models.Model):
                     'base_price': f'价格必须在全局价格（{self.global_item.base_price}分）的上下20%范围内（即 {min_price}分 ~ {max_price}分 之间）'
                 })
             
-            # 设备类型一致性验证
-            if self.device_type and self.global_item.category.device_type != self.device_type:
+            # 设备型号一致性验证
+            if self.device_model and self.global_item.category.device_model != self.device_model:
                 raise ValidationError({
-                    'device_type': f'设备类型与全局商品分类关联的设备类型（{self.global_item.category.device_type.name}）不匹配'
+                    'device_model': f'设备型号与全局商品分类关联的设备型号（{self.global_item.category.device_model.name}）不匹配'
                 })
 
 

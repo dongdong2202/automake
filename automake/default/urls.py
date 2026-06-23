@@ -47,6 +47,9 @@ urlpatterns = [
     # 消息通知模块（取餐码、订单状态查询、事件告警）
     path('api/notify/', include('notifications.urls')),
 
+    # 设备监控与分析模块
+    path('api/monitor/', include('monitor.urls')),
+
 
     # 上位机模拟器
     path('simulator/', include('simulator.urls')),

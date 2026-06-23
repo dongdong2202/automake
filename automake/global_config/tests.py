@@ -2,7 +2,7 @@ from django.test import TestCase, RequestFactory, Client
 from django.utils import timezone
 from stores.models import Store
 from devices.models import Device
-from .models import DeviceType, GlobalMaterial, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku, GlobalSkuIngredient
+from .models import DeviceModel, GlobalMenuCategory, GlobalMenuItem, GlobalMenuSku, GlobalSkuIngredient
 from menus.models import MenuItem
 
 
@@ -17,22 +17,23 @@ class DummyStorage:
 class GlobalMenuInheritanceTests(TestCase):
     def setUp(self):
         self.store = Store.objects.create(name="测试门店", status=Store.STATUS_OPEN)
-        self.dev_type = DeviceType.objects.create(name="测试设备类型", code="test_dev_type")
+        self.dev_type = DeviceModel.objects.create(name="测试设备类型", code="test_dev_type")
         
         # Link the store to a device of this type
         self.device = Device.objects.create(
             store=self.store,
             device_sn="TEST-SN-9999",
             device_name="测试设备",
-            device_type=self.dev_type,
+            device_model=self.dev_type,
             status=Device.STATUS_ONLINE
         )
         
-        self.g_material = GlobalMaterial.objects.create(
+        from inventory.models import Material
+        self.inv_material = Material.objects.create(
             name="浓缩咖啡液", code="espresso", unit="ml"
         )
         self.g_cat = GlobalMenuCategory.objects.create(
-            device_type=self.dev_type, name="全局咖啡", sort_order=1, is_active=True
+            device_model=self.dev_type, name="全局咖啡", sort_order=1, is_active=True
         )
         self.g_item = GlobalMenuItem.objects.create(
             category=self.g_cat, name="全局美式", base_price=1500, is_active=True
@@ -42,7 +43,7 @@ class GlobalMenuInheritanceTests(TestCase):
             price_delta=300, is_active=True
         )
         self.ingredient = GlobalSkuIngredient.objects.create(
-            sku=self.g_sku, material=self.g_material, quantity=60
+            sku=self.g_sku, material=self.inv_material, quantity=60
         )
 
     def test_sync_global_menu_action(self):
@@ -65,7 +66,7 @@ class GlobalMenuInheritanceTests(TestCase):
         self.assertTrue(MenuItem.objects.filter(store=self.store, global_item=self.g_item).exists())
         l_item = MenuItem.objects.get(store=self.store, global_item=self.g_item)
         self.assertEqual(l_item.base_price, 1500)
-        self.assertEqual(l_item.device_type, self.dev_type)
+        self.assertEqual(l_item.device_model, self.dev_type)
 
         # Verify store menu API serializes the dynamic tree correctly
         client = Client()
@@ -97,13 +98,13 @@ class GlobalMenuInheritanceTests(TestCase):
         empty_store = Store.objects.create(name="空设备门店", status=Store.STATUS_OPEN)
 
         # Create a store with a DIFFERENT device type
-        other_dev_type = DeviceType.objects.create(name="别样设备类型", code="other_type")
+        other_dev_type = DeviceModel.objects.create(name="别样设备类型", code="other_type")
         other_store = Store.objects.create(name="其他设备门店", status=Store.STATUS_OPEN)
         Device.objects.create(
             store=other_store,
             device_sn="TEST-SN-8888",
             device_name="其他测试设备",
-            device_type=other_dev_type,
+            device_model=other_dev_type,
             status=Device.STATUS_ONLINE
         )
 
@@ -130,7 +131,7 @@ class GlobalMenuInheritanceTests(TestCase):
         # 验证价格过低 (1000) 会引发 ValidationError
         item_too_low = MenuItem(
             store=self.store,
-            device_type=self.dev_type,
+            device_model=self.dev_type,
             global_item=self.g_item,
             base_price=1000
         )
@@ -140,18 +141,18 @@ class GlobalMenuInheritanceTests(TestCase):
         # 验证价格过高 (2000) 会引发 ValidationError
         item_too_high = MenuItem(
             store=self.store,
-            device_type=self.dev_type,
+            device_model=self.dev_type,
             global_item=self.g_item,
             base_price=2000
         )
         with self.assertRaises(ValidationError):
             item_too_high.full_clean()
 
-        # 2. 设备类型一致性校验：MenuItem.device_type 必须与 global_item.category.device_type 一致
-        other_dev_type = DeviceType.objects.create(name="其他设备类型", code="other_dev_type")
+        # 2. 设备类型一致性校验：MenuItem.device_model 必须与 global_item.category.device_model 一致
+        other_dev_type = DeviceModel.objects.create(name="其他设备类型", code="other_dev_type")
         item_mismatch_type = MenuItem(
             store=self.store,
-            device_type=other_dev_type,
+            device_model=other_dev_type,
             global_item=self.g_item,
             base_price=1500
         )
@@ -161,7 +162,7 @@ class GlobalMenuInheritanceTests(TestCase):
         # 3. 验证价格和类型正确的 MenuItem 可以成功保存并校验通过
         valid_item = MenuItem.objects.create(
             store=self.store,
-            device_type=self.dev_type,
+            device_model=self.dev_type,
             global_item=self.g_item,
             base_price=1500
         )
@@ -215,8 +216,8 @@ class GlobalMenuInheritanceTests(TestCase):
 
 class GlobalMenuItemTests(TestCase):
     def test_auto_insert_standard_sku(self):
-        dev_type = DeviceType.objects.create(name="设备类型", code="test_dev_type_unique")
-        cat = GlobalMenuCategory.objects.create(device_type=dev_type, name="分类")
+        dev_type = DeviceModel.objects.create(name="设备类型", code="test_dev_type_unique")
+        cat = GlobalMenuCategory.objects.create(device_model=dev_type, name="分类")
         
         # 创建一个没有 sku 的 GlobalMenuItem
         item = GlobalMenuItem.objects.create(
@@ -246,22 +247,26 @@ class ValidateDetailImageTests(TestCase):
 
     def test_png_width_validator(self):
         from .models import validate_detail_image
-        import struct
+        from io import BytesIO
+        from PIL import Image
         
-        # 2. 模拟一个非 750px 宽度的 PNG
-        # PNG IHDR 块：12-15 字节为 IHDR, 16-19 字节为宽度, 20-23 字节为高度
-        # 我们模拟一个 800x600 的 PNG 头
-        png_head = b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + struct.pack('>ii', 800, 600) + b'\x08\x06\x00\x00\x00'
-        bad_png = SimpleUploadedFile("bad.png", png_head, content_type="image/png")
+        # 2. 模拟一个非 750px 宽度的 PNG (800x600)
+        f_bad = BytesIO()
+        Image.new('RGB', (800, 600)).save(f_bad, format='PNG')
+        bad_png = SimpleUploadedFile("bad.png", f_bad.getvalue(), content_type="image/png")
         with self.assertRaises(ValidationError) as ctx:
             validate_detail_image(bad_png)
         self.assertIn("详情页图片宽度必须为 750 像素", str(ctx.exception))
 
-        # 3. 模拟一个 750x1000 的 PNG 头 (应该验证通过)
-        valid_png_head = b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + struct.pack('>ii', 750, 1000) + b'\x08\x06\x00\x00\x00'
-        good_png = SimpleUploadedFile("good.png", valid_png_head, content_type="image/png")
+        # 3. 模拟一个 750x1000 的 PNG (应该验证通过)
+        f_good = BytesIO()
+        Image.new('RGB', (750, 1000)).save(f_good, format='PNG')
+        good_png = SimpleUploadedFile("good.png", f_good.getvalue(), content_type="image/png")
         # 应该不报错
         validate_detail_image(good_png)
+
+
+
 
 
 from unittest.mock import patch
@@ -323,4 +328,62 @@ class StoreBusinessHoursTests(TestCase):
         mock_localtime.return_value = timezone.make_aware(datetime.datetime(2026, 6, 22, 8, 0, 0))
         self.assertFalse(store.is_in_business_hours)
         self.assertFalse(store.can_provide_service)
+
+
+class CxdPermissionsAndSyncTests(TestCase):
+    def setUp(self):
+        from users.models import User
+        from stores.models import Store
+        from devices.models import Device
+        from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem
+
+        self.cxd_user = User.objects.create_superuser(username='cxd', password='password123')
+        self.closed_store = Store.objects.create(name="未营业店", status=Store.STATUS_CLOSED)
+        
+        self.dev_type = DeviceModel.objects.create(name="咖啡机", code="coffee_maker")
+        self.device = Device.objects.create(
+            store=self.closed_store,
+            device_sn="TEST-CLOSED-SN",
+            device_name="设备",
+            device_model=self.dev_type,
+            status=Device.STATUS_ONLINE
+        )
+        self.g_cat = GlobalMenuCategory.objects.create(
+            device_model=self.dev_type, name="咖啡", sort_order=1, is_active=True
+        )
+        self.g_item = GlobalMenuItem.objects.create(
+            category=self.g_cat, name="美式", base_price=1000, is_active=True
+        )
+
+    def test_cxd_can_view_closed_store_menu(self):
+        from rest_framework.test import APIClient
+        
+        client = APIClient()
+        
+        # Test anonymous or normal user: closed store returns 400
+        response = client.get(f'/api/menu/store/{self.closed_store.id}')
+        self.assertEqual(response.status_code, 400)
+        
+        # Log in as cxd
+        client.force_authenticate(user=self.cxd_user)
+        response = client.get(f'/api/menu/store/{self.closed_store.id}')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['code'], 0)
+        self.assertEqual(data['data']['store_name'], "未营业店")
+
+    def test_dashboard_callback(self):
+        from global_config.dashboard import dashboard_callback
+        from django.test import RequestFactory
+
+        factory = RequestFactory()
+        request = factory.get('/admin/')
+        context = {}
+        
+        updated_context = dashboard_callback(request, context)
+        self.assertIn("store_count", updated_context)
+        self.assertIn("online_device_count", updated_context)
+        self.assertIn("today_order_count", updated_context)
+        self.assertIn("today_task_count", updated_context)
+        self.assertEqual(updated_context["store_count"], 1)
 

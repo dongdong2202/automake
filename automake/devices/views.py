@@ -191,12 +191,23 @@ def receive_material_report(device_sn: str, payload: dict):
             continue
 
         # 1. 更新数据库 (DB_Book_Stock)
+        from inventory.models import Material
+        material_name = name or code
+        material_obj, _ = Material.objects.get_or_create(
+            name=material_name,
+            defaults={
+                'code': code,
+                'unit': 'g',
+                'shelf_life': '12个月',
+                'storage_conditions': '常温避光'
+            }
+        )
+
         DeviceMaterialStock.objects.update_or_create(
             device=device,
-            material_code=code,
+            code=code,
             defaults={
-                'material_name': name,
-                'quantity': qty_decimal,
+                'name': material_obj,
             }
         )
 
@@ -260,9 +271,16 @@ class DeviceRegisterView(APIView):
         device_name = request.data.get('device_name', '')
         device_version = request.data.get('device_version') or request.data.get('firmware_version') or ''
         device_address = request.data.get('device_address', '')
-        device_model = request.data.get('device_model', '')
+        device_model_code = request.data.get('device_model', '').strip()
+        device_model_obj = None
+        if device_model_code:
+            from global_config.models import DeviceModel
+            device_model_obj, _ = DeviceModel.objects.get_or_create(
+                code=device_model_code,
+                defaults={'name': f'设备型号 {device_model_code}'}
+            )
 
-        # 2. 联动校验门店：必须在对应的 Store 表中存在注册码为 key_code 且 ID 为 store_id 的门店记录
+        # 2.联动校验门店：必须在对应的 Store 表中存在注册码为 key_code 且 ID 为 store_id 的门店记录
         from stores.models import Store
         store = Store.objects.filter(code=key_code, id=store_id).first()
         if not store:
@@ -277,7 +295,7 @@ class DeviceRegisterView(APIView):
                 'key_code': key_code,
                 'store': store,
                 'device_name': device_name,
-                'device_model': device_model,
+                'device_model': device_model_obj,
                 'firmware_version': device_version,
                 'status': Device.STATUS_ONLINE,
                 'last_heartbeat_at': timezone.now(),
@@ -298,8 +316,8 @@ class DeviceRegisterView(APIView):
             device.device_name = device_name
             device.store = store
             device.mqtt_topic_prefix = f'automake/device/{device_sn}'
-            if device_model:
-                device.device_model = device_model
+            if device_model_obj:
+                device.device_model = device_model_obj
             
             if not isinstance(device.extra_config, dict):
                 device.extra_config = {}

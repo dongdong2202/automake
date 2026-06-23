@@ -53,15 +53,15 @@ class ReadOnlyStoreScopedDeviceAdmin(ModelAdmin):
 
 @admin.register(Device)
 class DeviceAdmin(ReadOnlyStoreScopedDeviceAdmin):
-    list_display = ('id', 'device_sn', 'device_name', 'store', 'device_type', 'status', 'firmware_version', 'key_code', 'last_heartbeat_at')
+    list_display = ('id', 'device_sn', 'device_name', 'store', 'device_model', 'status', 'firmware_version', 'key_code', 'last_heartbeat_at')
     search_fields = ('device_sn', 'device_name', 'key_code')
-    list_filter = ('status', 'store', 'device_type')
+    list_filter = ('status', 'store', 'device_model')
     readonly_fields = ('last_heartbeat_at', 'created_at', 'updated_at')
 
     # 使用 fieldsets 分组呈现，更具友好性
     fieldsets = (
         ('设备基本属性', {
-            'fields': ('device_sn', 'device_name', 'device_model', 'device_type', 'store', 'status', 'key_code')
+            'fields': ('device_sn', 'device_name', 'device_model', 'store', 'status', 'key_code')
         }),
         ('固件与通信配置', {
             'fields': ('firmware_version', 'resource_version', 'mqtt_topic_prefix', 'extra_config')
@@ -97,11 +97,29 @@ class DeviceAlarmAdmin(ReadOnlyStoreScopedDeviceAdmin):
 
 
 @admin.register(DeviceMaterialStock)
-class DeviceMaterialStockAdmin(ReadOnlyStoreScopedDeviceAdmin):
-    list_display = ('id', 'device', 'material_code', 'material_name', 'quantity', 'updated_at')
-    search_fields = ('device__device_sn', 'material_code', 'material_name')
-    list_filter = ('device', 'material_code')
-    readonly_fields = ('device', 'material_code', 'material_name', 'quantity', 'created_at', 'updated_at')
+class DeviceMaterialStockAdmin(ModelAdmin):
+    list_display = ('id', 'device', 'name', 'code', 'unit', 'initHight', 'warn_level', 'updated_at')
+    search_fields = ('device__device_sn', 'name__name', 'code')
+    list_filter = ('device', 'code')
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            if request.user.store:
+                return qs.filter(device__store=request.user.store)
+            return qs.none()
+        return qs
 
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return ('device', 'name', 'code', 'unit', 'created_at', 'updated_at')
+        return ('created_at', 'updated_at')
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "device" and request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
+            if request.user.store:
+                kwargs["queryset"] = Device.objects.filter(store=request.user.store)
+            else:
+                kwargs["queryset"] = Device.objects.none()
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
