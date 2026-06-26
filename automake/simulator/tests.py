@@ -29,7 +29,11 @@ class SimulatorIntegrationTests(TestCase):
 
     def test_device_register_endpoint(self):
         """测试设备注册 API (包含自动创建、更新与注册码校验)"""
-        # Scenario 1: 注册一个全新的机器（对应 SN 还不存在），但注册码有效
+        # 预先录入测试机器
+        Device.objects.create(device_sn='NEW-TEST-SN-999', status=Device.STATUS_ONLINE)
+        Device.objects.create(device_sn='NEW-TEST-SN-888', status=Device.STATUS_ONLINE)
+
+        # Scenario 1: 注册一个已录入系统的机器，注册码有效
         payload_create = {
             'device_sn': 'NEW-TEST-SN-999',
             'key_code': 'TEST-KEY-001',
@@ -109,6 +113,20 @@ class SimulatorIntegrationTests(TestCase):
             content_type='application/json',
         )
         self.assertEqual(res_mismatch.json()['code'], 6003)
+
+        # Scenario 5: 注册一个未在数据库预先录入的全新机器，应当返回 6004 错误码
+        payload_not_pre_recorded = {
+            'device_sn': 'NOT-EXIST-SN-000',
+            'key_code': 'TEST-KEY-001',
+            'store_id': self.store.id,
+            'device_name': '未录入咖啡机',
+        }
+        res_not_pre = self.client.post(
+            '/api/device/register',
+            data=json.dumps(payload_not_pre_recorded),
+            content_type='application/json',
+        )
+        self.assertEqual(res_not_pre.json()['code'], 6004)
 
     def test_device_heartbeat_endpoint(self):
         """测试设备心跳 API 被禁止，必须走 MQTT"""

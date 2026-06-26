@@ -2,7 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 from .models import (
     DeviceModel, GlobalMenuCategory, GlobalMenuItem,
-    GlobalMenuSku, GlobalSkuIngredient, GlobalConsumable
+    GlobalMenuSku, GlobalSkuIngredient
 )
 
 
@@ -58,20 +58,20 @@ class DeviceModelAdmin(GlobalConfigAdmin):
 
 
 
-@admin.register(GlobalConsumable)
-class GlobalConsumableAdmin(GlobalConfigAdmin):
-    """
-    全局包装耗材后台管理
-    """
-    list_display = ('id', 'name', 'code', 'initQuantity', 'deviceSN', 'description', 'created_at')
-    search_fields = ('name', 'code', 'deviceSN')
-    ordering = ('id',)
+# @admin.register(GlobalConsumable)
+# class GlobalConsumableAdmin(GlobalConfigAdmin):
+#     """
+#     全局包装耗材后台管理
+#     """
+#     list_display = ('id', 'name', 'code', 'initQuantity', 'deviceSN', 'description', 'created_at')
+#     search_fields = ('name', 'code', 'deviceSN')
+#     ordering = ('id',)
 
-    fieldsets = (
-        ('基本信息', {
-            'fields': ('name', 'code', 'initQuantity', 'deviceSN', 'description')
-        }),
-    )
+#     fieldsets = (
+#         ('基本信息', {
+#             'fields': ('name', 'code', 'initQuantity', 'deviceSN', 'description')
+#         }),
+#     )
 
 
 @admin.register(GlobalMenuCategory)

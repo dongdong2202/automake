@@ -76,29 +76,50 @@ class MenuItem(models.Model):
         # 2. 继承商品
         global_items = GlobalMenuItem.objects.filter(category__in=global_categories, is_active=True)
 
+        # 删除该门店下所有关联了已失效或已被删除全局商品的本地商品
+        cls.objects.filter(store=store).exclude(global_item__in=global_items).delete()
+
         for g_item in global_items:
-            menu_item, created = cls.objects.get_or_create(
+            menu_items = cls.objects.filter(
                 store=store,
-                device_model=g_item.category.device_model,
-                global_item=g_item,
-                defaults={
-                    'base_price': g_item.base_price,
-                    'is_active': g_item.is_active,
-                    'sort_order': g_item.sort_order,
-                }
+                global_item=g_item
             )
+            if menu_items.exists():
+                menu_item = menu_items.first()
+                if menu_items.count() > 1:
+                    menu_items.exclude(id=menu_item.id).delete()
+            else:
+                menu_item = cls.objects.create(
+                    store=store,
+                    device_model=g_item.category.device_model,
+                    global_item=g_item,
+                    base_price=g_item.base_price,
+                    is_active=g_item.is_active,
+                    sort_order=g_item.sort_order
+                )
             
             # 同步对应的规格 (SKU)
-            for g_sku in g_item.skus.filter(is_active=True):
-                MenuSku.objects.get_or_create(
+            active_g_skus = g_item.skus.filter(is_active=True)
+            # 删除该本地商品下所有关联了已失效或已被删除全局规格的本地规格
+            MenuSku.objects.filter(item=menu_item).exclude(global_sku__in=active_g_skus).delete()
+
+            for g_sku in active_g_skus:
+                menu_skus = MenuSku.objects.filter(
                     item=menu_item,
-                    global_sku=g_sku,
-                    defaults={
-                        'price_delta': g_sku.price_delta,
-                        'is_active': g_sku.is_active,
-                        'sort_order': g_sku.sort_order,
-                    }
+                    global_sku=g_sku
                 )
+                if menu_skus.exists():
+                    menu_sku = menu_skus.first()
+                    if menu_skus.count() > 1:
+                        menu_skus.exclude(id=menu_sku.id).delete()
+                else:
+                    MenuSku.objects.create(
+                        item=menu_item,
+                        global_sku=g_sku,
+                        price_delta=g_sku.price_delta,
+                        is_active=g_sku.is_active,
+                        sort_order=g_sku.sort_order
+                    )
 
 
     def clean(self):

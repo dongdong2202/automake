@@ -91,15 +91,17 @@ def create_pay_request(order: OrderMain, user) -> dict:
                 pay_method='wechat_jsapi',
             )
 
+
     logger.info(f'支付请求创建成功: out_trade_no={out_trade_no}')
     return payment.pay_params
 
 
 def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退款"):
     """
-    模拟微信退款逻辑并记录
+    微信退款接口调用与记录（真实退款代码）
     """
     from .models import RefundRecord, PaymentRecord
+    from utils.wechat import WechatPayV3
     
     payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_SUCCESS).first()
     if not payment:
@@ -113,16 +115,76 @@ def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退
 
     import uuid
     out_refund_no = f"RF-{uuid.uuid4().hex[:16]}"
-    refund = RefundRecord.objects.create(
-        order=order,
-        payment=payment,
-        out_refund_no=out_refund_no,
-        refund_amount=payment.amount,
-        reason=reason,
-        status=RefundRecord.STATUS_SUCCESS,
-        refunded_at=timezone.now()
-    )
-    logger.info(f"已成功退款: order_no={order.order_no}, out_refund_no={out_refund_no}, amount={payment.amount}")
+    
+    try:
+        pay_client = WechatPayV3()
+        transaction_id = payment.transaction_id
+        if not transaction_id:
+            raise ValueError("支付记录中没有有效的微信交易号，无法退款")
+            
+        wx_result = pay_client.apply_refund(
+            out_refund_no=out_refund_no,
+            transaction_id=transaction_id,
+            refund_amount=payment.amount,
+            total_amount=payment.amount,
+            reason=reason
+        )
+        
+        refund_id = wx_result.get('refund_id')
+        wx_status = wx_result.get('status', 'SUCCESS').upper()
+        
+        status_map = {
+            'SUCCESS': RefundRecord.STATUS_SUCCESS,
+            'PROCESSING': RefundRecord.STATUS_PENDING,
+            'ABNORMAL': RefundRecord.STATUS_FAILED,
+            'CLOSED': RefundRecord.STATUS_FAILED,
+        }
+        record_status = status_map.get(wx_status, RefundRecord.STATUS_SUCCESS)
+        
+        refund = RefundRecord.objects.create(
+            order=order,
+            payment=payment,
+            refund_id=refund_id,
+            out_refund_no=out_refund_no,
+            refund_amount=payment.amount,
+            reason=reason,
+            status=record_status,
+            refunded_at=timezone.now() if record_status == RefundRecord.STATUS_SUCCESS else None
+        )
+        
+        # 同步更新订单主表状态
+        from orders.models import OrderStatusLog
+        old_status = order.status
+        if record_status == RefundRecord.STATUS_SUCCESS:
+            order.status = OrderMain.STATUS_REFUNDED
+        elif record_status == RefundRecord.STATUS_PENDING:
+            order.status = OrderMain.STATUS_REFUNDING
+        else:
+            order.status = OrderMain.STATUS_EXCEPTION
+            
+        order.save(update_fields=['status', 'updated_at'])
+        
+        OrderStatusLog.objects.create(
+            order=order,
+            from_status=old_status,
+            to_status=order.status,
+            operator="System",
+            remark=f"发起退款，退款单号: {out_refund_no}, 状态: {record_status}"
+        )
+        logger.info(f"已处理真实退款: order_no={order.order_no}, out_refund_no={out_refund_no}, refund_id={refund_id}, status={record_status}")
+    except Exception as e:
+        logger.exception(f"调用微信退款接口失败: order_no={order.order_no}, error={e}")
+        # 创建一个失败的退款记录
+        RefundRecord.objects.create(
+            order=order,
+            payment=payment,
+            out_refund_no=out_refund_no,
+            refund_amount=payment.amount,
+            reason=reason,
+            status=RefundRecord.STATUS_FAILED
+        )
+        raise e
+
 
 
 def process_payment_success(order_no: str, transaction_id: str,
@@ -161,35 +223,71 @@ def process_payment_success(order_no: str, transaction_id: str,
     # 提前生成全局唯一的 OrderToken (UUID)，以便全链路 JSON 日志追踪
     order_token = str(uuid.uuid4())
 
-    # 1. 计算订单所需的原料总量
-    required_materials = {}
+    # 0. 校验系统等待制作的订单数量是否小于 50
+    waiting_count = OrderMain.objects.filter(
+        status__in=[OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING]
+    ).exclude(pk=order.pk).count()
+    if waiting_count >= 100:
+        logger.warning(f"支付回调校验失败：系统等待制作的订单已达上限 {waiting_count}，拒绝支付出餐")
+        with transaction.atomic():
+            payment.status = PaymentRecord.STATUS_SUCCESS
+            payment.transaction_id = transaction_id
+            payment.paid_at = paid_at
+            payment.save(update_fields=['status', 'transaction_id', 'paid_at', 'updated_at'])
+            
+            update_order_status(
+                order=order,
+                new_status=OrderMain.STATUS_EXCEPTION,
+                operator='system',
+                remark='系统制作队列已满，自动退款'
+            )
+            refund_order(order, reason="系统繁忙自动退款")
+        raise ValueError("系统繁忙，已自动退款")
+
+    # 1. 调用 calculate_required_materials 计算订单所需的所有物料总量，并过滤出该订单所需的耗材总量
+    items_data = []
     for item in order.items.prefetch_related('skus').all():
         skus = list(item.skus.all())
         if not skus and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
             if base_sku:
                 skus = [base_sku]
-        for sku in skus:
-            for ing in sku.global_sku.ingredients.select_related('material').all():
-                code = ing.material.code
-                qty = ing.quantity * item.quantity
-                required_materials[code] = required_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
+        items_data.append({
+            'item': item.item,
+            'skus': skus,
+            'quantity': item.quantity
+        })
 
+    from orders.services import calculate_required_materials
+    all_materials = calculate_required_materials(items_data)
+
+    from inventory.models import Material
+    consumable_codes = set(
+        Material.objects.filter(
+            code__in=all_materials.keys(),
+            material_type=Material.TYPE_CONSUMABLE
+        ).values_list('code', flat=True)
+    )
+
+    required_cups = {
+        code: qty for code, qty in all_materials.items() if code in consumable_codes
+    }
     device = order.device
     if not device:
         raise ValueError("订单未绑定设备")
 
     redis_conn = get_redis_connection("default")
 
-    # LUA 预扣脚本
-    LUA_DECR_STOCK = """
+    # 定制的 LUA 预扣脚本：扣减后余额不低于极低阈值 (critical_val)
+    LUA_DECR_CUP = """
     local stock = tonumber(redis.call('get', KEYS[1]) or "0")
     local num = tonumber(ARGV[1])
-    if stock >= num then
+    local crit = tonumber(ARGV[2])
+    if (stock - num) >= crit then
         redis.call('decrby', KEYS[1], num)
         return 1 -- 成功
     else
-        return 0 -- 库存不足
+        return 0 -- 极度缺货
     end
     """
 
@@ -199,35 +297,48 @@ def process_payment_success(order_no: str, transaction_id: str,
         "order_no": order.order_no,
         "OrderToken": order_token,
         "device_sn": device.device_sn,
-        "required_materials": {code: float(qty) for code, qty in required_materials.items()}
+        "required_cups": {code: float(qty) for code, qty in required_cups.items()}
     }, ensure_ascii=False))
 
     # 2. Redis 原子预扣 (Lua 脚本)
     redis_deducted = []
     redis_success = True
-    for code, qty in required_materials.items():
-        key = get_redis_stock_key(device.device_sn, code)
+    for cup_code, qty in required_cups.items():
+        key = get_redis_stock_key(device.device_sn, cup_code)
         val_to_deduct = int(qty * 100)
-        res = redis_conn.register_script(LUA_DECR_STOCK)(keys=[key], args=[val_to_deduct])
         
-        # 核心日志点：具体物料扣减日志
+        # 获取极低阈值 (预警数量/高度的 20%)
+        from devices.models import DeviceConsumableStock, DeviceMaterialStock
+        stock_config = DeviceConsumableStock.objects.filter(device=device, code=cup_code).first()
+        if stock_config:
+            warn_level = float(stock_config.warn_level)
+        else:
+            material_config = DeviceMaterialStock.objects.filter(device=device, code=cup_code).first()
+            warn_level = float(material_config.warn_level) if material_config else 0
+            
+        critical_val = int(warn_level * 0.2 * 100)
+
+        res = redis_conn.register_script(LUA_DECR_CUP)(keys=[key], args=[val_to_deduct, critical_val])
+        
+        # 核心日志点：具体杯型扣减日志
         logger.info(json.dumps({
             "event": "redis_precheck_deduct",
             "order_no": order.order_no,
             "OrderToken": order_token,
-            "material_code": code,
+            "material_code": cup_code,
             "quantity_deduct_val": val_to_deduct,
+            "critical_val": critical_val,
             "status": "success" if res == 1 else "failed"
         }, ensure_ascii=False))
 
         if res == 1:
-            redis_deducted.append((code, val_to_deduct))
+            redis_deducted.append((cup_code, val_to_deduct))
         else:
             redis_success = False
             break
 
     if not redis_success:
-        # Redis 预扣失败，执行反向补偿/释放已扣除的虚拟库存
+        # Redis 预扣失败，执行反向补偿/释放已扣除的虚拟杯子库存
         for code, val in redis_deducted:
             key = get_redis_stock_key(device.device_sn, code)
             redis_conn.incrby(key, val)

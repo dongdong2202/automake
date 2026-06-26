@@ -44,6 +44,7 @@ class PaymentAPITests(APITestCase):
         from inventory.models import Material
         self.inv_bean = Material.objects.create(name="咖啡豆", code="coffee_bean", unit="g")
         self.inv_milk = Material.objects.create(name="鲜牛奶", code="fresh_milk", unit="ml")
+        self.inv_cup = Material.objects.create(name="大纸杯", code="paperL", unit="个", material_type=Material.TYPE_CONSUMABLE)
 
         self.category = GlobalMenuCategory.objects.create(
             device_model=self.dev_type, name="咖啡", sort_order=1, is_active=True
@@ -58,6 +59,7 @@ class PaymentAPITests(APITestCase):
         )
         GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_bean, quantity=15)
         GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_milk, quantity=150)
+        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_cup, quantity=1)
 
         # 4. 同步门店菜单
         MenuItem.sync_store_menu(self.store)

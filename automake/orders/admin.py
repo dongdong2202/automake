@@ -47,7 +47,26 @@ class OrderMainAdmin(ModelAdmin):
         'paid_at', 'done_at', 'created_at', 'updated_at'
     )
     inlines = [OrderItemInline, OrderStatusLogInline]
+    actions = ['action_manual_refund']
 
+    @admin.action(description="手动退款（调用微信退款接口）")
+    def action_manual_refund(self, request, queryset):
+        from django.contrib import messages
+        from payments.services import refund_order
+        
+        success_count = 0
+        error_count = 0
+        for order in queryset:
+            # 只有已支付或相关的状态才能退款，但由 refund_order 内部去处理更严谨
+            try:
+                refund_order(order, reason=f"管理后台手动退款: 操作员 {request.user.username}")
+                success_count += 1
+            except Exception as e:
+                error_count += 1
+                self.message_user(request, f"订单 {order.order_no} 退款失败: {e}", level=messages.ERROR)
+        
+        if success_count > 0:
+            self.message_user(request, f"成功发起 {success_count} 笔订单的退款请求", level=messages.SUCCESS)
 
 @admin.register(ProductionTask)
 class ProductionTaskAdmin(ModelAdmin):

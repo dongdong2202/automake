@@ -59,7 +59,6 @@ class DeviceConsumer(AsyncWebsocketConsumer):
         """
         # 从 URL 路由捕获的设备编号
         self.sn = self.scope['url_route']['kwargs']['sn']
-        # Channel Group 名称：device_<sn>（用于服务端主动推送）
         self.group_name = f'device_{self.sn}'
 
         # 将当前连接加入设备专属 Group
@@ -121,8 +120,8 @@ class DeviceConsumer(AsyncWebsocketConsumer):
             await self.handle_register(payload)
         elif msg_type == 'heartbeat':
             await self.handle_heartbeat(payload)
-        elif msg_type == 'order_complete':
-            await self.handle_order_complete(payload)
+        elif msg_type == 'status_material':
+            await self.handle_report_material(payload)
         elif msg_type == 'order_failed':
             await self.handle_order_failed(payload)
         elif msg_type == 'status_report':
@@ -150,7 +149,7 @@ class DeviceConsumer(AsyncWebsocketConsumer):
         device_version = data.get('device_version', 'unknown')
         msg_id = payload.get('msg_id', '')
 
-        logger.info(f'[WS] 设备注册: sn={self.sn}, version={device_version}')
+        logger.info(f'[WS] 设备注册: sn={self.sn}')
 
         # 可在此处更新数据库中的设备在线状态（异步调用同步 ORM）
         # await self.update_device_online_status(self.sn, True)
@@ -288,6 +287,123 @@ class DeviceConsumer(AsyncWebsocketConsumer):
                 'message': f'订单失败状态更新异常: {str(e)}'
             })
 
+    async def handle_report_material(self, payload):
+        """
+        处理上位机上报的物料状态消息 (status_material)。
+        解析传入的 JSON 数据，并将物料信息保存到 Redis 中，不存入数据库。
+        """
+        data = payload.get('data', {})
+        msg_id = payload.get('msg_id', '')
+
+        logger.info(f'[WS] 收到设备物料上报: sn={self.sn}, data={data}')
+
+        if not data:
+            await self.send_json({
+                'type': 'error',
+                'code': 'MISSING_FIELD',
+                'msg_id': msg_id,
+                'message': 'status_material 消息缺少 data 字段。'
+            })
+            return
+
+        try:
+            # 异步调用同步的 Redis 存储方法
+            await database_sync_to_async(self._save_material_to_redis)(data)
+
+            # 回复 ack 确认
+            await self.send_json({
+                'type': 'ack',
+                'msg_id': msg_id,
+                'action': 'status_material',
+                'sn': self.sn,
+                'message': '物料上报数据已成功保存。'
+            })
+        except Exception as e:
+            logger.error(f'[WS] 保存物料数据至 Redis 失败: sn={self.sn}, error={e}')
+            await self.send_json({
+                'type': 'error',
+                'code': 'SERVER_ERROR',
+                'msg_id': msg_id,
+                'message': f'物料数据保存失败: {str(e)}'
+            })
+
+    def _save_material_to_redis(self, data: dict):
+        """
+        同步方法：将物料数据保存至 Redis，仅在数据发生变化时更新。
+        并进行预警和熔断判断。
+        """
+        from django_redis import get_redis_connection
+        from devices.models import Device, DeviceMaterialStock
+        
+        redis_conn = get_redis_connection("default")
+        device = Device.objects.filter(device_sn=self.sn).first()
+
+        # 1. 完整保存为 JSON 字符串 (仅在内容发生变化时写入)
+        full_key = f"automake:material_report:{self.sn}"
+        new_json_str = json.dumps(data, ensure_ascii=False)
+        existing_json_val = redis_conn.get(full_key)
+        
+        # 兼容处理 bytes 解码
+        if isinstance(existing_json_val, bytes):
+            existing_json_str = existing_json_val.decode('utf-8')
+        else:
+            existing_json_str = existing_json_val
+            
+        if existing_json_str != new_json_str:
+            redis_conn.set(full_key, new_json_str)
+
+        # 2. 区分食材(raw)和耗材(cup)的存储逻辑
+        for category in ['raw', 'cup']:
+            items = data.get(category, {})
+            if isinstance(items, dict):
+                for code, qty in items.items():
+                    if qty is not None:
+                        if category == 'cup':
+                            # 上位机发送 cup 数据代表工作人员手动补货，直接更新数据库，利用 save() 同步到 Redis
+                            try:
+                                if device:
+                                    from inventory.models import Material
+                                    from devices.models import DeviceConsumableStock
+                                    material_obj = Material.objects.filter(code=code, material_type=Material.TYPE_CONSUMABLE).first()
+                                    if material_obj:
+                                        stock, created = DeviceConsumableStock.objects.get_or_create(
+                                            device=device,
+                                            code=material_obj,
+                                            defaults={'init_quantity': 100, 'quantity': int(float(qty)), 'unit': '个', 'warn_level': 20}
+                                        )
+                                        if not created:
+                                            stock.quantity = int(float(qty))
+                                            stock.save()
+                            except Exception as e:
+                                logger.warning(f'[WS] 更新耗材 {code} 数据库失败: {e}')
+                        else:
+                            try:
+                                qty_val = int(float(qty) * 100)
+                                item_key = f"automake:stock:{self.sn}:{code}"
+                                existing_qty_val = redis_conn.get(item_key)
+                                
+                                # 获取预警高度进行两级警报判断
+                                if device:
+                                    stock_config = DeviceMaterialStock.objects.filter(device=device, code=code).first()
+                                    warn_level = float(stock_config.warn_level) if stock_config else 10.0
+                                    critical_level = warn_level * 0.2
+                                    
+                                    height_val = float(qty)
+                                    if height_val <= critical_level:
+                                        logger.warning(f"[OUT_OF_STOCK] 设备 {self.sn} 物料 {code} 高度为 {height_val}cm, 低于或等于极低熔断阈值 {critical_level}cm, 触发缺货熔断")
+                                    elif height_val <= warn_level:
+                                        sms_lock_key = f"automake:sms_sent:{self.sn}:{code}"
+                                        if redis_conn.set(sms_lock_key, "1", ex=3600, nx=True):
+                                            phone = device.store.contact_phone if (device.store and device.store.contact_phone) else "13800138000"
+                                            store_name = device.store.name if device.store else "未知门店"
+                                            material_name = stock_config.name.name if (stock_config and stock_config.name) else code
+                                            logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {self.sn}) {material_name} 原料即将耗尽，当前高度为 {height_val}cm，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
+                                
+                                if existing_qty_val is None or int(existing_qty_val) != qty_val:
+                                    redis_conn.set(item_key, qty_val)
+                            except (ValueError, TypeError) as ve:
+                                logger.warning(f'[WS] 转换物料 {code} 数量 {qty} 失败: {ve}')
+
     async def handle_status_report(self, payload):
         """
         处理设备状态上报消息。
@@ -348,7 +464,7 @@ class DeviceConsumer(AsyncWebsocketConsumer):
             'msg_id': msg_id,
             'action': 'status_report',
             'sn': self.sn,
-            'message': '设备状态已收到并更新。'
+            'message': '设备状态已收到并更新2222。'
         })
 
     def _upsert_monitor_snapshot(self, data: dict):

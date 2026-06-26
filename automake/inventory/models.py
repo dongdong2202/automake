@@ -14,8 +14,22 @@ class Material(models.Model):
     
     记录仓库中所有原材料/物资的属性，并保存当前的库存余量及被取走的次数。
     """
+    TYPE_INGREDIENT = 'ingredient'  # 食材
+    TYPE_CONSUMABLE = 'consumable'  # 耗材
+
+    TYPE_CHOICES = [
+        (TYPE_INGREDIENT, '食材'),
+        (TYPE_CONSUMABLE, '耗材'),
+    ]
+
     name = models.CharField(max_length=128, unique=True, verbose_name="物料名称", help_text="名称必须规范、一致，直接影响下位机用料统计")
     code = models.CharField(max_length=64, unique=True, verbose_name="物料编号", db_index=True)
+    material_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default=TYPE_INGREDIENT,
+        verbose_name="物料类别"
+    )
     quantity = models.DecimalField(
         max_digits=10, 
         decimal_places=2, 

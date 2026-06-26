@@ -9,7 +9,7 @@ from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem
 from menus.models import MenuItem, MenuSku
 from users.models import User
 from orders.models import OrderMain, OrderItem, ProductionTask, OrderStatusLog
-from orders.services import precheck_order, create_order, process_dispense_failure, reconcile_device_orders, get_redis_stock_key
+from orders.services import precheck_order, create_order, process_dispense_failure, reconcile_device_orders, get_redis_stock_key, update_order_status
 from payments.services import process_payment_success, PaymentRecord
 
 
@@ -38,6 +38,7 @@ class OptimizedOrderProcessTests(TestCase):
         from inventory.models import Material
         self.inv_bean = Material.objects.create(name="咖啡豆", code="coffee_bean", unit="g")
         self.inv_milk = Material.objects.create(name="鲜牛奶", code="fresh_milk", unit="ml")
+        self.inv_cup = Material.objects.create(name="大纸杯", code="paperL", unit="个", material_type=Material.TYPE_CONSUMABLE)
 
         self.category = GlobalMenuCategory.objects.create(
             device_model=self.dev_type, name="咖啡", sort_order=1, is_active=True
@@ -52,6 +53,7 @@ class OptimizedOrderProcessTests(TestCase):
         )
         GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_bean, quantity=15)
         GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_milk, quantity=150)
+        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=self.inv_cup, quantity=1)
 
         # 4. 同步门店菜单
         MenuItem.sync_store_menu(self.store)
@@ -64,6 +66,9 @@ class OptimizedOrderProcessTests(TestCase):
         )
         self.db_milk_stock = DeviceMaterialStock.objects.create(
             device=self.device, name=self.inv_milk, code="fresh_milk", initHight=1000
+        )
+        self.db_cup_stock = DeviceMaterialStock.objects.create(
+            device=self.device, name=self.inv_cup, code="paperL", initHight=500
         )
 
     def test_precheck_order_success(self, mock_get_redis):
@@ -187,9 +192,9 @@ class OptimizedOrderProcessTests(TestCase):
         with self.assertRaises(ValueError):
             process_payment_success(order.order_no, "WX-TX-9999", timezone.now().isoformat(), order.pay_amount)
 
-        # 订单应变更为 FAILED/failed 并触发自动退款
+        # 订单应变更为 REFUNDED 并成功生成退款记录
         order.refresh_from_db()
-        self.assertEqual(order.status, OrderMain.STATUS_EXCEPTION)  # 'failed'
+        self.assertEqual(order.status, OrderMain.STATUS_REFUNDED)  # 'refunded'
         self.assertTrue(order.refund_records.exists())
 
 
@@ -271,3 +276,71 @@ class OptimizedOrderProcessTests(TestCase):
 
         order.refresh_from_db()
         self.assertEqual(order.status, OrderMain.STATUS_DONE)
+
+    def test_consumable_stock_deduction_and_alert(self, mock_get_redis):
+        # 1. 模拟 Redis 客户端
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.side_effect = lambda key: b"5000" if "coffee_bean" in key else b"50000"
+        mock_redis_client.set.return_value = True
+        mock_get_redis.return_value = mock_redis_client
+
+        # 2. 预先创建 DeviceConsumableStock 记录
+        from devices.models import DeviceConsumableStock
+        from inventory.models import Material
+        
+        m_cup = self.inv_cup
+        m_lid = Material.objects.create(
+            name="杯盖",
+            code="lid",
+            material_type=Material.TYPE_CONSUMABLE,
+            unit="个",
+            shelf_life="永久",
+            storage_conditions="常温"
+        )
+        GlobalSkuIngredient.objects.create(sku=self.g_sku, material=m_lid, quantity=1)
+
+        paper_cup_stock = DeviceConsumableStock.objects.create(
+            device=self.device,
+            code=m_cup,
+            quantity=21,  # 比预警值 20 多 1
+            init_quantity=100,
+            unit="个",
+            warn_level=20
+        )
+        lid_stock = DeviceConsumableStock.objects.create(
+            device=self.device,
+            code=m_lid,
+            quantity=50,
+            init_quantity=100,
+            unit="个",
+            warn_level=20
+        )
+
+        # 3. 创建订单（大杯热拿铁，使用 paperL 和 lid）
+        items_data = [
+            {
+                'item': self.menu_item.id,
+                'sku': [self.menu_sku.id],
+                'quantity': 2
+            }
+        ]
+        order = create_order(self.user, self.store.id, items_data)
+        
+        # 4. 更新订单状态为已完成，触发耗材扣减与报警检查
+        update_order_status(order, OrderMain.STATUS_DONE)
+
+        # 5. 校验数据库中的耗材库存是否正确扣减
+        paper_cup_stock.refresh_from_db()
+        lid_stock.refresh_from_db()
+        self.assertEqual(paper_cup_stock.quantity, 19)  # 21 - 2 = 19 (低于 warn_level，触发预警)
+        self.assertEqual(lid_stock.quantity, 48)       # 50 - 2 = 48 (高于 warn_level，不触发预警)
+
+        # 6. 校验 Redis 防抖标志及短信是否被触发
+        any_sms_set_call = False
+        for call in mock_redis_client.set.call_args_list:
+            args, kwargs = call
+            if args and ("sms_sent" in args[0] or b"sms_sent" in args[0].encode()):
+                if "paperL" in args[0]:
+                    any_sms_set_call = True
+        self.assertTrue(any_sms_set_call, "应该向物料员发送纸杯的短信预警（设置了 Redis sms_sent 防抖锁）")
+

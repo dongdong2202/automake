@@ -11,25 +11,27 @@ from rest_framework.permissions import AllowAny
 from utils.response import ok, error
 from stores.models import Store
 from .models import MenuItem
-
+from devices.models import Device
 
 class StoreMenuView(APIView):
     """
     门店菜单接口
 
-    GET /api/menu/store/{store_id}
+    GET /api/menu/store/{device_sn}
     返回指定门店的完整菜单（分类 → 商品 → 规格/SKU）。
     前置依赖：门店必须存在且处于营业状态。
     所有分类、商品、SKU 关系都是在运行时基于全局配置和本地价格微调（ base_price ）动态拼装。
     """
     permission_classes = [AllowAny]  # 浏览菜单无需登录
 
-    def get(self, request, store_id):
+    def get(self, request, device_sn):
         # 检查门店是否存在且营业
         try:
-            store = Store.objects.get(pk=store_id)
+            device = Device.objects.get(device_sn=device_sn)
+      
+            store = Store.objects.get(pk=device.store.pk)
         except Store.DoesNotExist:
-            return error('门店不存在', code=3001, status=404)
+            return error('门店/设备 不存在', code=3001, status=404)
 
         # 超级管理员 cxd 或 super_admin 可以查看任意门店菜单，且不受营业状态限制
         is_cxd = False

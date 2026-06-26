@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 def receive_device_status(device_sn: str, payload: dict):
     """
-    处理上位机通过 MQTT 上报的设备/订单状态（内部函数）
-
-    此函数由 MQTT 消息回调调用（非 HTTP 请求）。
 
     :param device_sn: 设备序列号
     :param payload: 上报内容
@@ -151,7 +148,8 @@ def receive_device_status(device_sn: str, payload: dict):
 
 def receive_material_report(device_sn: str, payload: dict):
     """
-    处理上位机通过 MQTT/HTTP 上报的物料状态，并更新 DB 账面库存和 Redis 可用库存。
+    处理物料上报，并更新 DB 账面库存和 Redis 可用库存。
+    包含预警和熔断逻辑。
     """
     from .models import DeviceMaterialStock
     from decimal import Decimal
@@ -180,39 +178,73 @@ def receive_material_report(device_sn: str, payload: dict):
             logger.error(f'无效的物料数量: {qty}')
             continue
 
-        # 检查 Redis 中已有的可用库存当前值，避免因频繁上报且数据无变化时导致的高频 MySQL 写入
-        key = f"automake:stock:{device.device_sn}:{code}"
-        redis_qty_val = redis_conn.get(key)
-        target_redis_val = int(qty_decimal * 100)
-
-        if redis_qty_val is not None and int(redis_qty_val) == target_redis_val:
-            # 数据完全一致，直接跳过写操作
-            logger.debug(f'物料 {code} 数量未发生变化 ({qty_decimal})，跳过 DB 与 Redis 写入')
-            continue
-
-        # 1. 更新数据库 (DB_Book_Stock)
+        # 1. 查找或创建通用物料信息
         from inventory.models import Material
         material_name = name or code
-        material_obj, _ = Material.objects.get_or_create(
-            name=material_name,
+        material_obj, created_mat = Material.objects.get_or_create(
+            code=code,
             defaults={
-                'code': code,
+                'name': material_name,
                 'unit': 'g',
                 'shelf_life': '12个月',
                 'storage_conditions': '常温避光'
             }
         )
 
-        DeviceMaterialStock.objects.update_or_create(
-            device=device,
-            code=code,
-            defaults={
-                'name': material_obj,
-            }
-        )
+        if material_obj.material_type == Material.TYPE_CONSUMABLE:
+            # 耗材 (Cup): 代表工作人员手动补货，直接更新数据库，利用 save() 同步到 Redis
+            from devices.models import DeviceConsumableStock
+            try:
+                stock, created = DeviceConsumableStock.objects.get_or_create(
+                    device=device,
+                    code=material_obj,
+                    defaults={'init_quantity': 100, 'quantity': int(qty_decimal), 'unit': '个', 'warn_level': 20}
+                )
+                if not created:
+                    stock.quantity = int(qty_decimal)
+                    stock.save()
+            except Exception as e:
+                logger.warning(f'[MQTT] 更新耗材 {code} 数据库失败: {e}')
+        else:
+            # 食材 (Raw): 按照原逻辑进行预警、熔断并更新 DeviceMaterialStock 和 Redis
+            # 检查 Redis 中已有的可用库存当前值，避免因频繁上报且数据无变化时导致的高频 MySQL 写入
+            key = f"automake:stock:{device.device_sn}:{code}"
+            redis_qty_val = redis_conn.get(key)
+            target_redis_val = int(qty_decimal * 100)
 
-        # 2. 直接覆盖 Redis_Available_Stock
-        redis_conn.set(key, target_redis_val)
+            # 获取预警告警配置阈值
+            from devices.models import DeviceMaterialStock
+            stock_config = DeviceMaterialStock.objects.filter(device=device, code=code).first()
+            warn_level = float(stock_config.warn_level) if stock_config else 10.0
+            critical_level = warn_level * 0.2
+
+            height_val = float(qty_decimal)
+            if height_val <= critical_level:
+                logger.warning(f"[OUT_OF_STOCK] 设备 {device_sn} 物料 {code} 高度为 {height_val}cm, 低于或等于极低熔断阈值 {critical_level}cm, 触发缺货熔断")
+            elif height_val <= warn_level:
+                sms_lock_key = f"automake:sms_sent:{device_sn}:{code}"
+                if redis_conn.set(sms_lock_key, "1", ex=3600, nx=True):
+                    phone = device.store.contact_phone if (device.store and device.store.contact_phone) else "13800138000"
+                    store_name = device.store.name if device.store else "未知门店"
+                    m_name = stock_config.name.name if (stock_config and stock_config.name) else (name or code)
+                    logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {device_sn}) {m_name} 原料即将耗尽，当前高度为 {height_val}cm，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
+
+            if redis_qty_val is not None and int(redis_qty_val) == target_redis_val:
+                # 数据完全一致，直接跳过写操作
+                logger.debug(f'物料 {code} 数量未发生变化 ({qty_decimal})，跳过 DB 与 Redis 写入')
+                continue
+
+            # 更新数据库 (DB_Book_Stock)
+            DeviceMaterialStock.objects.update_or_create(
+                device=device,
+                code=code,
+                defaults={
+                    'name': material_obj,
+                }
+            )
+
+            # 直接覆盖 Redis_Available_Stock
+            redis_conn.set(key, target_redis_val)
 
     logger.info(f'物料状态上报成功并持久化: device_sn={device_sn}')
 
@@ -220,10 +252,11 @@ def receive_material_report(device_sn: str, payload: dict):
 class DeviceRegisterRequestSerializer(serializers.Serializer):
     device_sn = serializers.CharField(required=True, max_length=128, help_text="设备唯一序列号SN，作为身份凭证")
     key_code = serializers.CharField(required=True, max_length=32, help_text="门店注册码")
-    store_id = serializers.IntegerField(required=True, help_text="所属门店ID")
+    store_id = serializers.IntegerField(required=False, allow_null=True, help_text="所属门店ID")
     device_name = serializers.CharField(required=False, max_length=128, help_text="设备名称")
     device_version = serializers.CharField(required=False, max_length=64, help_text="设备版本")
     device_address = serializers.CharField(required=False, max_length=256, help_text="设备安装地址")
+
 
 
 class DeviceRegisterResponseSerializer(serializers.Serializer):
@@ -235,107 +268,88 @@ class DeviceRegisterResponseSerializer(serializers.Serializer):
 
 class DeviceRegisterView(APIView):
     """
-    设备注册/更新接口（上位机启动时调用）
-
-    【通信协议说明】
-    根据系统架构要求：
-    1. 上位机注册与信息更新：必须且仅通过 HTTPS POST 接口（即此视图）进行注册。
-    2. 其他通信（心跳、物料、状态上报及云端下发命令）：均必须通过 MQTT 协议进行通信，禁止使用 HTTP/HTTPS。
-
+    1. 上位机注册与信息更新：必须且仅通过 HTTPS POST 接口进行注册。
     POST /api/device/register
-    请求体：{ "device_sn": "SN001", "key_code": "...", "store_id": 1, "device_name": "...", "device_version": "1.0.0", "device_address": "..." }
-    响应：{ "device_id": ..., "resource_version": ..., "mqtt_topic_prefix": "..." }
     """
-    # 设备注册接口：使用设备 SN 作为凭证，不需要用户 JWT
-    # 生产中可加设备 Token 认证
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=DeviceRegisterRequestSerializer,
         responses={200: DeviceRegisterResponseSerializer},
         summary="设备注册/重新上线",
-        description="上位机（设备）启动时首个调用的 HTTPS POST 接口，进行上线注册并获取 MQTT 联络主题前缀与配置。"
+        description="上位机（设备）启动时首个调用的 HTTPS POST 接口，进行上线注册并获取 websocket uri。"
     )
     def post(self, request):
         
-        # 1. 提取并校验必要参数：设备序列号 (device_sn)、门店注册码 (key_code) 与门店 ID (store_id)
+        # 1. 提取并校验必要参数：设备序列号 (device_sn)、门店注册码 (key_code)
         device_sn = request.data.get('device_sn', '').strip()
         key_code = request.data.get('key_code', '').strip()
         store_id = request.data.get('store_id')
-        if not device_sn or not key_code or store_id is None:
-            return error('device_sn、key_code 和 store_id 不能为空', code=6001)
+        if not device_sn or not key_code:
+            return error('device_sn 和 key_code 不能为空', code=6001)
 
         # 记录上位机设备注册的上报数据日志，用于测试闭环
         logger.info(f"[DEVICE_REPORT] Register payload from {device_sn}: {request.data}")
-
-        device_name = request.data.get('device_name', '')
-        device_version = request.data.get('device_version') or request.data.get('firmware_version') or ''
-        device_address = request.data.get('device_address', '')
-        device_model_code = request.data.get('device_model', '').strip()
-        device_model_obj = None
-        if device_model_code:
-            from global_config.models import DeviceModel
-            device_model_obj, _ = DeviceModel.objects.get_or_create(
-                code=device_model_code,
-                defaults={'name': f'设备型号 {device_model_code}'}
-            )
-
-        # 2.联动校验门店：必须在对应的 Store 表中存在注册码为 key_code 且 ID 为 store_id 的门店记录
-        from stores.models import Store
-        store = Store.objects.filter(code=key_code, id=store_id).first()
-        if not store:
-            logger.warning(f"设备注册/创建失败：未找到注册码为 {key_code} 且 ID 为 {store_id} 的门店记录")
-            return error('门店不存在或注册码无效，无法绑定/创建设备', code=6002)
-
-        # 3. 查找或创建设备记录（仅根据唯一键 device_sn 查找，避免 IntegrityError 数据库冲突崩溃）
-        extra_config = {'device_address': device_address} if device_address else {}
-        device, created = Device.objects.get_or_create(
-            device_sn=device_sn,
-            defaults={
-                'key_code': key_code,
-                'store': store,
-                'device_name': device_name,
-                'device_model': device_model_obj,
-                'firmware_version': device_version,
-                'status': Device.STATUS_ONLINE,
-                'last_heartbeat_at': timezone.now(),
-                'mqtt_topic_prefix': f'automake/device/{device_sn}',
-                'extra_config': extra_config,
-            }
-        )
-
-        # 5. 更新 Device 完整数据项（针对已存在的记录，确保信息实时最新）
-        if not created:
-            if device.key_code != key_code:
-                logger.warning(f"设备重新上线失败：设备 {device_sn} 的注册码为 {device.key_code}，但请求的注册码为 {key_code}")
-                return error('设备注册码与数据库中不一致，可能存在越权注册', code=6003)
-
-            device.status = Device.STATUS_ONLINE
-            device.last_heartbeat_at = timezone.now()
-            device.firmware_version = device_version
-            device.device_name = device_name
-            device.store = store
-            device.mqtt_topic_prefix = f'automake/device/{device_sn}'
-            if device_model_obj:
-                device.device_model = device_model_obj
+        
+        # 2. 校验设备是否已预先录入系统
+        device = Device.objects.filter(device_sn=device_sn).first()
+        if not device:
+            logger.warning(f"设备注册失败：设备序列号 {device_sn} 未在系统中预先录入")
+            return error('设备未在系统预先录入，无法注册', code=6004)
+        
+        if device.status != 'online':
+            logger.warning(f"设备注册失败：请联系管理员先上线在注册")
+            return error('请联系管理员先上线在注册', code=6004)
             
+        if device.key_code and device.key_code != key_code:
+            logger.warning(f"设备重新上线失败：设备 {device_sn} 的注册码为 {device.key_code}，但请求的注册码为 {key_code}")
+            return error('设备注册码与数据库中不一致，可能存在越权注册', code=6003)
+
+        # 3. 联动校验门店
+        from stores.models import Store
+        if store_id:
+            store = Store.objects.filter(code=key_code, id=store_id).first()
+            if not store:
+                logger.warning(f"设备注册失败：未找到注册码为 {key_code} 且 ID 为 {store_id} 的门店记录")
+                return error('门店不存在或注册码无效，无法绑定设备', code=6002)
+        else:
+            store = device.store
+            if not store:
+                logger.warning(f"设备注册失败：设备 {device_sn} 未关联任何门店，且请求中未提供 store_id")
+                return error('设备未关联门店，且未提供 store_id', code=6002)
+            if store.code != key_code:
+                logger.warning(f"设备注册失败：设备关联的门店注册码 {store.code} 与请求的 key_code {key_code} 不一致")
+                return error('注册码无效', code=6002)
+
+        # 4. 更新设备信息
+        device.store = store
+        device.key_code = key_code
+        
+        device_name = request.data.get('device_name')
+        if device_name:
+            device.device_name = device_name
+            
+        device_version = request.data.get('device_version') or request.data.get('firmware_version')
+        if device_version:
+            device.firmware_version = device_version
+            
+        device_address = request.data.get('device_address')
+        if device_address:
             if not isinstance(device.extra_config, dict):
                 device.extra_config = {}
-            if device_address:
-                device.extra_config['device_address'] = device_address
-            device.save()
-            action = '重新上线'
-        else:
-            action = '注册创建'
+            device.extra_config['device_address'] = device_address
+            
+        device.last_heartbeat_at = timezone.now()
+        device.save()
 
-        # 自动触发该门店的全局菜单同步
+        # 5. 自动触发该门店的全局菜单同步
         try:
             from menus.models import MenuItem
             MenuItem.sync_store_menu(store)
         except Exception as e:
             logger.error(f'自动同步门店菜单失败: {e}')
 
-        # 4. 记录状态变更日志
+        # 6. 记录状态变更日志
         DeviceStatusLog.objects.create(
             device=device,
             status=Device.STATUS_ONLINE,
@@ -343,14 +357,13 @@ class DeviceRegisterView(APIView):
             raw_payload=request.data,
         )
 
-        logger.info(f'设备{action}成功: device_sn={device_sn}')
+        logger.info(f'设备注册更新成功: device_sn={device_sn}')
 
         return ok({
             'device_id': device.id,
             'resource_version': device.resource_version,
-            'mqtt_topic_prefix': device.mqtt_topic_prefix or f'automake/device/{device_sn}',
-            'config': device.extra_config,
-        }, message=f'设备{action}成功')
+            'mqtt_topic_prefix': f'ws/device/{device_sn}',
+        }, message='设备注册成功')
 
 
 class MaterialItemSerializer(serializers.Serializer):

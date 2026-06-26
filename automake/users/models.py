@@ -94,11 +94,18 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=CUSTOMER, db_index=True, verbose_name='角色'
     )
     # 关联的门店（管理员级别绑定门店，超级管理员为空表示全局）
-    store = models.ForeignKey(
-        'stores.Store', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='admins',
+    stores = models.ManyToManyField(
+        'stores.Store', blank=True, related_name='admins',
         verbose_name='关联门店'
     )
+
+    @property
+    def store(self):
+        """
+        为了向后兼容获取单个门店的逻辑。
+        返回关联门店列表中的第一个门店，若无则返回 None。
+        """
+        return self.stores.all().first()
     # Django 内置权限字段
     is_active = models.BooleanField(default=True, verbose_name='是否激活')
     is_staff = models.BooleanField(default=False, verbose_name='可登录后台')

@@ -215,7 +215,11 @@ class DeviceMaterialStock(models.Model):
     initHight = models.IntegerField(default=100, verbose_name='满料高度')
     code = models.CharField(max_length=64, unique=True, verbose_name='物料编码')
     unit = models.CharField(max_length=16, default='cm', verbose_name='标准单位')
-    warn_level = models.DecimalField(max_digits=10, decimal_places=2, default=10.00, verbose_name='预警高度')
+    warn_level = models.DecimalField(max_digits=5, decimal_places=2, default=10.00, verbose_name='预警高度')
+    warn_level_1 = models.DecimalField(max_digits=10, decimal_places=2, default=10.00, verbose_name='预警高度1')
+    warn_level_2 = models.DecimalField(max_digits=20, decimal_places=2, default=5.00, verbose_name='预警高度2')
+    warn_level_3 = models.DecimalField(max_digits=30, decimal_places=2, default=2.00, verbose_name='预警高度3')
+    current_remaining_height = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name='当前剩余高度')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -227,4 +231,59 @@ class DeviceMaterialStock(models.Model):
 
     def __str__(self):
         return f"{self.device.device_sn} - {self.name_id} ({self.code})"
+
+
+class DeviceConsumableStock(models.Model):
+    """
+    设备耗材库存表 (杯子、封口膜、杯盖等)
+
+    由于耗材无法通过上位机进行实时更新剩余数量，只能依赖服务器在订单完成后进行计算扣减。
+    """
+    CONSUMABLE_CHOICES = [
+        ('paperL', '大号纸杯'),
+        ('paperM', '中号纸杯'),
+        ('plasticL', '大号塑料杯'),
+        ('plasticM', '中号塑料杯'),
+        ('membrane', '封口膜'),
+        ('lid', '杯盖'),
+    ]
+
+    device = models.ForeignKey(
+        'devices.Device', on_delete=models.CASCADE,
+        related_name='consumable_stocks', verbose_name='设备'
+    )
+    code = models.ForeignKey(
+        'inventory.Material', to_field='code',
+        on_delete=models.CASCADE, db_column='code',
+        limit_choices_to={'material_type': 'consumable'}, verbose_name='耗材编码'
+    )
+    init_quantity = models.IntegerField(default=100, verbose_name='满载数量')
+    quantity = models.IntegerField(default=100, verbose_name='当前剩余数量')
+    unit = models.CharField(max_length=16, default='个', verbose_name='标准单位')
+    warn_level = models.IntegerField(default=10, verbose_name='预警数量')
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'device_consumable_stock'
+        unique_together = ('device', 'code')
+        verbose_name = '设备耗材库存'
+        verbose_name_plural = '设备耗材库存列表'
+
+    def __str__(self):
+        return f"{self.device.device_sn} - {self.code_id}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # 自动同步更新 Redis 虚拟库存
+        try:
+            from django_redis import get_redis_connection
+            redis_conn = get_redis_connection("default")
+            key = f"automake:stock:{self.device.device_sn}:{self.code_id}"
+            # Redis 库存存储数值为实际数量 * 100
+            redis_conn.set(key, int(self.quantity * 100))
+        except Exception:
+            pass
+
 

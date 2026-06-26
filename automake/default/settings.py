@@ -47,7 +47,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-producti
 
 # 调试模式，生产环境必须设为 False
 DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
-
+# DEBUG = False
 # 允许访问的域名，生产环境应填写实际域名，避免使用通配符
 # ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*,').split(',')
 ALLOWED_HOSTS = ['*']
@@ -88,7 +88,6 @@ INSTALLED_APPS = [
     'simulator',                        # 上位机通信模拟器
     'notifications',                    # 消息通知（微信订阅消息、取餐码、告警）
     'inventory',                        # 物料仓库与进销存管理
-    'ws_device',                        # 上位机 WebSocket 通信模块
     'monitor',                          # 设备监控与分析模块
 ]
 
@@ -396,12 +395,6 @@ LOGGING = {
             'propagate': True,
         },
         'mqtt': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        # 上位机 WebSocket 通信模块日志
-        'ws_device': {
             'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': True,

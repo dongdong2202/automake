@@ -30,6 +30,7 @@ class MaterialAdmin(ModelAdmin):
     list_display = (
         'code', 
         'name', 
+        'material_type',
         'quantity', 
         'unit', 
         'shelf_life', 
@@ -37,7 +38,7 @@ class MaterialAdmin(ModelAdmin):
         'retrieve_count', 
         'updated_at'
     )
-    search_fields = ('code', 'name', 'storage_conditions')
+    search_fields = ('code', 'name', 'storage_conditions','material_type')
     list_filter = ('storage_conditions',)
     
     # 防止管理员在主表中直接手动修改数量和出库次数（必须通过进出库账单记录生成动态变更）
@@ -48,7 +49,7 @@ class MaterialAdmin(ModelAdmin):
 
     fieldsets = (
         ('基本信息', {
-            'fields': ('code', 'name', 'unit', 'shelf_life')
+            'fields': ('code', 'name', 'unit', 'shelf_life','material_type')
         }),
         ('储存与属性', {
             'fields': ('storage_conditions', 'precautions', 'remarks')

@@ -22,7 +22,7 @@ class GlobalMenuInheritanceTests(TestCase):
         # Link the store to a device of this type
         self.device = Device.objects.create(
             store=self.store,
-            device_sn="TEST-SN-9999",
+            device_sn="SN001",
             device_name="测试设备",
             device_model=self.dev_type,
             status=Device.STATUS_ONLINE
@@ -70,7 +70,7 @@ class GlobalMenuInheritanceTests(TestCase):
 
         # Verify store menu API serializes the dynamic tree correctly
         client = Client()
-        response = client.get(f'/api/menu/store/{self.store.id}')
+        response = client.get('/api/menu/store/SN001')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['code'], 0)
@@ -343,7 +343,7 @@ class CxdPermissionsAndSyncTests(TestCase):
         self.dev_type = DeviceModel.objects.create(name="咖啡机", code="coffee_maker")
         self.device = Device.objects.create(
             store=self.closed_store,
-            device_sn="TEST-CLOSED-SN",
+            device_sn="SN001",
             device_name="设备",
             device_model=self.dev_type,
             status=Device.STATUS_ONLINE
@@ -361,12 +361,12 @@ class CxdPermissionsAndSyncTests(TestCase):
         client = APIClient()
         
         # Test anonymous or normal user: closed store returns 400
-        response = client.get(f'/api/menu/store/{self.closed_store.id}')
+        response = client.get('/api/menu/store/SN001')
         self.assertEqual(response.status_code, 400)
         
         # Log in as cxd
         client.force_authenticate(user=self.cxd_user)
-        response = client.get(f'/api/menu/store/{self.closed_store.id}')
+        response = client.get('/api/menu/store/SN001')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['code'], 0)

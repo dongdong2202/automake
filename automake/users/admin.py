@@ -10,22 +10,24 @@ class ReadOnlyStoreScopedUserAdmin(ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
-            if request.user.store:
+            user_stores = request.user.stores.all()
+            if user_stores.exists():
                 if self.model == User:
-                    return qs.filter(store=request.user.store)
+                    return qs.filter(stores__in=user_stores).distinct()
                 elif self.model == UserProfile:
-                    return qs.filter(user__store=request.user.store)
+                    return qs.filter(user__stores__in=user_stores).distinct()
             return qs.none()
         return qs
 
     def has_view_permission(self, request, obj=None):
         if request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin':
             if obj is not None:
+                user_stores = request.user.stores.all()
                 if self.model == User:
-                    if obj.store != request.user.store:
+                    if not obj.stores.filter(id__in=user_stores).exists():
                         return False
                 elif self.model == UserProfile:
-                    if obj.user.store != request.user.store:
+                    if not obj.user.stores.filter(id__in=user_stores).exists():
                         return False
             return True
         return super().has_view_permission(request, obj)
@@ -60,7 +62,7 @@ class UserAdmin(ReadOnlyStoreScopedUserAdmin):
 
     fieldsets = (
         ('登录凭据与基本信息', {
-            'fields': ('username', 'password', 'phone', 'role', 'store')
+            'fields': ('username', 'password', 'phone', 'role', 'stores')
         }),
         ('状态与权限控制', {
             'fields': ('is_active', 'is_staff', 'is_superuser')

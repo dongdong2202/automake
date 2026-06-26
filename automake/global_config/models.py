@@ -246,27 +246,27 @@ class GlobalSkuIngredient(models.Model):
         return self.material.code
 
 
-class GlobalConsumable(models.Model):
-    """
-    全局包装耗材定义表
-    用于定义杯子、杯盖、打包袋等包装耗材的规格及初始化数据
-    """
-    code = models.CharField(max_length=64, unique=True, verbose_name='耗材编号', db_index=True)
-    name = models.CharField(max_length=128, verbose_name='耗材名称')
-    initQuantity = models.IntegerField(default=0, verbose_name='初始化数量')
-    deviceSN = models.CharField(max_length=128, default='1', verbose_name='设备编号')
+# class GlobalConsumable(models.Model):
+#     """
+#     全局包装耗材定义表
+#     用于定义杯子、杯盖、打包袋等包装耗材的规格及初始化数据
+#     """
+#     code = models.CharField(max_length=64, unique=True, verbose_name='耗材编号', db_index=True)
+#     name = models.CharField(max_length=128, verbose_name='耗材名称')
+#     initQuantity = models.IntegerField(default=0, verbose_name='初始化数量')
+#     deviceSN = models.CharField(max_length=128, default='1', verbose_name='设备编号')
     
-    description = models.TextField(blank=True, verbose_name='耗材描述')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+#     description = models.TextField(blank=True, verbose_name='耗材描述')
+#     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+#     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
-    class Meta:
-        db_table = 'global_consumable'
-        verbose_name = '全局包装耗材'
-        verbose_name_plural = '全局包装耗材列表'
+#     class Meta:
+#         db_table = 'global_consumable'
+#         verbose_name = '全局包装耗材'
+#         verbose_name_plural = '全局包装耗材列表'
 
-    def __str__(self):
-        return f"{self.name} ({self.code})"
+#     def __str__(self):
+#         return f"{self.name} ({self.code})"
 
 
 
