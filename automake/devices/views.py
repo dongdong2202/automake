@@ -96,7 +96,7 @@ def receive_device_status(device_sn: str, payload: dict):
                 # 通知失败不影响主流程
                 logger.warning(f'订单状态通知异常（making）: {notify_exc}')
         
-        elif new_status in ('done', 'success'):
+        elif new_status == 'done': # 出货完成
             update_order_status(
                 order=order,
                 new_status=OrderMain.STATUS_DONE,
@@ -143,17 +143,69 @@ def receive_device_status(device_sn: str, payload: dict):
             except Exception as notify_exc:
                 logger.warning(f'订单失败通知异常: {notify_exc}')
 
+        elif new_status == 'cancelled':
+            from payments.services import refund_order
+            
+            ProductionTask.objects.filter(order=order).update(
+                status=ProductionTask.TASK_FAILED,
+                failure_reason='设备已确认撤单'
+            )
+            logger.info(f'设备已确认撤单，开始执行退款，order_no={order_no}')
+            try:
+                refund_order(order, reason="设备已确认撤单，自动退款")
+            except Exception as e:
+                logger.error(f"设备确认撤单后，调用退款异常: {e}")
 
 
+
+
+def check_material_alarm(device, code: str, qty_decimal):
+    """
+    针对食材原料 (raw) 的高度进行阈值计算与报警触发。
+    - 临界值 (critical_level) = warn_level * 0.2
+    - 高度低于或等于临界值，触发缺货熔断警告。
+    - 高度低于或等于预警值，触发短信预警逻辑（通过 Redis 锁限制 1 小时内仅发送 1 次）。
+    """
+    from decimal import Decimal
+    from django_redis import get_redis_connection
+    from .models import DeviceMaterialStock
+    
+    redis_conn = get_redis_connection("default")
+    device_sn = device.device_sn
+
+    # 获取预警告警配置阈值 (只读，不创建)
+    stock_config = DeviceMaterialStock.objects.filter(device=device, code=code).first()
+    if not stock_config:
+        return -1 # 没有这个食材
+    
+    warn_level = float(stock_config.warn_level) if stock_config else 0
+    warn_level_3 = float(stock_config.warn_level_3) if stock_config else 0
+    height_val = stock_config.initHight - qty_decimal #current hight
+    
+    if height_val <= warn_level:
+        logger.warning(f"[OUT_OF_STOCK] 设备 {device_sn} 物料 {code} 高度为 {height_val}cm, 低于或等于极低熔断阈值 {warn_level}cm, 触发缺货熔断")
+
+        return 0
+    elif height_val <= warn_level_3:
+        sms_lock_key = f"automake:sms_sent:{device_sn}:{code}"
+        if redis_conn.set(sms_lock_key, "1", ex=3600, nx=True):
+            phone = device.store.contact_phone if (device.store and device.store.contact_phone) else "13800138000"
+            store_name = device.store.name if device.store else "未知门店"
+            m_name = stock_config.name.name if (stock_config and stock_config.name) else code
+            logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {device_sn}) {m_name} 原料即将耗尽，当前高度为 {height_val}cm，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
+        return 1
+    return 2
 
 def receive_material_report(device_sn: str, payload: dict):
     """
     处理物料上报，并更新 DB 账面库存和 Redis 可用库存。
-    包含预警和熔断逻辑。
+    - cup (消耗品/耗材): 写入 MySQL (Material & DeviceConsumableStock)，保存时会自动同步至 Redis。
+    - raw (原材料/食材): 不保存到 MySQL，直接更新 Redis 虚拟可用库存并进行告警/熔断检查。
     """
-    from .models import DeviceMaterialStock
+    from .models import DeviceMaterialStock, DeviceConsumableStock
     from decimal import Decimal
     from django_redis import get_redis_connection
+    from inventory.models import Material
 
     logger.info(f'开始处理物料上报: device_sn={device_sn}, payload={payload}')
     try:
@@ -162,89 +214,52 @@ def receive_material_report(device_sn: str, payload: dict):
         logger.error(f'物料上报失败：设备 SN={device_sn} 不存在')
         return
 
-    materials = payload.get('materials', [])
     redis_conn = get_redis_connection("default")
 
-    for m in materials:
-        code = m.get('code') or m.get('material_code')
-        name = m.get('name') or m.get('material_name') or ''
-        qty = m.get('quantity')
-        if not code or qty is None:
+    # 1. 处理 cup 消耗品 (写数据库 + Redis)
+    cup_dict = payload.get('cup', {})
+    for code, qty in cup_dict.items():
+        if qty is None:
             continue
-        
         try:
             qty_decimal = Decimal(str(qty))
         except Exception:
-            logger.error(f'无效的物料数量: {qty}')
+            logger.error(f'无效的耗材数量: {qty}')
+            continue
+        try:
+                stock = DeviceConsumableStock.objects.get(device=device, code=code)
+                stock.quantity = int(qty_decimal)
+                stock.save()
+        except Exception as e:
+                logger.warning(f'[MQTT] 更新耗材 {code} 数据库失败: {e}')
+
+
+
+    # 2. 处理 raw 原材料 (仅更新 Redis，不保存到 MySQL)
+    raw_dict = payload.get('raw', {})
+    for code, qty in raw_dict.items():
+        if qty is None:
+            continue
+        try:
+            qty_decimal = Decimal(str(qty))
+        except Exception:
+            logger.error(f'无效的食材数量: {qty}')
             continue
 
-        # 1. 查找或创建通用物料信息
-        from inventory.models import Material
-        material_name = name or code
-        material_obj, created_mat = Material.objects.get_or_create(
-            code=code,
-            defaults={
-                'name': material_name,
-                'unit': 'g',
-                'shelf_life': '12个月',
-                'storage_conditions': '常温避光'
-            }
-        )
+        # 触发报警函数
+        check_material_alarm(device, code, qty_decimal)
 
-        if material_obj.material_type == Material.TYPE_CONSUMABLE:
-            # 耗材 (Cup): 代表工作人员手动补货，直接更新数据库，利用 save() 同步到 Redis
-            from devices.models import DeviceConsumableStock
-            try:
-                stock, created = DeviceConsumableStock.objects.get_or_create(
-                    device=device,
-                    code=material_obj,
-                    defaults={'init_quantity': 100, 'quantity': int(qty_decimal), 'unit': '个', 'warn_level': 20}
-                )
-                if not created:
-                    stock.quantity = int(qty_decimal)
-                    stock.save()
-            except Exception as e:
-                logger.warning(f'[MQTT] 更新耗材 {code} 数据库失败: {e}')
-        else:
-            # 食材 (Raw): 按照原逻辑进行预警、熔断并更新 DeviceMaterialStock 和 Redis
-            # 检查 Redis 中已有的可用库存当前值，避免因频繁上报且数据无变化时导致的高频 MySQL 写入
-            key = f"automake:stock:{device.device_sn}:{code}"
-            redis_qty_val = redis_conn.get(key)
-            target_redis_val = int(qty_decimal * 100)
+        key = f"automake:stock:{device.device_sn}:{code}"
+        redis_qty_val = redis_conn.get(key)
+        target_redis_val = int(qty_decimal * 100)
 
-            # 获取预警告警配置阈值
-            from devices.models import DeviceMaterialStock
-            stock_config = DeviceMaterialStock.objects.filter(device=device, code=code).first()
-            warn_level = float(stock_config.warn_level) if stock_config else 10.0
-            critical_level = warn_level * 0.2
+        if redis_qty_val is not None and int(redis_qty_val) == target_redis_val:
+            # 数据无变化，直接跳过写操作
+            logger.debug(f'原料 {code} 数量未发生变化 ({qty_decimal})，跳过 Redis 写入')
+            continue
 
-            height_val = float(qty_decimal)
-            if height_val <= critical_level:
-                logger.warning(f"[OUT_OF_STOCK] 设备 {device_sn} 物料 {code} 高度为 {height_val}cm, 低于或等于极低熔断阈值 {critical_level}cm, 触发缺货熔断")
-            elif height_val <= warn_level:
-                sms_lock_key = f"automake:sms_sent:{device_sn}:{code}"
-                if redis_conn.set(sms_lock_key, "1", ex=3600, nx=True):
-                    phone = device.store.contact_phone if (device.store and device.store.contact_phone) else "13800138000"
-                    store_name = device.store.name if device.store else "未知门店"
-                    m_name = stock_config.name.name if (stock_config and stock_config.name) else (name or code)
-                    logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {device_sn}) {m_name} 原料即将耗尽，当前高度为 {height_val}cm，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
-
-            if redis_qty_val is not None and int(redis_qty_val) == target_redis_val:
-                # 数据完全一致，直接跳过写操作
-                logger.debug(f'物料 {code} 数量未发生变化 ({qty_decimal})，跳过 DB 与 Redis 写入')
-                continue
-
-            # 更新数据库 (DB_Book_Stock)
-            DeviceMaterialStock.objects.update_or_create(
-                device=device,
-                code=code,
-                defaults={
-                    'name': material_obj,
-                }
-            )
-
-            # 直接覆盖 Redis_Available_Stock
-            redis_conn.set(key, target_redis_val)
+        # 仅写入 Redis_Available_Stock，不执行 MySQL update_or_create
+        redis_conn.set(key, target_redis_val)
 
     logger.info(f'物料状态上报成功并持久化: device_sn={device_sn}')
 
@@ -460,10 +475,14 @@ class DeviceInventoryReportView(APIView):
     请求体：
     {
         "device_sn": "SN001",
-        "materials": [
-            { "material_code": "coffee_bean", "material_name": "咖啡豆", "quantity": 850, "unit": "g" },
-            { "material_code": "fresh_milk", "material_name": "鲜牛奶", "quantity": 2500, "unit": "ml" }
-        ]
+        "raw": {
+            "coffee_bean": 850,
+            "fresh_milk": 2500
+        },
+        "cup": {
+            "paperL": 100,
+            "lid": 100
+        }
     }
     """
     permission_classes = [AllowAny]
@@ -473,17 +492,13 @@ class DeviceInventoryReportView(APIView):
         if not device_sn:
             return error('device_sn 不能为空', code=6009)
 
-        materials = request.data.get('materials', [])
-        formatted_materials = []
-        for m in materials:
-            formatted_materials.append({
-                'code': m.get('material_code') or m.get('code'),
-                'name': m.get('material_name') or m.get('name'),
-                'quantity': m.get('quantity'),
-                'unit': m.get('unit')
-            })
+        raw = request.data.get('raw', {})
+        cup = request.data.get('cup', {})
 
-        payload = {'materials': formatted_materials}
+        payload = {
+            'raw': raw,
+            'cup': cup
+        }
         receive_material_report(device_sn, payload)
 
         return ok(None, message='物料库存上报成功')

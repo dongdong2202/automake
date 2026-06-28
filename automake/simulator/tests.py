@@ -326,10 +326,14 @@ class SimulatorIntegrationTests(TestCase):
         )
         payload = {
             'device_sn': 'TEST-SN-006',
-            'materials': [
-                {'material_code': 'coffee_bean', 'material_name': '咖啡豆', 'quantity': 750.0, 'unit': 'g'},
-                {'material_code': 'fresh_milk', 'material_name': '鲜牛奶', 'quantity': 3500.0, 'unit': 'ml'}
-            ]
+            'raw': {
+                'coffee_bean': 750.0,
+                'fresh_milk': 3500.0
+            },
+            'cup': {
+                'paperL': 100,
+                'lid': 100
+            }
         }
         response = self.client.post(
             '/api/device/inventory/report',
@@ -346,13 +350,195 @@ class SimulatorIntegrationTests(TestCase):
             status=Device.STATUS_ONLINE,
         )
         from devices.views import receive_material_report
-        payload = {
-            'materials': [
-                {'code': 'coffee_bean', 'name': '咖啡豆', 'quantity': 50.0, 'unit': 'g'},
-                {'code': 'fresh_milk', 'name': '鲜牛奶', 'quantity': 4000.0, 'unit': 'ml'}
-            ]
+        from devices.models import DeviceMaterialStock, DeviceConsumableStock
+        from django_redis import get_redis_connection
+        from inventory.models import Material
+        from orders.services import get_consumable_name_by_code
+        from decimal import Decimal
+
+        # 预先创建通用物料及该设备的耗材库存记录
+        for m_code in ['paperL', 'lid']:
+            mat, _ = Material.objects.get_or_create(
+                code=m_code,
+                defaults={
+                    'name': get_consumable_name_by_code(m_code),
+                    'material_type': Material.TYPE_CONSUMABLE,
+                    'unit': '个',
+                    'shelf_life': '永久',
+                    'storage_conditions': '常温干燥'
+                }
+            )
+            DeviceConsumableStock.objects.create(
+                device=device,
+                code=mat,
+                init_quantity=100,
+                quantity=100,
+                unit='个',
+                warn_level=20
+            )
+
+        # 预先创建通用食材物料及该设备的食材库存配置，用于触发报警函数
+        mat_raw, _ = Material.objects.get_or_create(
+            code='coffee_bean',
+            defaults={
+                'name': '咖啡豆',
+                'material_type': Material.TYPE_INGREDIENT,
+                'unit': 'g',
+                'shelf_life': '永久',
+                'storage_conditions': '常温干燥'
+            }
+        )
+        DeviceMaterialStock.objects.create(
+            device=device,
+            code='coffee_bean',
+            name=mat_raw,
+            initHight=100,
+            unit='cm',
+            warn_level=Decimal('10.00'),
+            warn_level_3=Decimal('2.00')
+        )
+
+        # 测试新格式上报 (raw & cup)
+        redis_conn = get_redis_connection("default")
+        redis_conn.delete(f"automake:stock:TEST-SN-007:coffee_bean")
+        redis_conn.delete(f"automake:stock:TEST-SN-007:fresh_milk")
+        redis_conn.delete(f"automake:stock:TEST-SN-007:paperL")
+        redis_conn.delete(f"automake:stock:TEST-SN-007:lid")
+
+        # 第一次上报
+        payload_new = {
+            'raw': {
+                'coffee_bean': 85.0,
+                'fresh_milk': 2500.0
+            },
+            'cup': {
+                'paperL': 80,
+                'lid': 75
+            }
         }
-        # Runs successfully without exception
-        receive_material_report('TEST-SN-007', payload)
+        receive_material_report('TEST-SN-007', payload_new)
+
+        self.assertEqual(DeviceConsumableStock.objects.filter(device=device).count(), 2)
+        self.assertEqual(DeviceConsumableStock.objects.get(device=device, code__code='paperL').quantity, 80)
+        self.assertEqual(DeviceConsumableStock.objects.get(device=device, code__code='lid').quantity, 75)
+
+        # 第二次上报（报告较多已消耗余量，触发预警）
+        payload_update = {
+            'raw': {
+                'coffee_bean': 95.0,  # initHight=100，所以 height_val = 5.0，低于 warn_level=10.0
+                'fresh_milk': 2400.0
+            },
+            'cup': {
+                'paperL': 78,
+                'lid': 72
+            }
+        }
+        receive_material_report('TEST-SN-007', payload_update)
+
+        # 验证：
+        # - cup 消耗品保存到了 MySQL (DeviceConsumableStock)
+        self.assertEqual(DeviceConsumableStock.objects.filter(device=device).count(), 2)
+        self.assertEqual(DeviceConsumableStock.objects.get(device=device, code__code='paperL').quantity, 78)
+        self.assertEqual(DeviceConsumableStock.objects.get(device=device, code__code='lid').quantity, 72)
+
+        # - raw 食材不保存到 MySQL (DeviceMaterialStock)
+        self.assertEqual(DeviceMaterialStock.objects.filter(device=device).count(), 1)
+
+        # - Redis 中的库存都更新了
+        self.assertEqual(int(redis_conn.get(f"automake:stock:TEST-SN-007:coffee_bean")), 9500)
+        self.assertEqual(int(redis_conn.get(f"automake:stock:TEST-SN-007:fresh_milk")), 240000)
+        self.assertEqual(int(redis_conn.get(f"automake:stock:TEST-SN-007:paperL")), 7800)
+        self.assertEqual(int(redis_conn.get(f"automake:stock:TEST-SN-007:lid")), 7200)
+
+    @patch('simulator.views.get_mqtt_client')
+    def test_simulator_status_api(self, mock_get_client):
+        """测试模拟器连接状态 API"""
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_get_client.return_value = mock_client
+        
+        response = self.client.get('/simulator/api/status/?sn=TEST-SN-100')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['code'], 0)
+        self.assertTrue(response.json()['data']['mqtt_connected'])
+
+    def test_simulator_logs_api(self):
+        """测试模拟器日志查询与清除 API"""
+        from django.core.cache import cache
+        # 1. 模拟写入缓存日志
+        key = "simulator:logs:TEST-SN-200"
+        cache.set(key, [{"timestamp": 123456.0, "type": "recv", "topic": "test", "payload": {}}])
+        
+        # 2. 查询日志
+        response = self.client.get('/simulator/api/logs/?sn=TEST-SN-200')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()['data']['logs']), 1)
+        
+        # 3. 清除日志
+        res_clear = self.client.post('/simulator/api/clear_logs/?sn=TEST-SN-200')
+        self.assertEqual(res_clear.status_code, 200)
+        self.assertEqual(cache.get(key), None)
+
+    @patch('simulator.views.get_mqtt_client')
+    def test_simulator_report_api(self, mock_get_client):
+        """测试模拟器状态上报 API (REST -> MQTT)"""
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_publish_result = MagicMock()
+        mock_publish_result.rc = 0
+        mock_client.publish.return_value = mock_publish_result
+        mock_get_client.return_value = mock_client
+
+        payload = {
+            'device_sn': 'TEST-SN-300',
+            'topic_type': 'status',
+            'payload': {
+                'type': 'order_status',
+                'order_no': '202606090001',
+                'status': 'making',
+                'message': '开始制作'
+            }
+        }
+        response = self.client.post(
+            '/simulator/api/report/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['code'], 0)
+        mock_client.publish.assert_called_once()
+
+    @patch('mqtt.get_mqtt_client')
+    def test_simulator_create_test_order_api(self, mock_get_client):
+        """测试一键创建测试订单 API"""
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_publish_result = MagicMock()
+        mock_publish_result.rc = 0
+        mock_client.publish.return_value = mock_publish_result
+        mock_get_client.return_value = mock_client
+
+        payload = {'device_sn': 'SN-DIAG-TEST'}
+        response = self.client.post(
+            '/simulator/api/create_test_order/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['code'], 0)
+        self.assertIn('order_no', response.json()['data'])
+
+    def test_simulator_diagnostics_api(self):
+        """测试模拟器诊断数据监测 API"""
+        # 1. 注册一个测试设备
+        device = Device.objects.create(
+            device_sn='SN-DIAG-TEST2',
+            status=Device.STATUS_ONLINE,
+        )
+        # 2. 查询诊断数据
+        response = self.client.get('/simulator/api/diagnostics/?sn=SN-DIAG-TEST2')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['code'], 0)
+        self.assertTrue(response.json()['data']['device_exists'])
 
 

@@ -191,7 +191,7 @@ def process_payment_success(order_no: str, transaction_id: str,
                             pay_time: str, wx_amount: int) -> None:
     """
     处理支付成功（由微信回调触发）。
-    依据 g.md 要求执行库存原子预扣与异常冲正回滚流程。
+
     """
     from orders.services import get_redis_stock_key, MenuSku
     from decimal import Decimal
@@ -278,7 +278,8 @@ def process_payment_success(order_no: str, transaction_id: str,
 
     redis_conn = get_redis_connection("default")
 
-    # 定制的 LUA 预扣脚本：扣减后余额不低于极低阈值 (critical_val)
+    # 【支付流程 4 - 步骤 1：并发防超卖预扣】
+    # 定制的 LUA 预扣脚本：扣减后余额不低于极低阈值 (critical_val)。利用 Redis 单线程机制实现原子操作，防止并发超卖。
     LUA_DECR_CUP = """
     local stock = tonumber(redis.call('get', KEYS[1]) or "0")
     local num = tonumber(ARGV[1])
@@ -300,14 +301,13 @@ def process_payment_success(order_no: str, transaction_id: str,
         "required_cups": {code: float(qty) for code, qty in required_cups.items()}
     }, ensure_ascii=False))
 
-    # 2. Redis 原子预扣 (Lua 脚本)
+    # 执行 Redis 原子预扣 (Lua 脚本)
     redis_deducted = []
     redis_success = True
     for cup_code, qty in required_cups.items():
         key = get_redis_stock_key(device.device_sn, cup_code)
         val_to_deduct = int(qty * 100)
         
-        # 获取极低阈值 (预警数量/高度的 20%)
         from devices.models import DeviceConsumableStock, DeviceMaterialStock
         stock_config = DeviceConsumableStock.objects.filter(device=device, code=cup_code).first()
         if stock_config:
@@ -320,7 +320,6 @@ def process_payment_success(order_no: str, transaction_id: str,
 
         res = redis_conn.register_script(LUA_DECR_CUP)(keys=[key], args=[val_to_deduct, critical_val])
         
-        # 核心日志点：具体杯型扣减日志
         logger.info(json.dumps({
             "event": "redis_precheck_deduct",
             "order_no": order.order_no,
@@ -350,7 +349,7 @@ def process_payment_success(order_no: str, transaction_id: str,
                 "quantity_compensate_val": val
             }, ensure_ascii=False))
         
-        # 将订单标记为失败，并退款
+        # 预扣失败说明机器已经缺货，直接标记订单异常并向用户自动退款
         with transaction.atomic():
             payment.status = PaymentRecord.STATUS_SUCCESS
             payment.transaction_id = transaction_id
@@ -366,7 +365,8 @@ def process_payment_success(order_no: str, transaction_id: str,
             refund_order(order, reason="可用库存不足自动退款")
         raise ValueError("高并发预扣库存不足，已触发退款")
 
-    # 3. Redis 预扣成功，执行 DB 事务持久化状态和乐观锁扣库存
+    # 【支付流程 4 - 步骤 2：持久化事务与硬件指令下发】
+    # Redis 预扣成功，执行 DB 事务持久化状态
     try:
         with transaction.atomic():
             # 更新支付记录状态为成功
@@ -375,10 +375,10 @@ def process_payment_success(order_no: str, transaction_id: str,
             payment.paid_at = paid_at
             payment.save(update_fields=['status', 'transaction_id', 'paid_at', 'updated_at'])
 
-            # 绑定提前生成的 OrderToken (UUID)
+            # 绑定提前生成的 OrderToken (UUID)，将状态更新为 PENDING_DISPENSE (待出杯)
             order.order_token = order_token
             order.paid_at = paid_at
-            order.status = OrderMain.STATUS_PAID  # pending_dispense
+            order.status = OrderMain.STATUS_PAID
             order.save(update_fields=['order_token', 'paid_at', 'status', 'updated_at'])
 
             OrderStatusLog.objects.create(
@@ -389,7 +389,7 @@ def process_payment_success(order_no: str, transaction_id: str,
                 remark=f'微信支付成功，指令已下发，交易号: {transaction_id}'
             )
 
-            # 创建生产任务
+            # 创建生成生产任务 (ProductionTask)，作为向硬件下发的任务凭证
             task = create_production_task(order)
 
         # 核心日志点 2：出库指令下发前/后日志 (JSON 结构化日志)
@@ -404,7 +404,7 @@ def process_payment_success(order_no: str, transaction_id: str,
         # 4. 指令下发 (放在 DB 事务外，防止网络阻塞导致 DB 事务过长)
         from mqtt import issue_make_command
         issue_make_command(order.order_no, device.device_sn, task.command_payload)
-        logger.info(f'支付成功处理完成，指令已下发: order_no={order.order_no}')
+        logger.info(f'支付成功处理完成，指令已下发: order_no={order.order_no}, =={ task.command_payload}')
 
     except Exception as e:
         logger.error(f'支付成功后置业务处理失败: {e}，开始进行冲正与退款')
@@ -430,3 +430,55 @@ def process_payment_success(order_no: str, transaction_id: str,
             )
             refund_order(order, reason=f"系统异常退款: {e}")
         raise e
+
+def process_refund_callback(out_refund_no: str, refund_status: str) -> None:
+    """
+    处理微信退款回调
+    """
+    from .models import RefundRecord
+    from orders.models import OrderMain, OrderStatusLog
+    
+    try:
+        refund = RefundRecord.objects.select_related('order').get(out_refund_no=out_refund_no)
+    except RefundRecord.DoesNotExist:
+        logger.warning(f"退款回调记录不存在: out_refund_no={out_refund_no}")
+        return
+        
+    if refund.status != RefundRecord.STATUS_PENDING:
+        logger.info(f"退款回调已处理跳过: out_refund_no={out_refund_no}")
+        return
+        
+    status_map = {
+        'SUCCESS': RefundRecord.STATUS_SUCCESS,
+        'CLOSED': RefundRecord.STATUS_FAILED,
+        'ABNORMAL': RefundRecord.STATUS_FAILED,
+    }
+    
+    new_status = status_map.get(refund_status)
+    if not new_status:
+        logger.warning(f"未知的退款状态: {refund_status}")
+        return
+        
+    order = refund.order
+    with transaction.atomic():
+        refund.status = new_status
+        if new_status == RefundRecord.STATUS_SUCCESS:
+            refund.refunded_at = timezone.now()
+        refund.save(update_fields=['status', 'refunded_at'])
+        
+        old_order_status = order.status
+        if new_status == RefundRecord.STATUS_SUCCESS:
+            order.status = OrderMain.STATUS_REFUNDED
+        else:
+            order.status = OrderMain.STATUS_EXCEPTION
+            
+        order.save(update_fields=['status', 'updated_at'])
+        
+        OrderStatusLog.objects.create(
+            order=order,
+            from_status=old_order_status,
+            to_status=order.status,
+            operator="WechatCallback",
+            remark=f"微信退款回调: {refund_status}"
+        )
+        logger.info(f"退款回调处理成功: out_refund_no={out_refund_no}, status={new_status}")

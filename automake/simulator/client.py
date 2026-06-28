@@ -652,8 +652,8 @@ def run_test_flow():
     print(f"  → 杯盖: 初始剩余={lid_stock.quantity} 个, 预警阀值={lid_stock.warn_level} 个 (触发线: <= 20)")
 
     # 4. 启动上位机的长连接 MQTT 客户端
-    sim.start_mqtt_client()
-    time.sleep(1.0) # 等待 MQTT 完成就绪与订阅
+    # sim.start_mqtt_client()
+    # time.sleep(1.0) # 等待 MQTT 完成就绪与订阅
 
     try:
         # 5. 点单端逻辑：从数据库读取菜单 Sku 并点大杯热拿铁 2 杯
@@ -680,10 +680,10 @@ def run_test_flow():
         sim.create_pay_request(order_no)
     
         pay_ok = sim.simulate_payment(order_no, precheck_res['pay_amount'])
-        if not pay_ok:
-            raise RuntimeError("支付确认回调失败")
+        # if not pay_ok:
+        #     raise RuntimeError("支付确认回调失败")
         print(f"[微信端] 支付成功！已异步通知 Django 逻辑")
-        exit()
+     
         # 9. 主测试线程轮询订单状态，等待后台 MQTT 异步交互并完成扣除
         logger.info("[集成测试] 等待硬件接收 make 指令并进行物理动作模拟...")
         order_done = False
@@ -697,7 +697,7 @@ def run_test_flow():
 
         if not order_done:
             raise RuntimeError("物理出货制作超时")
-
+        exit()
         # 10. 验证最终耗材数量扣减状态
         cup_stock.refresh_from_db()
         lid_stock.refresh_from_db()

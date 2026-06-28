@@ -17,7 +17,6 @@ from utils.wechat import WechatPayV3
 from orders.models import OrderMain
 from .models import PaymentCallbackLog
 from .services import create_pay_request, process_payment_success
-
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +37,7 @@ class PayCreateView(APIView):
         if not order_no:
             return error('order_no 不能为空', code=5001)
 
-        # 查找订单，并验证是当前用户的订单（防止越权）
+        # 【支付流程 1：客户端请求】查找订单，并验证是当前用户的订单（防止越权）
         try:
             order = OrderMain.objects.prefetch_related('items').get(
                 order_no=order_no,
@@ -48,6 +47,8 @@ class PayCreateView(APIView):
             return error('订单不存在', code=5002, status=404)
 
         try:
+            # 【支付流程 2 & 3：生成预支付单与签名】
+            # 内部逻辑会请求微信服务器获取 prepay_id，并使用本地商户私钥对参数进行 RSA 签名
             pay_params = create_pay_request(order, request.user)
         except ValueError as e:
             return error(str(e), code=5003)
@@ -55,6 +56,7 @@ class PayCreateView(APIView):
             logger.exception(f'发起支付异常: {e}')
             return error('支付系统异常，请稍后重试', code=5004, status=500)
 
+        # 返回签名后的包给前端，前端拿着这些参数调用 wx.requestPayment() 唤起微信收银台
         return ok(pay_params, message='支付参数获取成功')
 
 
@@ -110,6 +112,7 @@ class PayCallbackView(APIView):
             log_entry.save(update_fields=['process_result', 'process_error'])
             return self._fail_response('服务器配置错误')
 
+        # 【支付流程 3 - 步骤 2：防篡改验签】验证请求头中的签名，确保消息真实来自于微信
         if not pay_client.verify_callback_signature(request_headers, raw_body):
             logger.warning('微信回调签名验证失败')
             log_entry.process_result = 'failed'
@@ -118,6 +121,7 @@ class PayCallbackView(APIView):
             return self._fail_response('签名验证失败')
 
         # 解密回调数据
+        # 【支付流程 3 - 步骤 3：数据解密】使用 APIv3 密钥，解密 AES-256-GCM 密文数据
         try:
             decrypted = pay_client.decrypt_callback(resource)
         except Exception as e:
@@ -138,26 +142,38 @@ class PayCallbackView(APIView):
         log_entry.decrypted_data = decrypted
         log_entry.save(update_fields=['out_trade_no', 'transaction_id', 'decrypted_data'])
 
-        # 仅处理支付成功事件
         event_type = body_json.get('event_type', '')
-        if event_type != 'TRANSACTION.SUCCESS':
-            logger.info(f'忽略非支付成功事件: {event_type}')
-            log_entry.process_result = 'ignored'
-            log_entry.save(update_fields=['process_result'])
-            return self._success_response()
 
-        # 执行业务处理
         try:
-            process_payment_success(
-                order_no=out_trade_no,
-                transaction_id=transaction_id,
-                pay_time=pay_time,
-                wx_amount=wx_amount,
-            )
-            log_entry.process_result = 'success'
-            log_entry.save(update_fields=['process_result'])
+            if event_type == 'TRANSACTION.SUCCESS':
+                # 【支付流程 4：业务履约与处理】交由核心服务层执行订单后续逻辑
+                process_payment_success(
+                    order_no=out_trade_no,
+                    transaction_id=transaction_id,
+                    pay_time=pay_time,
+                    wx_amount=wx_amount,
+                )
+                log_entry.process_result = 'success'
+                log_entry.save(update_fields=['process_result'])
+
+            elif event_type.startswith('REFUND.'):
+                from .services import process_refund_callback
+                out_refund_no = decrypted.get('out_refund_no', '')
+                refund_status = decrypted.get('refund_status', '')
+                process_refund_callback(
+                    out_refund_no=out_refund_no,
+                    refund_status=refund_status
+                )
+                log_entry.process_result = 'success'
+                log_entry.save(update_fields=['process_result'])
+
+            else:
+                logger.info(f'忽略无需处理的事件: {event_type}')
+                log_entry.process_result = 'ignored'
+                log_entry.save(update_fields=['process_result'])
+
         except Exception as e:
-            logger.exception(f'支付回调业务处理失败: {e}, out_trade_no={out_trade_no}')
+            logger.exception(f'微信回调业务处理失败: {e}, out_trade_no={out_trade_no}')
             log_entry.process_result = 'failed'
             log_entry.process_error = str(e)
             log_entry.save(update_fields=['process_result', 'process_error'])
@@ -219,4 +235,56 @@ class PayMockSuccessView(APIView):
             return error(f"处理失败: {str(e)}", code=5007)
 
         return ok(message="模拟支付成功，订单已进入出库流程")
+
+
+class PayRefundView(APIView):
+    """
+    主动退款接口
+    
+    POST /api/pay/refund
+    请求体：{ "order_no": "202506090001234" }
+    逻辑：只有在订单尚未开始制作时（STATUS_PAID），允许自动退款。
+    操作包括：向下发取消指令、释放Redis库存、调用微信退款接口。
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        order_no = request.data.get('order_no', '').strip()
+        if not order_no:
+            return error('order_no 不能为空', code=5001)
+
+        try:
+            order = OrderMain.objects.prefetch_related('items').get(order_no=order_no, user=request.user)
+        except OrderMain.DoesNotExist:
+            return error('订单不存在', code=5002, status=404)
+
+        # 检查是否可以自动退款：必须是 PENDING_DISPENSE (STATUS_PAID)
+        if order.status != OrderMain.STATUS_PAID:
+            return error('无法自动完成退款，订单可能已开始制作或已处理，请联系客服', code=5008)
+
+        from mqtt import issue_device_command
+        from orders.services import update_order_status
+
+        # 1. 向设备下发取消指令 (撤单)
+        if order.device:
+            success = issue_device_command(
+                device_sn=order.device.device_sn,
+                command_type='cancel',
+                order_no=order.order_no
+            )
+            if not success:
+                return error('设备离线或下发指令失败，无法自动撤单退款，请联系客服', code=5010)
+        else:
+            return error('订单未绑定设备，无法撤单', code=5011)
+
+        # 记录状态（可选，标识正在撤单中）
+        update_order_status(
+            order=order,
+            new_status=OrderMain.STATUS_REFUNDING,
+            operator='user',
+            remark='用户申请退款，等待设备确认撤单'
+        )
+
+        return ok(message='撤单指令已下发，等待设备确认后将自动退款')
+
 

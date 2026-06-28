@@ -64,6 +64,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
     4. 检查系统排队等待制作的订单数量是否小于 50
     5. 匹配可用设备：检查在线设备中，是否有设备的 Redis 虚拟库存满足杯子物料需求（并且高于极低熔断线 20%*warn_level）。
     """
+    print('precheck start....')
     try:
         store = Store.objects.get(pk=store_id)
     except Store.DoesNotExist:
@@ -81,23 +82,26 @@ def precheck_order(store_id: int, items_data: list) -> dict:
 
     checked_items = []
     total_amount = 0
+
     for item_data in items_data:
         item_id = item_data.get('item')
         sku_ids = item_data.get('sku', [])
         quantity = item_data.get('quantity', 1)
- 
+        
         try:
             item_obj = MenuItem.objects.select_related('global_item').get(
                 pk=item_id,
                 is_active=True,
                 store=store,
             )
+            print(item_obj,'====')
         except MenuItem.DoesNotExist:
             raise ValueError(f'商品 ID={item_id} 在该门店不存在或已下架')
 
         # 校验选中的规格
         sku_objs = []
         sku_names = []
+        print('4444444444', item_data)
         if sku_ids:
             sku_objs_unordered = MenuSku.objects.select_related('global_sku').filter(
                 pk__in=sku_ids,
@@ -113,7 +117,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
             sku_names = [s.global_sku.name for s in sku_objs]
 
         # 价格计算：基础价 + 规格价格增量
-        print(item_obj.base_price, sum(s.price_delta for s in sku_objs))
+        print('===',item_obj.base_price, sum(s.price_delta for s in sku_objs))
         unit_price = item_obj.base_price + sum(s.price_delta for s in sku_objs)
         subtotal = unit_price * quantity
         total_amount += subtotal
@@ -133,7 +137,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
 
     # 查找门店在线的可用设备
     devices = Device.objects.filter(store=store, status=Device.STATUS_ONLINE)
-    
+    print(devices)
     # 从在线设备中匹配 Redis 虚拟库存充足（减去需求后不低于极度缺货阈值）的设备
     selected_device = None
     from django_redis import get_redis_connection
@@ -144,7 +148,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
             key = get_redis_stock_key(dev.device_sn, mat_code)
             redis_conn[key] = 3000
             val = redis_conn.get(key)
-            
+            print('--==', key, val)
             stock_val = int(val) if val is not None else 0
             
             from devices.models import DeviceConsumableStock, DeviceMaterialStock
@@ -159,7 +163,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
             # Redis中的数量是实际数量放大100倍。而qty是实际需求量。
             # 所以我们要统一将qty和critical_val放大100倍再和stock_val比较
             critical_val_scaled = int(warn_level )
-            print(mat_code ,critical_val_scaled)
+            print('------',mat_code ,stock_val, qty, critical_val_scaled)
             qty_scaled = int(float(qty) )
             
             # 校验库存：扣减后不低于极度缺货阈值
@@ -175,7 +179,7 @@ def precheck_order(store_id: int, items_data: list) -> dict:
             raise ValueError('当前门店设备原料不足，请调整商品')
         else:
             raise ValueError('当前门店暂无可用设备，请稍后再试')
-
+    print('---',required_materials)
     return {
         'ok': True,
         'items': checked_items,
@@ -192,9 +196,10 @@ def create_order(user, store_id: int, items_data: list, remark: str = '') -> Ord
     """
     创建订单（初始状态为 CREATED/待支付）
     """
+    
     checked = precheck_order(store_id, items_data)
     device = checked['device']
-
+    print('create order start.....', checked)
     # 创建订单主表记录，初始状态为 created
     order = OrderMain.objects.create(
         user=user,
@@ -243,11 +248,31 @@ def create_production_task(order: OrderMain) -> ProductionTask:
     if not device:
         raise ValueError('订单未绑定设备，无法创建生产任务')
 
+    # 提取物料所需的格式，并调用计算函数
+    items_data = []
+    for item in order.items.prefetch_related('skus', 'item').all():
+        skus = list(item.skus.all())
+        if not skus and item.item:
+            # 如果订单项没有指定 sku，且有关联商品，尝试获取默认激活的 sku
+            base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
+            if base_sku:
+                skus = [base_sku]
+        items_data.append({
+            'item': item.item,
+            'skus': skus,
+            'quantity': item.quantity
+        })
+
+    # 计算出所有的物料总消耗（食材+耗材）
+    required_materials = calculate_required_materials(items_data)
+    
+    # 格式化成上位机容易读取的列表格式，例如 [{"code": "coffee_bean", "quantity": 15.0}, ...]
+    materials_list = [{"code": k, "quantity": float(v)} for k, v in required_materials.items()]
+
     command_payload = {
         'type': 'make',
         'order_no': order.order_no,
         'order_token': order.order_token,
-        'OrderToken': order.order_token,
         'quantity': sum(item.quantity for item in order.items.all()),
         'items': [
             {
@@ -257,6 +282,7 @@ def create_production_task(order: OrderMain) -> ProductionTask:
             }
             for item in order.items.all()
         ],
+        'materials': materials_list,
     }
 
     # 使用 update_or_create 确保多次回调的幂等性

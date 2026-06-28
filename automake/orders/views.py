@@ -78,6 +78,7 @@ class OrderCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        print('create order ....')
         serializer = CreateOrderSerializer(data=request.data)
         if not serializer.is_valid():
             return error(str(serializer.errors), code=4001)

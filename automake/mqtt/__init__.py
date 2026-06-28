@@ -82,11 +82,12 @@ def _on_connect(client, userdata, flags, reason_code, properties):
     print(client)
     logger.info(f'MQTT 已连接，Client ID: {client._client_id.decode("utf-8") if isinstance(client._client_id, bytes) else client._client_id}，reason_code={reason_code}')
     
-    # 订阅所有设备状态及物料上报 Topic（标准单进程订阅模式）
+    # 订阅所有设备状态、物料及指令 Topic（标准单进程订阅模式）
     try:
         client.subscribe('automake/device/+/status', qos=1)
         client.subscribe('automake/device/+/material', qos=1)
-        logger.info('MQTT 标准订阅已注册: status 和 material')
+        client.subscribe('automake/device/+/command', qos=1)
+        logger.info('MQTT 标准订阅已注册: status, material 和 command')
     except Exception as e:
         logger.error(f'MQTT 注册订阅失败: {e}')
 
@@ -127,11 +128,14 @@ def _on_message(client, userdata, msg):
             _handle_device_status(device_sn, payload)
         elif msg_type == 'material':
             _handle_material_report(device_sn, payload)
+        elif msg_type == 'command':
+            _handle_device_command_intercept(device_sn, topic, payload)
     except Exception as e:
         logger.exception(f'处理 MQTT 消息异常，topic={topic}: {e}')
     finally:
         # 处理完毕后关闭当前线程的数据库连接，防止在常驻后台的 MQTT 线程中造成连接泄露
         close_old_connections()
+
 
 
 def _handle_device_status(device_sn: str, payload: dict):
@@ -270,3 +274,34 @@ def issue_make_command(order_no: str, device_sn: str, command_payload: dict) -> 
             logger.error(f'更新生产任务状态失败: {e}')
 
     return success
+
+
+def _handle_device_command_intercept(device_sn: str, topic: str, payload: dict):
+    """
+    拦截下发的设备命令并存入 Redis 缓存中，用于上位机模拟器页面展示。
+    """
+    try:
+        from django.core.cache import cache
+        import time
+        
+        # 缓存键名格式：simulator:logs:{device_sn}
+        key = f"simulator:logs:{device_sn}"
+        logs = cache.get(key, [])
+        
+        # 记录接收到的命令数据
+        logs.append({
+            "timestamp": time.time(),
+            "type": "recv",
+            "topic": topic,
+            "payload": payload
+        })
+        
+        # 仅保留最近的 100 条日志
+        if len(logs) > 100:
+            logs = logs[-100:]
+            
+        cache.set(key, logs, timeout=86400) # 缓存有效期 1 天
+        logger.info(f"[SIMULATOR] 拦截并缓存设备指令: device_sn={device_sn}, topic={topic}")
+    except Exception as e:
+        logger.error(f"[SIMULATOR] 缓存指令异常: {e}")
+

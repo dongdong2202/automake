@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>上位机通信与状态模拟器</title>
+    <title>上位机通信模拟器 (MQTT Simulator)</title>
     <!-- Google Font: Outfit & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -567,6 +567,10 @@
                         </label>
                     </div>
                 </div>
+
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+                    MQTT 代理服务器 (后端): <span style="color: var(--sky); font-weight: 600;">{{ mqtt_host }}:{{ mqtt_port }}</span>
+                </div>
             </div>
 
             <!-- Card 2: Active Job & Status Reporting -->
@@ -628,6 +632,48 @@
                 </div>
                 <button id="btn-report-material" class="btn btn-secondary">立即上报物料信息</button>
             </div>
+
+            <!-- Card 4: Database & Redis Status Diagnostics -->
+            <div class="card" style="border-color: rgba(79, 70, 229, 0.3);">
+                <div class="card-title" style="display: flex; align-items: center; justify-content: space-between;">
+                    <span>4. DB & Redis 状态诊断</span>
+                    <button id="btn-create-test-order" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; background: var(--primary); box-shadow: 0 0 10px var(--primary-glow);">一键创建测试订单</button>
+                </div>
+                
+                <div style="font-size: 0.85rem; background: rgba(255, 255, 255, 0.02); padding: 0.75rem; border-radius: 0.5rem; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div>
+                        <span style="color: var(--text-muted);">测试订单号:</span>
+                        <span id="diag-order-no" style="font-weight: 600; color: var(--sky); float: right;">-</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-muted);">数据库订单状态:</span>
+                        <span id="diag-order-status" style="font-weight: 600; color: white; float: right;">-</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-muted);">生产任务状态:</span>
+                        <span id="diag-task-status" style="font-weight: 600; color: white; float: right;">-</span>
+                    </div>
+                </div>
+
+                <div style="font-size: 0.825rem; margin-top: 0.25rem;">
+                    <label style="margin-bottom: 0.5rem; display: block;">库存监控数据 (DB 账面 vs Redis 缓存)</label>
+                    <table style="width: 100%; border-collapse: collapse; text-align: left; background: rgba(0,0,0,0.2); border-radius: 0.5rem; overflow: hidden; border: 1px solid var(--border-color); font-size: 0.8rem;">
+                        <thead>
+                            <tr style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border-color);">
+                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">物料/耗材</th>
+                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">类型</th>
+                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500; text-align: right;">DB 数量</th>
+                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500; text-align: right;">Redis 数量</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-stock-body">
+                            <tr>
+                                <td colspan="4" style="padding: 1rem; text-align: center; color: var(--text-muted);">暂无监控数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- Right Side: Real-time Communication Console -->
@@ -688,7 +734,7 @@
         const mqttStateText = document.getElementById('mqtt-state-text');
 
         // Log Console Helper
-        function log(tag, message, jsonObject = null) {
+        function log(tag, message, jsonObject = null, customTime = null) {
             const entry = document.createElement('div');
             entry.className = 'log-entry';
             
@@ -697,7 +743,7 @@
             
             const timeSpan = document.createElement('span');
             timeSpan.className = 'log-time';
-            timeSpan.innerText = new Date().toLocaleTimeString();
+            timeSpan.innerText = customTime || new Date().toLocaleTimeString();
             
             const tagSpan = document.createElement('span');
             tagSpan.className = `log-tag tag-${tag}`;
@@ -744,10 +790,11 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        device_sn: sn,
+                        device_sn: 'sn001',
                         device_name: name,
                         device_model: model,
-                        firmware_version: firmware
+                        firmware_version: firmware,
+                        key_code : "TEST-KEY-001",
                     })
                 });
 
@@ -761,8 +808,8 @@
                     deviceStateBadge.className = 'badge badge-online';
                     deviceStateText.innerText = `设备在线 (${sn})`;
 
-                    // Connect MQTT
-                    connectMQTT(sn);
+                    // Connect MQTT (using Python backend polling)
+                    startPolling(sn);
                 } else {
                     log('err', `设备注册失败: ${data.message || response.statusText}`, data);
                     alert(`注册失败: ${data.message || '未知错误'}`);
@@ -781,11 +828,6 @@
                     heartbeatSwitch.checked = false;
                     return;
                 }
-                if (!client || !client.connected) {
-                    alert('MQTT 未连接，无法开启心跳上报');
-                    heartbeatSwitch.checked = false;
-                    return;
-                }
                 log('sys', `启动自动心跳，每 10 秒发送一次...`);
                 sendHeartbeat();
                 heartbeatInterval = setInterval(sendHeartbeat, 10000);
@@ -799,96 +841,187 @@
         });
 
         async function sendHeartbeat() {
-            if (!client || !client.connected) {
-                log('err', `MQTT 未连接，跳过本次心跳发送。`);
-                return;
-            }
             const sn = snInput.value.trim();
-            const topic = `automake/device/${sn}/status`;
             const payload = {
                 type: 'heartbeat',
                 status: 'online'
             };
-            log('mqtt-tx', `通过 MQTT 发送心跳数据... Topic: ${topic}`, payload);
-            client.publish(topic, JSON.stringify(payload), { qos: 1 });
+            try {
+                const response = await fetch('/simulator/api/report/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        device_sn: sn,
+                        topic_type: 'status',
+                        payload: payload
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || data.code !== 0) {
+                    log('err', `自动心跳发送失败: ${data.message || '后端连接错误'}`);
+                }
+            } catch (err) {
+                log('err', `自动心跳发送失败: ${err.message}`);
+            }
         }
 
-        // 2. MQTT Connection
-        function connectMQTT(device_sn) {
-            // Disconnect old client if exists
-            if (client) {
-                try { client.end(); } catch (e) {}
-            }
+        // 2. Python Backend-Backed Polling
+        let isBackendMqttConnected = false;
+        let logPollInterval = null;
+        let statusPollInterval = null;
+        let diagnosticsPollInterval = null;
+        let processedLogKeys = new Set();
 
-            mqttStateBadge.className = 'badge badge-connecting';
-            mqttStateText.innerText = 'MQTT 连接中...';
+        function startPolling(sn) {
+            // 清理已有的定时器
+            if (logPollInterval) clearInterval(logPollInterval);
+            if (statusPollInterval) clearInterval(statusPollInterval);
+            if (diagnosticsPollInterval) clearInterval(diagnosticsPollInterval);
 
-            let mqttUrl;
-            // Robust connection URL resolving
-            if (window.location.port === '8000' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                mqttUrl = `ws://${window.location.hostname}:8083/mqtt`;
-            } else {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                mqttUrl = `${protocol}//${window.location.host}/mqtt`;
-            }
+            processedLogKeys.clear();
 
-            log('sys', `尝试连接 MQTT 代理服务器: ${mqttUrl}`);
-            
+            // 立即轮询一次
+            pollMqttStatus(sn);
+            pollLogs(sn);
+            pollDiagnostics(sn);
+
+            // 设置定时器周期轮询
+            statusPollInterval = setInterval(() => pollMqttStatus(sn), 2000);
+            logPollInterval = setInterval(() => pollLogs(sn), 1000);
+            diagnosticsPollInterval = setInterval(() => pollDiagnostics(sn), 1000);
+            log('sys', `已开启 Python 后端状态、指令及 DB/Redis 诊断数据轮询通道...`);
+        }
+
+        async function pollMqttStatus(sn) {
             try {
-                client = mqtt.connect(mqttUrl, {
-                    clientId: 'simulator_' + Math.random().toString(16).substring(2, 10),
-                    clean: true,
-                    connectTimeout: 5000
-                });
-
-                client.on('connect', () => {
-                    log('sys', `MQTT 已成功连接！`);
-                    mqttStateBadge.className = 'badge badge-online';
-                    mqttStateText.innerText = 'MQTT 在线';
-
-                    // Subscribe to command topic
-                    const topic = `automake/device/${device_sn}/command`;
-                    client.subscribe(topic, { qos: 1 }, (err) => {
-                        if (err) {
-                            log('err', `订阅主题失败: ${topic}`);
+                const response = await fetch(`/simulator/api/status/?sn=${sn}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.code === 0) {
+                        isBackendMqttConnected = data.data.mqtt_connected;
+                        if (isBackendMqttConnected) {
+                            mqttStateBadge.className = 'badge badge-online';
+                            mqttStateText.innerText = 'MQTT 在线 (Python Backend)';
                         } else {
-                            log('sys', `已成功订阅命令主题: ${topic}`);
+                            mqttStateBadge.className = 'badge badge-offline';
+                            mqttStateText.innerText = 'MQTT 离线 (Python Backend)';
                         }
-                    });
-                });
-
-                client.on('error', (err) => {
-                    log('err', `MQTT 故障: ${err.message}`);
-                    mqttStateBadge.className = 'badge badge-offline';
-                    mqttStateText.innerText = 'MQTT 连接故障';
-                });
-
-                client.on('offline', () => {
-                    log('err', `MQTT 离线`);
-                    mqttStateBadge.className = 'badge badge-offline';
-                    mqttStateText.innerText = 'MQTT 离线';
-                });
-
-                client.on('message', (topic, message) => {
-                    try {
-                        const payload = JSON.parse(message.toString());
-                        log('mqtt-rx', `收到来自云端的发布命令! Topic: ${topic}`, payload);
-                        
-                        if (payload.type === 'make') {
-                            handleIncomingMakeCommand(payload);
-                        }
-                    } catch (e) {
-                        log('err', `解析收到的 MQTT 载荷失败: ${e.message}. 原始消息: ${message.toString()}`);
                     }
-                });
-
-            } catch (e) {
-                log('err', `初始化 MQTT.js 失败: ${e.message}`);
+                }
+            } catch (err) {
+                isBackendMqttConnected = false;
+                mqttStateBadge.className = 'badge badge-offline';
+                mqttStateText.innerText = 'MQTT 连接异常 (Python Backend)';
             }
+        }
+
+        async function pollLogs(sn) {
+            try {
+                const response = await fetch(`/simulator/api/logs/?sn=${sn}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.code === 0) {
+                        renderLogs(data.data.logs);
+                    }
+                }
+            } catch (err) {
+                console.error("轮询日志失败:", err);
+            }
+        }
+
+        async function pollDiagnostics(sn) {
+            try {
+                const response = await fetch(`/simulator/api/diagnostics/?sn=${sn}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.code === 0 && data.data.device_exists) {
+                        // 更新最新订单数据
+                        const latestOrder = data.data.latest_order;
+                        if (latestOrder) {
+                            document.getElementById('diag-order-no').innerText = latestOrder.order_no;
+                            document.getElementById('diag-order-status').innerText = `${latestOrder.status_display} (${latestOrder.status})`;
+                            
+                            const statusSpan = document.getElementById('diag-order-status');
+                            if (latestOrder.status === 'success') {
+                                statusSpan.style.color = 'var(--emerald)';
+                            } else if (latestOrder.status === 'failed') {
+                                statusSpan.style.color = 'var(--rose)';
+                            } else if (latestOrder.status === 'making') {
+                                statusSpan.style.color = 'var(--amber)';
+                            } else {
+                                statusSpan.style.color = 'var(--sky)';
+                            }
+                            
+                            document.getElementById('diag-task-status').innerText = latestOrder.task_status || '-';
+                        } else {
+                            document.getElementById('diag-order-no').innerText = '暂无测试订单';
+                            document.getElementById('diag-order-status').innerText = '-';
+                            document.getElementById('diag-task-status').innerText = '-';
+                        }
+                        
+                        // 更新库存列表表格 (DB vs Redis)
+                        const stocks = data.data.stocks;
+                        const tbody = document.getElementById('diag-stock-body');
+                        tbody.innerHTML = '';
+                        stocks.forEach(stock => {
+                            const row = document.createElement('tr');
+                            row.style.borderBottom = '1px solid var(--border-color)';
+                            row.innerHTML = `
+                                <td style="padding: 0.5rem; font-weight: 500;">${stock.name} (${stock.code})</td>
+                                <td style="padding: 0.5rem; color: var(--text-muted);">${stock.type}</td>
+                                <td style="padding: 0.5rem; text-align: right; color: #ffffff; font-weight: 600;">${stock.db_qty.toFixed(2)}</td>
+                                <td style="padding: 0.5rem; text-align: right; color: var(--sky); font-weight: 600;">${stock.redis_qty.toFixed(2)}</td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("轮询诊断数据发生错误:", err);
+            }
+        }
+
+        function renderLogs(logs) {
+            logs.forEach(logEntry => {
+                // 构造一个唯一标识，避免重复渲染
+                const key = `${logEntry.timestamp}_${logEntry.type}_${logEntry.topic}`;
+                if (!processedLogKeys.has(key)) {
+                    processedLogKeys.add(key);
+
+                    let tag = 'sys';
+                    let displayMsg = '';
+                    if (logEntry.type === 'recv') {
+                        tag = 'mqtt-rx';
+                        displayMsg = `收到来自云端的发布命令! Topic: ${logEntry.topic}`;
+                        
+                        // 如果是下发的制作命令 (make)，自动处理
+                        if (logEntry.payload && logEntry.payload.type === 'make') {
+                            handleIncomingMakeCommand(logEntry.payload);
+                        }
+                    } else if (logEntry.type === 'sent') {
+                        tag = 'mqtt-tx';
+                        displayMsg = `向上位机状态主题发布状态消息... Topic: ${logEntry.topic}`;
+                        if (logEntry.topic.endsWith('/material')) {
+                            displayMsg = `向上报主题发布物料库存状态... Topic: ${logEntry.topic}`;
+                        }
+                    }
+
+                    // 转换为本地可读时间格式
+                    const timeStr = new Date(logEntry.timestamp * 1000).toLocaleTimeString();
+                    
+                    // 打印日志到终端
+                    log(tag, displayMsg, logEntry.payload, timeStr);
+                }
+            });
         }
 
         // Handle incoming order command
         function handleIncomingMakeCommand(payload) {
+            // 防止重复处理同一订单号
+            if (currentOrderNo === payload.order_no) return;
+            
             currentOrderNo = payload.order_no;
             activeOrderSpan.innerText = currentOrderNo;
             
@@ -920,19 +1053,14 @@
             failReasonInput.disabled = false;
         }
 
-        // Report status via MQTT publish
+        // Report status via HTTP API (using global MQTT client on Python backend)
         async function publishStatus(status, messageStr = '') {
-            if (!client || !client.connected) {
-                alert('MQTT 未连接，无法发送状态消息！');
-                return;
-            }
             if (!currentOrderNo) {
                 alert('当前无活动订单，无法发送状态！');
                 return;
             }
 
             const sn = snInput.value.trim();
-            const topic = `automake/device/${sn}/status`;
             const payload = {
                 type: 'order_status',
                 order_no: currentOrderNo,
@@ -940,8 +1068,25 @@
                 message: messageStr
             };
 
-            log('mqtt-tx', `向上位机状态主题发布状态消息... Topic: ${topic}`, payload);
-            client.publish(topic, JSON.stringify(payload), { qos: 1 });
+            try {
+                const response = await fetch('/simulator/api/report/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        device_sn: sn,
+                        topic_type: 'status',
+                        payload: payload
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || data.code !== 0) {
+                    alert(`状态上报异常: ${data.message || '未知错误'}`);
+                }
+            } catch (err) {
+                alert(`网络请求异常: ${err.message}`);
+            }
         }
 
         // Event Listeners for status reporting buttons
@@ -979,34 +1124,101 @@
             failReasonInput.disabled = true;
         });
 
-        // 3. Material Report via MQTT
-        btnReportMaterial.addEventListener('click', () => {
-            if (!client || !client.connected) {
-                alert('MQTT 未连接，无法上报物料！');
-                return;
-            }
-
+        // 3. Material Report via HTTP API
+        btnReportMaterial.addEventListener('click', async () => {
             const sn = snInput.value.trim();
-            const topic = `automake/device/${sn}/material`;
             const coffeeVal = parseInt(document.getElementById('input-mat-coffee').value) || 0;
             const milkVal = parseInt(document.getElementById('input-mat-milk').value) || 0;
 
             const payload = {
-                materials: [
-                    { code: 'coffee_bean', name: '咖啡豆', quantity: coffeeVal, unit: 'g' },
-                    { code: 'fresh_milk', name: '鲜牛奶', quantity: milkVal, unit: 'ml' }
-                ]
+                raw: {
+                    coffee_bean: coffeeVal,
+                    fresh_milk: milkVal
+                },
+                cup: {
+                    paperL: 100,
+                    lid: 100,
+                    plasticL: 100,
+                    plasticM: 100,
+                    membrane: 100
+                }
             };
 
-            log('mqtt-tx', `向上报主题发布物料库存状态... Topic: ${topic}`, payload);
-            client.publish(topic, JSON.stringify(payload), { qos: 1 });
-            alert('物料库存已成功上报！');
+            try {
+                const response = await fetch('/simulator/api/report/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        device_sn: sn,
+                        topic_type: 'material',
+                        payload: payload
+                    })
+                });
+                const data = await response.json();
+                if (response.ok && data.code === 0) {
+                    alert('物料库存已成功上报！');
+                } else {
+                    alert(`物料上报异常: ${data.message || '未知错误'}`);
+                }
+            } catch (err) {
+                alert(`网络请求故障: ${err.message}`);
+            }
         });
 
-        // Clear console
-        clearConsoleBtn.addEventListener('click', () => {
+        // Clear console (clear logs in both frontend view and backend cache)
+        clearConsoleBtn.addEventListener('click', async () => {
+            const sn = snInput.value.trim();
+            if (sn) {
+                try {
+                    await fetch(`/simulator/api/clear_logs/?sn=${sn}`, { method: 'POST' });
+                } catch (e) {
+                    console.error("清空后端日志缓存失败:", e);
+                }
+            }
+            processedLogKeys.clear();
             logsContainer.innerHTML = '';
             log('sys', '控制台日志已清空。');
+        });
+
+        // 一键创建测试订单绑定
+        const createTestOrderBtn = document.getElementById('btn-create-test-order');
+        createTestOrderBtn.addEventListener('click', async () => {
+            const sn = snInput.value.trim();
+            if (!sn) {
+                alert('设备序列号 SN 不能为空');
+                return;
+            }
+            
+            log('sys', `正在向后端发送一键创建测试订单请求... SN: ${sn}`);
+            
+            try {
+                const response = await fetch('/simulator/api/create_test_order/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        device_sn: sn
+                    })
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.code === 0) {
+                    log('sys', `一键创建测试订单成功！订单号: ${data.data.order_no}`);
+                    isRegistered = true;
+                    deviceStateBadge.className = 'badge badge-online';
+                    deviceStateText.innerText = `设备在线 (${sn})`;
+                    startPolling(sn);
+                } else {
+                    log('err', `创建测试订单失败: ${data.message || '未知错误'}`);
+                    alert(`创建失败: ${data.message || '未知错误'}`);
+                }
+            } catch (err) {
+                log('err', `网络请求故障: ${err.message}`);
+                alert(`请求失败: ${err.message}`);
+            }
         });
     </script>
 </body>

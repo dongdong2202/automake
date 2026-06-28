@@ -170,13 +170,6 @@ class WechatPayV3:
         # 加载商户私钥（PEM 格式）
         key_path = settings.WECHAT_PAY_PRIVATE_KEY_PATH
         if not os.path.exists(key_path):
-            import sys
-            # 在测试环境或 DEBUG/模拟环境，若私钥缺失，允许退化为 Mock 模式，不抛出异常
-            is_mock_env = settings.DEBUG or 'test' in sys.argv or hasattr(settings, 'TESTING')
-            if is_mock_env:
-                logger.warning(f'商户私钥文件不存在，已进入模拟支付/退款模式: {key_path}')
-                self._private_key = None
-                return
             raise FileNotFoundError(f'商户私钥文件不存在: {key_path}')
         with open(key_path, 'rb') as f:
             self._private_key = serialization.load_pem_private_key(f.read(), password=None)
@@ -256,17 +249,6 @@ class WechatPayV3:
         :param description: 商品描述
         :return: 微信返回的 prepay_id 等数据
         """
-        # 仅当处于 DEBUG 模式，且配置的是默认的 Mock 商户号/证书时，才进行本地 Mock。
-        # 这样即使本地 DEBUG=True，一旦配置了真实的商户信息，依然可以走真实的微信统一下单通道。
-        is_mock_payment = settings.DEBUG and (
-            self.mch_id == '12345678' or 
-            'mock' in self.cert_serial.lower()
-        )
-        if is_mock_payment:
-            logger.info(f"[DEBUG] Mocking WeChat Pay JSAPI order creation for out_trade_no={out_trade_no}")
-            import uuid
-            return {"prepay_id": f"mock_prepay_{uuid.uuid4().hex}"}
-
         path = '/v3/pay/transactions/jsapi'
         data = {
             'appid': settings.WECHAT_APP_ID,
@@ -384,21 +366,12 @@ class WechatPayV3:
         :param reason: 退款原因
         :return: 微信退款响应数据
         """
-        import sys
-        is_mock = settings.DEBUG or 'test' in sys.argv or hasattr(settings, 'TESTING') or (self._private_key is None)
-        if is_mock:
-            logger.info(f"[MockWechatPay] Mocking WeChat Pay refund for out_refund_no={out_refund_no}")
-            import uuid
-            return {
-                "refund_id": f"mock_refund_{uuid.uuid4().hex[:16]}",
-                "status": "SUCCESS"
-            }
-
         path = '/v3/refund/domestic/refunds'
         data = {
             'transaction_id': transaction_id,
             'out_refund_no': out_refund_no,
             'reason': reason,
+            'notify_url': self.notify_url,
             'amount': {
                 'refund': refund_amount,
                 'total': total_amount,

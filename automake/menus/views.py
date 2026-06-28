@@ -17,21 +17,19 @@ class StoreMenuView(APIView):
     """
     门店菜单接口
 
-    GET /api/menu/store/{device_sn}
+    GET /api/menu/store/{store_id}
     返回指定门店的完整菜单（分类 → 商品 → 规格/SKU）。
     前置依赖：门店必须存在且处于营业状态。
     所有分类、商品、SKU 关系都是在运行时基于全局配置和本地价格微调（ base_price ）动态拼装。
     """
     permission_classes = [AllowAny]  # 浏览菜单无需登录
 
-    def get(self, request, device_sn):
+    def get(self, request, store_id):
         # 检查门店是否存在且营业
         try:
-            device = Device.objects.get(device_sn=device_sn)
-      
-            store = Store.objects.get(pk=device.store.pk)
+            store = Store.objects.get(pk=store_id)
         except Store.DoesNotExist:
-            return error('门店/设备 不存在', code=3001, status=404)
+            return error('门店不存在', code=3001, status=404)
 
         # 超级管理员 cxd 或 super_admin 可以查看任意门店菜单，且不受营业状态限制
         is_cxd = False
@@ -42,10 +40,6 @@ class StoreMenuView(APIView):
         if not store.is_open and not is_cxd:
             return error('门店暂未营业', code=3002, status=400)
 
-  
-        # 自动拉取/同步全局配置的最新菜单及规格
-        MenuItem.sync_store_menu(store)
-        
         # 获取当前门店所有上架的 MenuItem，并通过 select_related 预加载关联的全局信息
         local_items = (
             MenuItem.objects
@@ -57,7 +51,6 @@ class StoreMenuView(APIView):
         
         categories_dict = {}
         for item in local_items:
-            print(item.base_price)
             if not item.is_active:
                 continue
             g_item = item.global_item
@@ -120,7 +113,7 @@ class StoreMenuView(APIView):
         for cat in sorted_categories:
             cat['items'] = sorted(cat['items_list'], key=lambda i: (i['sort_order'], i['id']))
             del cat['items_list']
-        print(sorted_categories)
+            
         return ok({
             'store_id': store.id,
             'store_name': store.name,

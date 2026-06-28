@@ -444,3 +444,79 @@ def verify_pickup_code(code: str, device_sn: str = '') -> dict:
         'items': items,
         'scanned_at': pickup.scanned_at.isoformat(),
     }
+
+
+# ============================================================
+# 发送短信通知 (阿里云 SMS)
+# ============================================================
+
+def send_sms_notify(phone_numbers: str, template_param: str = None, template_code: str = None, sign_name: str = None) -> dict:
+    """
+    发送阿里云短信通知（支持其他模块调用）
+
+    :param phone_numbers: 接收短信的手机号码，多个用逗号隔开
+    :param template_param: 短信模板变量对应的 JSON 字符串，例如 '{"code":"1234"}'
+    :param template_code: 短信模板代码，默认从 .env 中读取 ali.sms.default_templateCode
+    :param sign_name: 短信签名名称，默认从 .env 中读取 ali.sms.default_signName
+    :return: 包含成功与否和返回数据的字典，如 {'ok': True, 'data': ...}
+    """
+    import os
+    import codecs
+    from alibabacloud_dysmsapi20170525.client import Client as DysmsapiClient
+    from alibabacloud_tea_openapi import models as open_api_models
+    from alibabacloud_dysmsapi20170525 import models as dysmsapi_models
+
+    access_key_id = os.environ.get('ali.root.accessKeyId')
+    access_key_secret = os.environ.get('ali.root.accessKeySecret')
+    region_id = os.environ.get('ali.root.regionId', 'cn-zhangjiakou')
+    
+    default_sign_name = os.environ.get('ali.sms.default_signName')
+    default_template_code = os.environ.get('ali.sms.default_templateCode')
+
+    if not all([access_key_id, access_key_secret]):
+        logger.error('[Notify] 阿里云 SMS 配置缺失 (access_key)')
+        return {'ok': False, 'reason': '阿里云 SMS 配置缺失'}
+
+    # 中文的 Unicode 转义在 dotenv 读取时可能被原样保留为字符串，如果需要转换：
+    if default_sign_name and '\\u' in default_sign_name:
+        try:
+            default_sign_name = codecs.decode(default_sign_name, 'unicode_escape')
+        except Exception as e:
+            logger.warning(f'[Notify] 短信签名解码失败: {e}')
+
+    sign_name = sign_name or default_sign_name
+    template_code = template_code or default_template_code
+
+    if not all([sign_name, template_code]):
+        logger.error('[Notify] 阿里云 SMS 配置缺失 (sign_name 或 template_code)')
+        return {'ok': False, 'reason': '签名或模板代码未提供'}
+
+    try:
+        config = open_api_models.Config(
+            access_key_id=access_key_id,
+            access_key_secret=access_key_secret,
+            region_id=region_id
+        )
+        config.endpoint = f'dysmsapi.aliyuncs.com'
+        client = DysmsapiClient(config)
+
+        send_request = dysmsapi_models.SendSmsRequest(
+            phone_numbers=phone_numbers,
+            sign_name=sign_name,
+            template_code=template_code,
+            template_param=template_param
+        )
+        
+        response = client.send_sms(send_request)
+        
+        if response.body.code == 'OK':
+            logger.info(f'[Notify] 短信发送成功: phone={phone_numbers}, req_id={response.body.request_id}')
+            return {'ok': True, 'data': response.body.to_map()}
+        else:
+            logger.error(f'[Notify] 短信发送失败: phone={phone_numbers}, code={response.body.code}, msg={response.body.message}')
+            return {'ok': False, 'reason': response.body.message}
+            
+    except Exception as e:
+        logger.error(f'[Notify] 短信发送异常: {str(e)}')
+        return {'ok': False, 'reason': str(e)}
+
