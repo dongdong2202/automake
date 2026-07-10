@@ -286,4 +286,86 @@ class DeviceConsumableStock(models.Model):
         except Exception:
             pass
 
+def default_temperature_config():
+    return {}
 
+def default_transfer_config():
+    return []
+
+def default_barrel_config():
+    return {}
+
+
+class DeviceConfig(models.Model):
+    """设备全局配置 (如转运坐标)"""
+    device = models.OneToOneField('devices.Device', on_delete=models.CASCADE, related_name='config', verbose_name='所属设备')
+    transfer = models.CharField(
+        max_length=512, 
+        default="10000,20000,30000,40000,50000,60000,70000,80000,90000,100000,110000,120000,130000,140000",
+        verbose_name='转运模块配置(坐标值,用逗号分隔)'
+    )
+    
+    class Meta:
+        db_table = 'device_config'
+        verbose_name = '设备全局配置'
+        verbose_name_plural = '设备全局配置列表'
+        
+    def __str__(self):
+        return f'{self.device.device_sn} 全局配置'
+
+class DeviceTemperature(models.Model):
+    """设备温度配置"""
+    config = models.ForeignKey('devices.DeviceConfig', on_delete=models.CASCADE, related_name='temperatures', verbose_name='所属配置', null=True)
+    device = models.ForeignKey('devices.Device', on_delete=models.CASCADE, related_name='temperatures', verbose_name='所属设备(冗余)', null=True)
+    key = models.CharField(max_length=32, verbose_name='温度标识(例如 t1)')
+    value = models.IntegerField(verbose_name='设定温度(摄氏度)')
+    
+    class Meta:
+        db_table = 'device_temperature_config'
+        unique_together = ('config', 'key')
+        verbose_name = '设备温度项'
+        verbose_name_plural = '设备温度项列表'
+        
+class DeviceBarrel(models.Model):
+    """设备料筒配置"""
+    config = models.ForeignKey('devices.DeviceConfig', on_delete=models.CASCADE, related_name='barrels', verbose_name='所属配置', null=True)
+    device = models.ForeignKey('devices.Device', on_delete=models.CASCADE, related_name='barrels', verbose_name='所属设备(冗余)', null=True)
+    barrel_id = models.CharField(max_length=32, verbose_name='料筒编号(例如 b01)')
+    pump_type = models.CharField(max_length=32, default="thin", verbose_name='泵类型')
+    pump_coeff = models.IntegerField(default=100, verbose_name='泵系数')
+    max_v = models.IntegerField(default=40000, verbose_name='最大容量')
+    base_area = models.IntegerField(default=800, verbose_name='底面积(cm²)')
+    
+    class Meta:
+        db_table = 'device_barrel_config'
+        unique_together = ('device', 'barrel_id')
+        verbose_name = '设备料筒项'
+        verbose_name_plural = '设备料筒项列表'
+
+class DeviceSoftConf(models.Model):
+    """设备出餐及软性配置"""
+    device = models.OneToOneField('devices.Device', on_delete=models.CASCADE, related_name='soft_conf', verbose_name='所属设备')
+    max_vacancies = models.IntegerField(default=3, verbose_name='出餐口数量(maxVacancies)')
+    sep_chunk = models.IntegerField(default=2, verbose_name='分单块大小(sepChunk)')
+    ice_size = models.IntegerField(default=15, verbose_name='冰块大小(iceSize, ml)')
+
+    class Meta:
+        db_table = 'device_soft_conf'
+        verbose_name = '设备出餐配置'
+        verbose_name_plural = '设备出餐配置列表'
+        
+    def __str__(self):
+        return f'{self.device.device_sn} 出餐配置'
+
+class DeviceCupSize(models.Model):
+    """设备杯型容量配置"""
+    soft_conf = models.ForeignKey(DeviceSoftConf, on_delete=models.CASCADE, related_name='cup_sizes', verbose_name='所属配置', null=True)
+    device = models.ForeignKey('devices.Device', on_delete=models.CASCADE, related_name='cup_sizes', verbose_name='所属设备(冗余)', null=True)
+    key = models.CharField(max_length=32, verbose_name='杯型标识(例如 m/l)')
+    capacity = models.IntegerField(verbose_name='容量(ml)')
+
+    class Meta:
+        db_table = 'device_cup_size_config'
+        unique_together = ('soft_conf', 'key')
+        verbose_name = '设备杯型容量'
+        verbose_name_plural = '设备杯型容量列表'

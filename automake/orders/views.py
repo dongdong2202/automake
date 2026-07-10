@@ -35,6 +35,7 @@ class OrderPrecheckView(APIView):
 
     def post(self, request):
         
+ 
         serializer = CreateOrderSerializer(data=request.data)
 
         if not serializer.is_valid():
@@ -42,8 +43,6 @@ class OrderPrecheckView(APIView):
 
         store_id = serializer.validated_data['store_id']
         items_data = serializer.validated_data['items']
-        
-        print(store_id, items_data)
         
         try:
             result = precheck_order(store_id, items_data)

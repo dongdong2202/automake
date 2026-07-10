@@ -450,6 +450,7 @@ def verify_pickup_code(code: str, device_sn: str = '') -> dict:
 # 发送短信通知 (阿里云 SMS)
 # ============================================================
 
+
 def send_sms_notify(phone_numbers: str, template_param: str = None, template_code: str = None, sign_name: str = None) -> dict:
     """
     发送阿里云短信通知（支持其他模块调用）
@@ -492,10 +493,17 @@ def send_sms_notify(phone_numbers: str, template_param: str = None, template_cod
         return {'ok': False, 'reason': '签名或模板代码未提供'}
 
     try:
+        from alibabacloud_credentials.client import Client as CredentialClient
+        from alibabacloud_tea_util import models as util_models
+
+        # 兼容现有的 AK/SK 配置，使其可以通过凭据客户端加载
+        if access_key_id and access_key_secret:
+            os.environ.setdefault('ALIBABA_CLOUD_ACCESS_KEY_ID', access_key_id)
+            os.environ.setdefault('ALIBABA_CLOUD_ACCESS_KEY_SECRET', access_key_secret)
+
+        credential = CredentialClient()
         config = open_api_models.Config(
-            access_key_id=access_key_id,
-            access_key_secret=access_key_secret,
-            region_id=region_id
+            credential=credential
         )
         config.endpoint = f'dysmsapi.aliyuncs.com'
         client = DysmsapiClient(config)
@@ -507,7 +515,8 @@ def send_sms_notify(phone_numbers: str, template_param: str = None, template_cod
             template_param=template_param
         )
         
-        response = client.send_sms(send_request)
+        runtime = util_models.RuntimeOptions()
+        response = client.send_sms_with_options(send_request, runtime)
         
         if response.body.code == 'OK':
             logger.info(f'[Notify] 短信发送成功: phone={phone_numbers}, req_id={response.body.request_id}')

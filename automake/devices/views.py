@@ -12,7 +12,7 @@ from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework import serializers
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from utils.response import ok, error
 from orders.models import OrderMain
@@ -560,3 +560,256 @@ class DeviceReconciliationView(APIView):
 
 
 
+
+class DeviceConsumableQueryView(APIView):
+    """
+    耗材查询接口
+    输入设备编号，获取当前设备剩余的耗材数量（杯子、杯盖等）
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="设备耗材查询",
+        description="输入设备编号，获取当前设备剩余的耗材数量（杯子、杯盖等）",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备序列号', required=True, type=str)
+        ]
+    )
+    def get(self, request):
+        device_sn = request.query_params.get('device_sn')
+        if not device_sn:
+            return error('缺少 device_sn 参数', code=400)
+            
+        try:
+            device = Device.objects.get(device_sn=device_sn)
+        except Device.DoesNotExist:
+            return error('设备不存在', code=404)
+            
+        from devices.models import DeviceConsumableStock
+        stocks = DeviceConsumableStock.objects.filter(device=device)
+        
+        data = []
+        for stock in stocks:
+            # 获取耗材名称，如果 material 关联存在则取 material.name，否则使用默认 mapping
+            name = stock.code.name if stock.code else stock.code_id
+            data.append({
+                'code': stock.code_id,
+                'name': name,
+                'quantity': stock.quantity,
+                'init_quantity': stock.init_quantity,
+                'unit': getattr(stock, 'unit', '个')
+            })
+            
+        return ok({'device_sn': device_sn, 'consumables': data}, message='查询成功')
+
+
+class DeviceConfigQueryView(APIView):
+    """
+    设备配置查询接口
+    输入设备编号，获取当前设备的各种参数配置
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="设备配置查询",
+        description="输入设备编号，获取当前设备的各种参数配置",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备序列号', required=True, type=str)
+        ]
+    )
+    def get(self, request):
+        device_sn = request.query_params.get('device_sn')
+        if not device_sn:
+            return error('缺少 device_sn 参数', code=400)
+            
+        try:
+            device = Device.objects.get(device_sn=device_sn)
+        except Device.DoesNotExist:
+            return error('设备不存在', code=404)
+            
+        from devices.models import DeviceConfig
+        # 若未配置过，直接自动创建
+        config, created = DeviceConfig.objects.get_or_create(device=device)
+        
+        # 组装温度配置
+        temp_dict = {}
+        for t in config.temperatures.all():
+            temp_dict[t.key] = t.value
+        # 默认回退（如果没有设置任何温度项）
+        if not temp_dict:
+            temp_dict = {"t1": 4, "t2": 175, "t3": 80}
+            
+        # 组装料筒配置
+        barrel_dict = {}
+        for b in config.barrels.all():
+            barrel_dict[b.barrel_id] = {
+                "pumpType": b.pump_type,
+                "pumpCoeff": b.pump_coeff,
+                "maxV": b.max_v,
+                "baseArea": b.base_area
+            }
+        if not barrel_dict:
+            barrel_dict = {
+                "b01": {
+                    "pumpType": "thin",
+                    "pumpCoeff": 100,
+                    "maxV": 40000,
+                    "baseArea": 800
+                }
+            }
+            
+        # 组装转运配置
+        try:
+            transfer_list = [int(x.strip()) for x in config.transfer.split(',') if x.strip()]
+        except ValueError:
+            transfer_list = []
+        if not transfer_list:
+            transfer_list = [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 120000, 130000, 140000]
+        
+        # 将配置按需求原样拼装
+        return ok({
+            "temperature": temp_dict,
+            "transfer": transfer_list,
+            "barrel": barrel_dict
+        }, message='查询成功')
+
+
+class DeviceSoftConfQueryView(APIView):
+    """
+    设备出餐配置查询接口
+    输入设备编号，获取出餐口、杯型和冰块等软配置
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="设备出餐配置查询",
+        description="输入设备编号，获取当前设备的出餐口、冰块及杯型配置",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备序列号', required=True, type=str)
+        ]
+    )
+    def get(self, request):
+        device_sn = request.query_params.get('device_sn')
+        if not device_sn:
+            return error('缺少 device_sn 参数', code=400)
+            
+        try:
+            device = Device.objects.get(device_sn=device_sn)
+        except Device.DoesNotExist:
+            return error('设备不存在', code=404)
+            
+        from devices.models import DeviceSoftConf
+        soft_conf, created = DeviceSoftConf.objects.get_or_create(device=device)
+        
+        cup_size_dict = {}
+        for cup in soft_conf.cup_sizes.all():
+            cup_size_dict[cup.key] = cup.capacity
+            
+        if not cup_size_dict:
+            cup_size_dict = {"m": 440, "l": 640}
+            
+        return ok({
+            "maxVacancies": soft_conf.max_vacancies,
+            "sepChunk": soft_conf.sep_chunk,
+            "cupSize": cup_size_dict,
+            "iceSize": soft_conf.ice_size
+        }, message='查询成功')
+
+
+class DeviceMenuMaterialQueryView(APIView):
+    """
+    设备菜单和物料静态定义查询接口
+    输入设备编号，返回该设备对应的菜单和所需物料的定义信息
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="设备菜单与物料定义查询",
+        description="输入设备编号，获取当前设备对应的所有菜单、SKU配方以及相关物料的静态定义信息",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备序列号', required=True, type=str)
+        ]
+    )
+    def get(self, request):
+        device_sn = request.query_params.get('device_sn')
+        if not device_sn:
+            return error('缺少 device_sn 参数', code=400)
+
+        try:
+            device = Device.objects.get(device_sn=device_sn)
+        except Device.DoesNotExist:
+            return error('设备不存在', code=404)
+
+        # 1. 组装菜单及其配方信息
+        from menus.models import MenuItem
+        menus_list = []
+        
+        if device.store and device.device_model:
+            items = (
+                MenuItem.objects
+                .filter(
+                    store=device.store,
+                    device_model=device.device_model,
+                    is_active=True,
+                    global_item__is_active=True,
+                    global_item__category__is_active=True
+                )
+                .select_related('global_item', 'global_item__category')
+                .prefetch_related('skus', 'skus__global_sku', 'skus__global_sku__ingredients', 'skus__global_sku__ingredients__material')
+                .order_by('global_item__category__sort_order', 'global_item__category__id', 'sort_order', 'id')
+            )
+            
+            for item in items:
+                skus_list = []
+                for local_sku in item.skus.filter(is_active=True, global_sku__is_active=True):
+                    ingredients_list = []
+                    for ing in local_sku.global_sku.ingredients.all():
+                        ingredients_list.append({
+                            "material_name": ing.material.name,
+                            "material_code": ing.material.code,
+                            "quantity": float(ing.quantity),
+                            "unit": ing.unit if ing.unit else ing.material.unit
+                        })
+                    
+                    skus_list.append({
+                        "id": local_sku.id,
+                        "name": local_sku.global_sku.name,
+                        "price_delta": local_sku.price_delta,
+                        "ingredients": ingredients_list
+                    })
+                
+                menus_list.append({
+                    "id": item.id,
+                    "name": item.global_item.name,
+                    "base_price": item.base_price,
+                    "category": {
+                        "id": item.global_item.category.id,
+                        "name": item.global_item.category.name,
+                        "label": item.global_item.category.label
+                    },
+                    "skus": skus_list
+                })
+
+        # 2. 收集当前设备所售商品配方中使用到的所有物料静态定义
+        # materials_list = []
+        # used_material_names = set()
+        # for menu in menus_list:
+        #     for sku in menu["skus"]:
+        #         for ing in sku["ingredients"]:
+        #             if ing.get("material_name"):
+        #                 used_material_names.add(ing["material_name"])
+
+        # from inventory.models import Material
+        # db_materials = Material.objects.filter(name__in=used_material_names).order_by('code')
+        # for m in db_materials:
+        #     materials_list.append({
+        #         "name": m.name,
+        #         "code": m.code,
+        #         "type": m.material_type,  # e.g., 'ingredient' or 'consumable'
+        #         "unit": m.unit
+        #     })
+
+        return ok({
+            "menus": menus_list
+            
+        }, message='查询成功')

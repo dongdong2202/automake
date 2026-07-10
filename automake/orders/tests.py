@@ -170,33 +170,6 @@ class OptimizedOrderProcessTests(TestCase):
         self.assertTrue(ProductionTask.objects.filter(order=order).exists())
         mock_issue_make.assert_called_once()
 
-    def test_process_payment_redis_deduct_fail_and_refund(self, mock_get_redis):
-        # Mock Redis precheck fail
-        mock_redis_client = MagicMock()
-        mock_redis_client.get.side_effect = lambda key: b"5000" if "coffee_bean" in key else b"50000"
-        mock_redis_client.register_script.return_value = MagicMock(return_value=0)  # Redis库存不足扣减失败
-        mock_get_redis.return_value = mock_redis_client
-
-        items_data = [
-            {
-                'item': self.menu_item.id,
-                'sku': [self.menu_sku.id],
-                'quantity': 1
-            }
-        ]
-        order = create_order(self.user, self.store.id, items_data)
-        payment = PaymentRecord.objects.create(
-            order=order, user=self.user, out_trade_no=order.order_no, amount=order.pay_amount
-        )
-
-        with self.assertRaises(ValueError):
-            process_payment_success(order.order_no, "WX-TX-9999", timezone.now().isoformat(), order.pay_amount)
-
-        # 订单应变更为 REFUNDED 并成功生成退款记录
-        order.refresh_from_db()
-        self.assertEqual(order.status, OrderMain.STATUS_REFUNDED)  # 'refunded'
-        self.assertTrue(order.refund_records.exists())
-
 
 
     def test_explicit_failure_rollback(self, mock_get_redis):

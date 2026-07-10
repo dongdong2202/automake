@@ -28,7 +28,7 @@ class DeviceMonitorSnapshot(models.Model):
     """
 
     device_sn = models.CharField(
-        max_length=128, unique=True, db_index=True,
+        max_length=128, db_index=True,
         verbose_name='设备序列号'
     )
     # 整机健康：false 表示存在异常，应显示红色警告或闪烁
@@ -58,6 +58,59 @@ class DeviceMonitorSnapshot(models.Model):
         status = '健康' if self.healthy else '异常'
         return f'{self.device_sn} [{status}]'
 
+    def check_health_status(self):
+        """
+        基于 raw_data 的新格式检查健康状况：
+        - temperature 小于 80 为健康
+        - 其他指标 0 代表没有问题， 1 代表有问题
+        """
+        if not self.raw_data:
+            return
+
+        is_healthy = True
+        abnormal_details = {}
+
+        # 检查温度
+        temp = self.raw_data.get('temperature', {})
+        if isinstance(temp, dict):
+            for k, v in temp.items():
+                if isinstance(v, (int, float)) and v >= 80:
+                    is_healthy = False
+                    abnormal_details[f"temperature.{k}"] = v
+
+        # 检查其他指标，递归遍历字典，寻找值为 1 的项
+        ignore_keys = {'temperature', 'free', 'type', 'sn', 'msg_id', 'ts', 'healthy', 'disconnected', 'lastTime', 'memSize'}
+        
+        def check_dict(prefix, d):
+            nonlocal is_healthy
+            for k, v in d.items():
+                full_key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    check_dict(full_key, v)
+                elif isinstance(v, (int, float)) and v == 1:
+                    is_healthy = False
+                    abnormal_details[full_key] = v
+
+        for key, value in self.raw_data.items():
+            if key in ignore_keys:
+                continue
+            if isinstance(value, dict):
+                check_dict(key, value)
+            elif isinstance(value, (int, float)) and value == 1:
+                is_healthy = False
+                abnormal_details[key] = value
+                
+        self.healthy = is_healthy
+        self.abnormality = abnormal_details
+
+    def save(self, *args, **kwargs):
+        self.check_health_status()
+        if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
+            update_fields = set(kwargs['update_fields'])
+            update_fields.add('healthy')
+            update_fields.add('abnormality')
+            kwargs['update_fields'] = list(update_fields)
+        super().save(*args, **kwargs)
     @property
     def display_status(self):
         """

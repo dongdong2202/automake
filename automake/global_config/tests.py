@@ -70,7 +70,7 @@ class GlobalMenuInheritanceTests(TestCase):
 
         # Verify store menu API serializes the dynamic tree correctly
         client = Client()
-        response = client.get('/api/menu/store/SN001')
+        response = client.get(f'/api/menu/store/{self.store.id}')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['code'], 0)
@@ -361,12 +361,12 @@ class CxdPermissionsAndSyncTests(TestCase):
         client = APIClient()
         
         # Test anonymous or normal user: closed store returns 400
-        response = client.get('/api/menu/store/SN001')
+        response = client.get(f'/api/menu/store/{self.store.id}')
         self.assertEqual(response.status_code, 400)
         
         # Log in as cxd
         client.force_authenticate(user=self.cxd_user)
-        response = client.get('/api/menu/store/SN001')
+        response = client.get(f'/api/menu/store/{self.store.id}')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['code'], 0)

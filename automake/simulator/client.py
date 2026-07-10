@@ -378,9 +378,11 @@ class UpperMachineSimulator:
                 "sku": list(sku_ids),
                 "quantity": qty
             })
+    
         payload = {"store_id": self.store_id, "items": items_payload}
         url = f"{self.server_url}/api/order/precheck"
         response = self.session.post(url, json=payload, timeout=5)
+        
         if response.status_code == 200:
             return response.json().get('data', {})
         else:
@@ -665,6 +667,8 @@ def run_test_flow():
 
         # 6. 下单预校验 (Precheck)
         precheck_res = sim.precheck_order()
+        print('ccc', precheck_res)
+        exit()
         if not precheck_res:
             raise RuntimeError("预校验接口返回失败")
         print(f"[微信端] 预校验通过，总金额: {precheck_res['total_amount']/100:.2f}元")

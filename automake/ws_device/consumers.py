@@ -469,8 +469,8 @@ class DeviceConsumer(AsyncWebsocketConsumer):
 
     def _upsert_monitor_snapshot(self, data: dict):
         """
-        同步方法：将 status_report data 写入 DeviceMonitorSnapshot（upsert）。
-        由 database_sync_to_async 包裹后在异步环境中调用。
+        同步方法：将 status_report data 写入 DeviceMonitorSnapshot。
+        如果是状态发生改变，新增一条记录以供历史追溯。
         """
         from monitor.models import DeviceMonitorSnapshot
 
@@ -480,20 +480,26 @@ class DeviceConsumer(AsyncWebsocketConsumer):
         last_time = data.get('lastTime', 0)
         mem_size = data.get('memSize', {})
         abnormality = data.get('abnormality', {})
-        
 
-        # update_or_create：以 device_sn 为唯一键执行 upsert
-        snapshot, _ = DeviceMonitorSnapshot.objects.update_or_create(
-            device_sn=self.sn,
-            defaults={
-                'healthy': healthy,
-                'disconnected': disconnected,
-                'last_time': last_time,
-                'mem_size': mem_size,
-                'abnormality': abnormality,
-                'raw_data': data,   # 完整保存原始数据便于排查
-            }
-        )
+        snapshot = DeviceMonitorSnapshot.objects.filter(device_sn=self.sn).order_by('-reported_at').first()
+        should_update = False
+        
+        if not snapshot:
+            should_update = True
+        elif snapshot.healthy != healthy or snapshot.abnormality != abnormality or snapshot.disconnected != disconnected:
+            should_update = True
+            
+        if should_update:
+            snapshot = DeviceMonitorSnapshot.objects.create(
+                device_sn=self.sn,
+                healthy=healthy,
+                disconnected=disconnected,
+                last_time=last_time,
+                mem_size=mem_size,
+                abnormality=abnormality,
+                raw_data=data
+            )
+        
         return snapshot
 
     # ================================================================

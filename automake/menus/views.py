@@ -7,6 +7,7 @@
 
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from utils.response import ok, error
 from stores.models import Store
@@ -120,3 +121,59 @@ class StoreMenuView(APIView):
             'is_in_business_hours': store.is_in_business_hours,
             'categories': sorted_categories,
         })
+
+
+class DeviceMenuCategoriesQueryView(APIView):
+    """
+    设备菜单分类查询接口
+    输入设备编号，获取该设备的菜单分类信息
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="设备菜单分类查询",
+        description="输入设备编号，获取该设备的菜单分类信息（包括分类名称、标签和菜单商品ID列表）",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备序列号', required=True, type=str)
+        ]
+    )
+    def get(self, request):
+        device_sn = request.query_params.get('device_sn')
+        if not device_sn:
+            return error('缺少 device_sn 参数', code=400)
+
+        try:
+            device = Device.objects.get(device_sn=device_sn)
+        except Device.DoesNotExist:
+            return error('设备不存在', code=404)
+
+        if not device.store or not device.device_model:
+            return ok([], message='查询成功')
+
+        # 获取当前设备关联门店及设备型号下所有上架的 MenuItem
+        items = (
+            MenuItem.objects
+            .filter(
+                store=device.store,
+                device_model=device.device_model,
+                is_active=True,
+                global_item__is_active=True,
+                global_item__category__is_active=True
+            )
+            .select_related('global_item', 'global_item__category')
+            .order_by('global_item__category__sort_order', 'global_item__category__id', 'sort_order', 'id')
+        )
+
+        categories_dict = {}
+        for item in items:
+            g_cat = item.global_item.category
+            if g_cat.id not in categories_dict:
+                categories_dict[g_cat.id] = {
+                    "type": g_cat.label,
+                    "label": g_cat.name,
+                    "merchandises": []
+                }
+            categories_dict[g_cat.id]["merchandises"].append(str(item.id))
+
+        # 按照分类本身的排序权重排序返回列表
+        return ok(list(categories_dict.values()), message='查询成功')

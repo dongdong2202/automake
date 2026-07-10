@@ -108,6 +108,7 @@ class GlobalMenuCategory(models.Model):
         related_name='categories', verbose_name='设备型号'
     )
     name = models.CharField(max_length=64, verbose_name='分类名称')
+    label = models.CharField(max_length=64, default='recomm', verbose_name='分类标签')
     icon_url = models.FileField(upload_to='global_category_icons/', max_length=512, blank=True, verbose_name='分类图标')
     sort_order = models.IntegerField(default=0, verbose_name='排序权重')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')

@@ -86,7 +86,7 @@ class GlobalMenuCategoryAdmin(GlobalConfigAdmin):
 
     fieldsets = (
         ('基本信息', {
-            'fields': ('device_model', 'name', 'icon_url')
+            'fields': ('device_model', 'label', 'name', 'icon_url')
         }),
         ('状态与排序', {
             'fields': ('is_active', 'sort_order')

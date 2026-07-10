@@ -237,7 +237,7 @@ CACHES = {
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
-        'TIMEOUT': 300,  # 默认缓存过期时间（秒）
+        'TIMEOUT': 3000,  # 默认缓存过期时间（秒）
     }
 }
 
@@ -330,75 +330,154 @@ MQTT_CLIENT_ID = os.environ.get('MQTT_CLIENT_ID', 'django-server-001')  # 客户
 
 # ============================================================
 # 日志配置 (Logging Configuration)
-# 支持在终端输出详细的业务运行日志和数据库 SQL 追踪日志
 # ============================================================
+# 设计原则：
+#   1. 【异步写入】所有 handler 挂在 QueueHandler 后，日志写入操作
+#      被投递到内存队列，由独立的 QueueListener 线程消费，完全不阻塞请求线程。
+#   2. 【按大小切割】每个日志文件上限 500 MB，最多保留 10 个历史片段，
+#      自动命名为 xxx.log.1 / xxx.log.2 ... 共约 5 GB 历史空间。
+#   3. 【分类存储】业务日志、错误日志、Django 框架日志分别落不同文件，
+#      便于运维检索与告警接入。
+#   4. 【结构化格式】正式环境建议接入 JSON 格式（已内置 json_verbose），
+#      方便后续对接 ELK / Grafana Loki 等日志平台。
+# ============================================================
+
+import queue
+import logging
+import logging.handlers
+
+# 日志目录：项目根目录同级的 logs/ 下（不放在代码目录内，避免误提交）
+_LOG_DIR = BASE_DIR.parent / 'logs'
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# 单文件上限 500 MB，保留 10 个滚动片段
+_MAX_BYTES  = 500 * 1024 * 1024   # 500 MB
+_BACKUP_CNT = 10
+
+# 文件日志统一格式（带时间、级别、模块名、行号）
+_file_formatter = logging.Formatter(
+    fmt='[%(asctime)s] %(levelname)-8s [%(name)s:%(lineno)d] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+
+def _make_rotating_handler(filename: str, level=logging.DEBUG):
+    """工厂：创建一个基于大小切割的 RotatingFileHandler，并绑定统一 formatter"""
+    h = logging.handlers.RotatingFileHandler(
+        filename=str(_LOG_DIR / filename),
+        maxBytes=_MAX_BYTES,
+        backupCount=_BACKUP_CNT,
+        encoding='utf-8',
+    )
+    h.setLevel(level)
+    h.setFormatter(_file_formatter)   # ← 关键：绑定 formatter
+    return h
+
+# ---------- 异步队列 ----------
+# 每类日志有独立的内存队列 + QueueListener，互不干扰
+_log_queue_app  = queue.Queue(maxsize=5000)   # 业务日志
+_log_queue_err  = queue.Queue(maxsize=2000)   # 错误/异常
+_log_queue_dj   = queue.Queue(maxsize=2000)   # Django 框架
+
+# 底层实际写入的 Handler（真正落盘的 worker）
+#日志级别从低到高依次是 DEBUG < INFO < WARNING < ERROR < CRITICAL。
+_file_app  = _make_rotating_handler('app.log',     logging.DEBUG)
+_file_err  = _make_rotating_handler('error.log',   logging.ERROR)
+_file_dj   = _make_rotating_handler('django.log',  logging.INFO)
+
+# 启动后台监听线程（进程退出时自动 stop）
+_listener_app = logging.handlers.QueueListener(_log_queue_app, _file_app, respect_handler_level=True)
+_listener_err = logging.handlers.QueueListener(_log_queue_err, _file_err, respect_handler_level=True)
+_listener_dj  = logging.handlers.QueueListener(_log_queue_dj,  _file_dj,  respect_handler_level=True)
+_listener_app.start()
+_listener_err.start()
+_listener_dj.start()
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+
+    # ── 格式器 ──────────────────────────────────────────────
     'formatters': {
+        # 普通可读格式（开发 / 控制台）
         'verbose': {
-            'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)d] %(message)s',
+            'format': '[%(asctime)s] %(levelname)-8s [%(name)s:%(lineno)d] %(message)s',
             'datefmt': '%Y-%m-%d %H:%M:%S',
         },
-        'simple': {
-            'format': '%(levelname)s %(message)s',
+        # 结构化 JSON 格式（生产推荐，方便接入 ELK / Loki）
+        # 如需启用，将下方 handler 中的 formatter 改为 'json_verbose'
+        'json_verbose': {
+            '()': 'django.utils.log.ServerFormatter',
+            'format': '{\'time\': \'%(asctime)s\', \'level\': \'%(levelname)s\', \'logger\': \'%(name)s\', \'line\': %(lineno)d, \'msg\': %(message)r}',
+            'datefmt': '%Y-%m-%dT%H:%M:%S',
         },
     },
+
+    # ── Handler ─────────────────────────────────────────────
     'handlers': {
+        # 控制台输出（本地开发用，生产可保留用于 systemd journal）
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'level': 'INFO',
+        },
+        # 【异步】业务日志队列入口（投递到 _log_queue_app）
+        'async_app': {
+            'class': 'logging.handlers.QueueHandler',
+            'queue': _log_queue_app,
+        },
+        # 【异步】错误日志队列入口（仅 ERROR 及以上）
+        'async_err': {
+            'class': 'logging.handlers.QueueHandler',
+            'queue': _log_queue_err,
+        },
+        # 【异步】Django 框架日志队列入口
+        'async_django': {
+            'class': 'logging.handlers.QueueHandler',
+            'queue': _log_queue_dj,
         },
     },
+
+    # ── Logger ──────────────────────────────────────────────
     'loggers': {
-        # 默认 Django 系统日志
+        # Django 框架日志
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'async_django'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
-        # 数据库 SQL 语句追踪日志（仅在 DEBUG=True 时有效且会大量输出）
+        # SQL 追踪（仅 WARNING 以上，避免刷屏）
         'django.db.backends': {
-            'handlers': ['console'],
+            'handlers': ['async_err'],
             'level': 'WARNING',
             'propagate': False,
         },
-        # 各个业务模块的日志配置
-        'users': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
+        # Django 请求错误（4xx/5xx）
+        'django.request': {
+            'handlers': ['console', 'async_err'],
+            'level': 'WARNING',
+            'propagate': False,
         },
-        'stores': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        'menus': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        'orders': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        'payments': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        'devices': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-        'mqtt': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
+        # ── 业务模块：统一使用 async_app + async_err 双写 ──
+        # async_app  → app.log   (DEBUG+)
+        # async_err  → error.log (ERROR+)，全局错误收口
+        'users':         {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'stores':        {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'menus':         {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'orders':        {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'payments':      {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'devices':       {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'mqtt':          {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'inventory':     {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'notifications': {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'monitor':       {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'global_config': {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'utils':         {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+    },
+
+    # ── Root Logger（兜底，捕获未列举模块的日志） ──────────
+    'root': {
+        'handlers': ['console', 'async_app'],
+        'level': 'WARNING',
     },
 }
 

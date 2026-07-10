@@ -1,240 +1,386 @@
-{% extends "admin/index.html" %}
-{% load i18n unfold %}
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  /* ===== 全局重置与变量 ===== */
+  :root {
+    --primary:    #6366f1;
+    --primary-dk: #4f46e5;
+    --purple:     #7c3aed;
+    --purple-lt:  #ede9fe;
+    --indigo-lt:  #e0e7ff;
+    --bg:         #f5f3ff;
+    --card:       #ffffff;
+    --border:     #e0e7ff;
+    --text-main:  #1e1b4b;
+    --text-sub:   #6b7280;
+    --radius:     14px;
+    --shadow:     0 4px 24px rgba(99,102,241,.10);
+    --shadow-hov: 0 8px 32px rgba(99,102,241,.18);
+  }
+
+  #content-main { display: none !important; }  /* 隐藏默认 app 列表 */
+
+  /* ===== 页面容器 ===== */
+  .am-dashboard {
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    padding: 36px 28px 60px;
+    box-sizing: border-box;
+  }
+
+  /* ===== 顶部 Banner ===== */
+  .am-banner {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 60%, #a78bfa 100%);
+    border-radius: 20px;
+    padding: 36px 40px;
+    margin-bottom: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 8px 32px rgba(79,70,229,.25);
+    position: relative;
+    overflow: hidden;
+  }
+  .am-banner::before {
+    content: '';
+    position: absolute;
+    right: -60px; top: -60px;
+    width: 260px; height: 260px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.06);
+  }
+  .am-banner::after {
+    content: '';
+    position: absolute;
+    right: 80px; bottom: -80px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.04);
+  }
+  .am-banner-title {
+    color: #fff;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -.5px;
+    margin: 0 0 8px;
+  }
+  .am-banner-sub {
+    color: rgba(255,255,255,.75);
+    font-size: 14px;
+    margin: 0;
+  }
+  .am-banner-badge {
+    background: rgba(255,255,255,.15);
+    border: 1px solid rgba(255,255,255,.25);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    padding: 12px 22px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    z-index: 1;
+  }
+
+  /* ===== 统计卡片行 ===== */
+  .am-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 36px;
+  }
+  .am-stat {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: var(--shadow);
+    transition: box-shadow .2s, transform .2s;
+  }
+  .am-stat:hover { box-shadow: var(--shadow-hov); transform: translateY(-2px); }
+  .am-stat-icon {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .am-stat-icon svg { width: 24px; height: 24px; }
+  .am-stat-label { font-size: 12px; color: var(--text-sub); margin-bottom: 4px; }
+  .am-stat-value { font-size: 26px; font-weight: 800; color: var(--text-main); line-height: 1; }
+
+  /* 图标色 */
+  .ic-indigo { background: var(--indigo-lt); color: var(--primary); }
+  .ic-purple  { background: var(--purple-lt); color: var(--purple); }
+  .ic-blue    { background: #dbeafe;          color: #2563eb; }
+  .ic-violet  { background: #f3e8ff;          color: #9333ea; }
+
+  /* ===== 分区标题 ===== */
+  .am-section-title {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 17px; font-weight: 700; color: var(--text-main);
+    margin: 0 0 20px;
+  }
+  .am-section-title svg { width: 20px; height: 20px; color: var(--primary); }
+
+  /* ===== 功能模块卡片网格 ===== */
+  .am-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 18px;
+    margin-bottom: 40px;
+  }
+  .am-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 22px;
+    text-decoration: none;
+    display: block;
+    box-shadow: var(--shadow);
+    transition: border-color .2s, box-shadow .2s, transform .2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .am-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--card-accent, var(--primary));
+    border-radius: 3px 3px 0 0;
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  .am-card:hover { border-color: var(--card-accent, var(--primary)); box-shadow: var(--shadow-hov); transform: translateY(-3px); }
+  .am-card:hover::before { opacity: 1; }
+
+  .am-card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .am-card-icon {
+    width: 44px; height: 44px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--card-icon-bg, var(--indigo-lt));
+    color: var(--card-accent, var(--primary));
+    flex-shrink: 0;
+    transition: background .2s;
+  }
+  .am-card-icon svg { width: 22px; height: 22px; }
+  .am-card-name { font-size: 15px; font-weight: 700; color: var(--text-main); }
+  .am-card-desc { font-size: 12.5px; color: var(--text-sub); line-height: 1.65; margin: 0 0 14px; }
+  .am-card-link {
+    font-size: 12px; font-weight: 600;
+    color: var(--card-accent, var(--primary));
+    display: flex; align-items: center; gap: 4px;
+    transition: gap .2s;
+  }
+  .am-card:hover .am-card-link { gap: 8px; }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 900px) {
+    .am-stats { grid-template-columns: repeat(2, 1fr); }
+    .am-banner { flex-direction: column; align-items: flex-start; gap: 16px; }
+  }
+  @media (max-width: 560px) {
+    .am-stats { grid-template-columns: 1fr 1fr; }
+    .am-dashboard { padding: 20px 14px 40px; }
+    .am-banner-title { font-size: 20px; }
+  }
+</style>
+{% endblock %}
 
 {% block content %}
-    <div class="px-4 py-6 md:px-8 max-w-7xl mx-auto">
-        <!-- Dashboard Header -->
-        <div class="mb-8">
-            <h1 class="text-3xl font-extrabold text-gray-900 dark:text-white tracking-tight">AutoMake 系统控制中心</h1>
-            <p class="mt-2 text-base text-gray-600 dark:text-gray-400">欢迎登录系统后台，您可以通过下方控制台卡片进行全局调度与核心模块管理。</p>
-        </div>
+<div class="am-dashboard">
 
-        <!-- Statistics Panel -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <!-- Stat 1: 门店 -->
-            <div class="p-5 bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 rounded-xl shadow-sm flex items-center space-x-4">
-                <div class="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">已部署门店</p>
-                    <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ store_count }}</p>
-                </div>
-            </div>
-
-            <!-- Stat 2: 设备 -->
-            <div class="p-5 bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 rounded-xl shadow-sm flex items-center space-x-4">
-                <div class="p-3 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-lg">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">在线智能设备</p>
-                    <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ online_device_count }}</p>
-                </div>
-            </div>
-
-            <!-- Stat 3: 今日订单 -->
-            <div class="p-5 bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 rounded-xl shadow-sm flex items-center space-x-4">
-                <div class="p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 00-2 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">今日新订单数</p>
-                    <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ today_order_count }}</p>
-                </div>
-            </div>
-
-            <!-- Stat 4: 制作任务 -->
-            <div class="p-5 bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 rounded-xl shadow-sm flex items-center space-x-4">
-                <div class="p-3 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-lg">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">今日制作任务</p>
-                    <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ today_task_count }}</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Section Title: Quick Links -->
-        <div class="border-t border-gray-150 dark:border-gray-700/60 pt-8 mb-6">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white flex items-center">
-                <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z"></path>
-                </svg>
-                核心业务模块直达
-            </h2>
-        </div>
-
-        <!-- Quick Links Navigation Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            <!-- Card 1: 全局配置 -->
-            <a href="/admin/global_config/globalmenuitem/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl group-hover:bg-blue-100 dark:group-hover:bg-blue-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">全局配置</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">管理全局菜单、商品SKU、设备类型、配料与原物料的基础定义。</p>
-                <div class="mt-4 text-xs font-semibold text-blue-600 dark:text-blue-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 2: 监控与分析 -->
-            <a href="/admin/monitor/devicemonitorsnapshot/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-green-500 dark:hover:border-green-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-xl group-hover:bg-green-100 dark:group-hover:bg-green-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-green-600 dark:group-hover:text-green-400">监控与分析</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">实时监控设备运行状态、温度、余料量及物理连通健康指标。</p>
-                <div class="mt-4 text-xs font-semibold text-green-600 dark:text-green-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 3: 库存管理 -->
-            <a href="/admin/inventory/material/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-purple-500 dark:hover:border-purple-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl group-hover:bg-purple-100 dark:group-hover:bg-purple-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-purple-600 dark:group-hover:text-purple-400">库存管理</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">管理物料出入库凭证、供应商结算流水、批次及余料阈值警告。</p>
-                <div class="mt-4 text-xs font-semibold text-purple-600 dark:text-purple-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 4: 门店管理 -->
-            <a href="/admin/stores/store/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-indigo-500 dark:hover:border-indigo-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400">门店管理</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">管理线下各直营及合作门店信息、地理经纬度坐标及营业状态。</p>
-                <div class="mt-4 text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 5: 菜单管理 -->
-            <a href="/admin/menus/menuitem/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-yellow-500 dark:hover:border-yellow-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-yellow-50 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400 rounded-xl group-hover:bg-yellow-100 dark:group-hover:bg-yellow-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-yellow-600 dark:group-hover:text-yellow-400">菜单管理</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">自定义配置各门店的本地商品价格微调、促销及上架状态。</p>
-                <div class="mt-4 text-xs font-semibold text-yellow-600 dark:text-yellow-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 6: 设备管理 -->
-            <a href="/admin/devices/device/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-red-500 dark:hover:border-red-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl group-hover:bg-red-100 dark:group-hover:bg-red-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-red-600 dark:group-hover:text-red-400">设备管理</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">设备型号及参数、物理出厂序列号(SN)注册及在线心跳状态查看。</p>
-                <div class="mt-4 text-xs font-semibold text-red-600 dark:text-red-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 7: 订单与生产 -->
-            <a href="/admin/orders/order/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-pink-500 dark:hover:border-pink-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-pink-50 dark:bg-pink-900/30 text-pink-600 dark:text-pink-400 rounded-xl group-hover:bg-pink-100 dark:group-hover:bg-pink-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 00-2 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-pink-600 dark:group-hover:text-pink-400">订单与生产</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">实时追踪订单交易状态、取餐凭证、排号队列与物理设备生产进度。</p>
-                <div class="mt-4 text-xs font-semibold text-pink-600 dark:text-pink-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 8: 用户与安全 -->
-            <a href="/admin/users/user/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-teal-500 dark:hover:border-teal-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 rounded-xl group-hover:bg-teal-100 dark:group-hover:bg-teal-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-teal-600 dark:group-hover:text-teal-400">用户与安全</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">设置系统各层级管理员权限、账号激活、微信客户信息资料及绑定。</p>
-                <div class="mt-4 text-xs font-semibold text-teal-600 dark:text-teal-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 9: 支付记录 -->
-            <a href="/admin/payments/paymentrecord/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-rose-500 dark:hover:border-rose-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-xl group-hover:bg-rose-100 dark:group-hover:bg-rose-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 8h6m-5 0a3 3 0 110 6H9l3 3m-3-6h6m6 1a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-rose-600 dark:group-hover:text-rose-400">支付记录</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">对账各渠道微信交易流水、商户退款及资金状态汇总监控。</p>
-                <div class="mt-4 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-
-            <!-- Card 10: 消息通知 -->
-            <a href="/admin/notifications/alertrecord/" class="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/80 rounded-2xl hover:border-orange-500 dark:hover:border-orange-400 hover:shadow-lg transition duration-200 group">
-                <div class="flex items-center space-x-4 mb-4">
-                    <div class="p-3 bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded-xl group-hover:bg-orange-100 dark:group-hover:bg-orange-900/50 transition duration-200">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
-                        </svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 group-hover:text-orange-600 dark:group-hover:text-orange-400">消息通知</h3>
-                </div>
-                <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">微信模板订阅通知发送明细、设备缺料/故障等核心日志告警。</p>
-                <div class="mt-4 text-xs font-semibold text-orange-600 dark:text-orange-400 flex items-center group-hover:translate-x-1 transition-transform duration-200">
-                    立即前往 <span class="ml-1">→</span>
-                </div>
-            </a>
-        </div>
+  <!-- ===== Banner ===== -->
+  <div class="am-banner">
+    <div>
+      <h1 class="am-banner-title">AutoMake 系统控制中心</h1>
+      <p class="am-banner-sub">欢迎回来，{{ user.get_full_name|default:user.username }} &nbsp;·&nbsp; 请通过下方模块进行全局调度与数据管理</p>
     </div>
+    <div class="am-banner-badge">🚀 &nbsp;智能制造后台 v1.0</div>
+  </div>
+
+  <!-- ===== 统计概览 ===== -->
+  <div class="am-stats">
+
+    <div class="am-stat">
+      <div class="am-stat-icon ic-indigo">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+      </div>
+      <div>
+        <div class="am-stat-label">已部署门店</div>
+        <div class="am-stat-value">{{ store_count|default:"—" }}</div>
+      </div>
+    </div>
+
+    <div class="am-stat">
+      <div class="am-stat-icon ic-blue">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+      </div>
+      <div>
+        <div class="am-stat-label">在线智能设备</div>
+        <div class="am-stat-value">{{ online_device_count|default:"—" }}</div>
+      </div>
+    </div>
+
+    <div class="am-stat">
+      <div class="am-stat-icon ic-purple">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+      </div>
+      <div>
+        <div class="am-stat-label">今日新订单</div>
+        <div class="am-stat-value">{{ today_order_count|default:"—" }}</div>
+      </div>
+    </div>
+
+    <div class="am-stat">
+      <div class="am-stat-icon ic-violet">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+      </div>
+      <div>
+        <div class="am-stat-label">今日制作任务</div>
+        <div class="am-stat-value">{{ today_task_count|default:"—" }}</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== 核心模块 ===== -->
+  <div class="am-section-title">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z"/></svg>
+    核心业务模块
+  </div>
+
+  <div class="am-grid">
+
+    <!-- 订单与生产 -->
+    <a href="/admin/orders/ordermain/" class="am-card" style="--card-accent:#6366f1;--card-icon-bg:#e0e7ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+        </div>
+        <span class="am-card-name">订单与生产</span>
+      </div>
+      <p class="am-card-desc">实时追踪订单状态、排号队列与设备生产任务进度。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 支付记录 -->
+    <a href="/admin/payments/paymentrecord/" class="am-card" style="--card-accent:#7c3aed;--card-icon-bg:#ede9fe;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 8h6m-5 0a3 3 0 110 6H9l3 3m-3-6h6m6 1a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+        <span class="am-card-name">支付记录</span>
+      </div>
+      <p class="am-card-desc">对账微信交易流水、退款申请及各渠道资金状态汇总。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 库存管理 -->
+    <a href="/admin/inventory/material/" class="am-card" style="--card-accent:#4f46e5;--card-icon-bg:#e0e7ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        </div>
+        <span class="am-card-name">库存管理</span>
+      </div>
+      <p class="am-card-desc">管理物料出入库凭证、批次、余料阈值及供应商结算。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 门店管理 -->
+    <a href="/admin/stores/store/" class="am-card" style="--card-accent:#8b5cf6;--card-icon-bg:#f3e8ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        </div>
+        <span class="am-card-name">门店管理</span>
+      </div>
+      <p class="am-card-desc">管理直营及合作门店信息、坐标定位及营业状态开关。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 设备管理 -->
+    <a href="/admin/devices/device/" class="am-card" style="--card-accent:#6366f1;--card-icon-bg:#e0e7ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+        </div>
+        <span class="am-card-name">设备管理</span>
+      </div>
+      <p class="am-card-desc">注册设备型号与序列号（SN），查看在线心跳与运行状态。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 菜单管理 -->
+    <a href="/admin/menus/menuitem/" class="am-card" style="--card-accent:#7c3aed;--card-icon-bg:#ede9fe;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        </div>
+        <span class="am-card-name">菜单管理</span>
+      </div>
+      <p class="am-card-desc">配置各门店本地商品价格微调、促销策略及上下架状态。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 全局配置 -->
+    <a href="/admin/global_config/globalmenuitem/" class="am-card" style="--card-accent:#4f46e5;--card-icon-bg:#e0e7ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+        </div>
+        <span class="am-card-name">全局配置</span>
+      </div>
+      <p class="am-card-desc">管理全局菜单、商品 SKU、设备类型与原物料基础定义。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 监控与分析 -->
+    <a href="/admin/monitor/devicemonitorsnapshot/" class="am-card" style="--card-accent:#8b5cf6;--card-icon-bg:#f3e8ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        </div>
+        <span class="am-card-name">监控与分析</span>
+      </div>
+      <p class="am-card-desc">实时监控设备运行状态、温度、余料量及健康指标快照。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 用户与安全 -->
+    <a href="/admin/users/user/" class="am-card" style="--card-accent:#6366f1;--card-icon-bg:#e0e7ff;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        </div>
+        <span class="am-card-name">用户与安全</span>
+      </div>
+      <p class="am-card-desc">管理系统管理员权限、账号激活及微信客户资料绑定。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+    <!-- 消息通知 -->
+    <a href="/admin/notifications/alertrecord/" class="am-card" style="--card-accent:#7c3aed;--card-icon-bg:#ede9fe;">
+      <div class="am-card-head">
+        <div class="am-card-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        </div>
+        <span class="am-card-name">消息通知</span>
+      </div>
+      <p class="am-card-desc">查看微信模板通知发送明细、设备缺料与故障告警日志。</p>
+      <div class="am-card-link">进入管理 <span>→</span></div>
+    </a>
+
+  </div>
+
+</div>
 {% endblock %}

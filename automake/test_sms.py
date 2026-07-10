@@ -10,7 +10,7 @@ django.setup()
 from notifications.services import send_sms_notify
 
 def run_test():
-    phone_number = "13683155919"
+    phone_number = "13683155152"
     # 这里我们假设模板有一个名为 'code' 的变量，如果不一致，您可能需要修改模板参数
     template_param = '{"code": "1234"}'
     

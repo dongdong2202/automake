@@ -32,9 +32,15 @@ def get_mqtt_client() -> mqtt.Client:
     """
     global _client
     if _client is None:
+        logger.error(f'MQTT 启动连接不存在')
         with _lock:
             if _client is None:
+                
                 _client = _create_client()
+    else:
+        logger.error(f'MQTT 启动连接已经存在')
+
+                
     return _client
 
 
@@ -79,7 +85,6 @@ def _on_connect(client, userdata, flags, reason_code, properties):
     if reason_code.is_failure:
         logger.error(f'MQTT 连接失败，原因码: {reason_code}')
         return
-    print(client)
     logger.info(f'MQTT 已连接，Client ID: {client._client_id.decode("utf-8") if isinstance(client._client_id, bytes) else client._client_id}，reason_code={reason_code}')
     
     # 订阅所有设备状态、物料及指令 Topic（标准单进程订阅模式）
@@ -87,6 +92,7 @@ def _on_connect(client, userdata, flags, reason_code, properties):
         client.subscribe('automake/device/+/status', qos=1)
         client.subscribe('automake/device/+/material', qos=1)
         client.subscribe('automake/device/+/command', qos=1)
+        client.subscribe('automake/device/+/heart', qos=1)
         logger.info('MQTT 标准订阅已注册: status, material 和 command')
     except Exception as e:
         logger.error(f'MQTT 注册订阅失败: {e}')
@@ -141,26 +147,44 @@ def _on_message(client, userdata, msg):
 def _handle_device_status(device_sn: str, payload: dict):
     """
     处理上位机设备/订单状态上报
-
-    payload 示例：
-    {
-        "type": "order_status",
-        "order_no": "20250609001234",
-        "status": "making" | "done" | "failed",
-        "message": "..."
-    }
     """
-    msg_type = payload.get('type')
-    if msg_type == 'heartbeat':
-        logger.info(f"[DEVICE_REPORT] MQTT Heartbeat payload from {device_sn}: {payload}")
-    else:
-        logger.info(f"[DEVICE_REPORT] MQTT Order status report payload from {device_sn}: {payload}")
+  
     
-    from devices.views import receive_device_status  # 避免循环导入
-    try:
-        receive_device_status(device_sn, payload)
-    except Exception as e:
-        logger.exception(f'处理设备状态上报失败，device_sn={device_sn}: {e}')
+
+    is_health_report = ('temperature' in payload) or ('cup' in payload) 
+    
+    if is_health_report:
+        logger.info(f"[DEVICE_REPORT] MQTT Machine health status payload from {device_sn}: {payload}")
+        try:
+            from monitor.models import DeviceMonitorSnapshot
+            
+            # 使用临时对象执行状态检测
+            temp_snapshot = DeviceMonitorSnapshot(device_sn=device_sn, raw_data=payload)
+            temp_snapshot.check_health_status()
+            
+            # 和数据库中的最新状态进行比较
+            snapshot = DeviceMonitorSnapshot.objects.filter(device_sn=device_sn).order_by('-reported_at').first()
+            should_update = False
+            
+            if not snapshot:
+                should_update = True
+            elif snapshot.healthy != temp_snapshot.healthy or snapshot.abnormality != temp_snapshot.abnormality:
+                should_update = True
+                
+            if should_update:
+                # 状态不一样则新增一条记录，以便追溯历史
+                DeviceMonitorSnapshot.objects.create(
+                    device_sn=device_sn,
+                    raw_data=payload
+                )
+                logger.info(f"设备 {device_sn} 健康状态发生变化，已新增监控快照。当前健康: {temp_snapshot.healthy}, 异常项: {temp_snapshot.abnormality}")
+            else:
+                logger.debug(f"设备 {device_sn} 健康状态无变化，跳过数据库更新")
+
+        except Exception as e:
+            logger.exception(f'处理设备健康快照检查失败，device_sn={device_sn}: {e}')
+            
+
 
 
 def _handle_material_report(device_sn: str, payload: dict):

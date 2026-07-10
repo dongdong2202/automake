@@ -25,6 +25,7 @@ def get_redis_stock_key(device_sn: str, material_code: str) -> str:
     return f"automake:stock:{device_sn}:{material_code}"
 
 
+ 
 def calculate_required_materials(items_data: list) -> dict:
     """
     根据商品清单数据计算所需原材料及用量
@@ -32,23 +33,57 @@ def calculate_required_materials(items_data: list) -> dict:
     return:{'002': Decimal('22.00'), '003': Decimal('2.00')}
     """
     required = {}
- 
+
+    ignored_codes = {'paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'}
+    print('mmmm', items_data)
     for item_info in items_data:
         item_obj = item_info.get('item')
         sku_objs = item_info.get('skus', [])
         quantity = item_info['quantity']
-
- 
+        is_hot = False
+        big = '大杯'
+        print('-000', item_info)
         for sku in sku_objs:
-         
+            
+            if not sku or not sku.global_sku:
+                continue
+            
+            if '热' in str(sku).split('-')[1]:
+                is_hot = True
+            if '小杯' in str(sku).split('-')[1]:
+                big = '小杯'
+
+            
+
+
+            # 1. 计算配方里除了杯子、盖子、膜以外的其他原料
             for ing in sku.global_sku.ingredients.select_related('material').all():
-                item = item_obj,
                 code = ing.material.code
+                if code in ignored_codes:
+                    continue
                 qty = ing.quantity * quantity          
                 required[code] = required.get(code, Decimal('0.00')) + Decimal(str(qty))
-    print('rrrrr', required)
+            
+            # 2. 动态加上对应的杯子和配套耗材（一个杯子对应一个膜/盖）
+                        # 确定所用杯子及配套耗材编码
+        if is_hot:
+            if big == '大杯':
+                cup_code = '大纸杯'
+                cup_hat = '大盖子'
+            else:
+                cup_code = '小纸杯'
+                cup_hat = '小盖子'
+            required[cup_hat] = required.get(cup_hat, Decimal('0.00')) + Decimal(str(quantity))
+            required['膜'] = required.get('膜', Decimal('0.00')) + Decimal(str(quantity))
+        else:
+          if big == '大杯':
+                cup_code = '大朔料杯'
+                 
+          else:
+                cup_code = '小朔料杯'
+                 
+        required[cup_code] = required.get(cup_code, Decimal('0.00')) + Decimal(str(quantity))
     return required
-
 
 
 
@@ -94,14 +129,14 @@ def precheck_order(store_id: int, items_data: list) -> dict:
                 is_active=True,
                 store=store,
             )
-            print(item_obj,'====')
+    
         except MenuItem.DoesNotExist:
             raise ValueError(f'商品 ID={item_id} 在该门店不存在或已下架')
 
         # 校验选中的规格
         sku_objs = []
         sku_names = []
-        print('4444444444', item_data)
+   
         if sku_ids:
             sku_objs_unordered = MenuSku.objects.select_related('global_sku').filter(
                 pk__in=sku_ids,
@@ -134,10 +169,10 @@ def precheck_order(store_id: int, items_data: list) -> dict:
  
     # 计算所需原料并进行库存预校验（包含食材和耗材）
     required_materials = calculate_required_materials(checked_items)
-
+    print('rrrquire', required_materials)
     # 查找门店在线的可用设备
     devices = Device.objects.filter(store=store, status=Device.STATUS_ONLINE)
-    print(devices)
+
     # 从在线设备中匹配 Redis 虚拟库存充足（减去需求后不低于极度缺货阈值）的设备
     selected_device = None
     from django_redis import get_redis_connection
@@ -148,7 +183,6 @@ def precheck_order(store_id: int, items_data: list) -> dict:
             key = get_redis_stock_key(dev.device_sn, mat_code)
             redis_conn[key] = 3000
             val = redis_conn.get(key)
-            print('--==', key, val)
             stock_val = int(val) if val is not None else 0
             
             from devices.models import DeviceConsumableStock, DeviceMaterialStock
@@ -343,8 +377,10 @@ def calculate_required_consumables_for_order(order: OrderMain) -> dict:
         ).values_list('code', flat=True)
     )
 
+    known_consumable_codes = {'paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'}
     required_consumables = {
-        code: qty for code, qty in all_materials.items() if code in consumable_codes
+        code: qty for code, qty in all_materials.items()
+        if code in consumable_codes or code in known_consumable_codes
     }
     return required_consumables
 
