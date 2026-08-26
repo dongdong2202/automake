@@ -1,0 +1,198 @@
+<!--pages/index/index.wxml-->
+<view class="container index-page safe-bottom">
+
+  <!-- 顶部定位、城市选择与搜索条 -->
+  <view class="header-search-bar flex-between">
+    <picker mode="selector" range="{{cityList}}" bindchange="handleCityChange">
+      <view class="city-selector flex-row">
+        <text class="city-name">{{ selectedCity }}</text>
+        <text class="arrow-down">▼</text>
+      </view>
+    </picker>
+
+    <view class="search-input-wrap flex-row">
+      <text class="search-icon">🔍</text>
+      <input 
+        class="search-input" 
+        placeholder="搜索附近设备、门店或写字楼" 
+        value="{{searchKeyword}}"
+        bindinput="handleSearchInput"
+      />
+    </view>
+
+    <!-- 视图模式切换按钮 -->
+    <view class="view-switch-btns flex-row">
+      <view 
+        class="switch-btn {{viewMode === 'list' ? 'active' : ''}}" 
+        bindtap="handleSwitchViewMode" 
+        data-mode="list"
+      >
+        <text>列表</text>
+      </view>
+      <view 
+        class="switch-btn {{viewMode === 'map' ? 'active' : ''}}" 
+        bindtap="handleSwitchViewMode" 
+        data-mode="map"
+      >
+        <text>地图</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 轮播 Banner 区 -->
+  <view class="banner-section">
+    <swiper class="banner-swiper" indicator-dots autoplay circular interval="4000" indicator-active-color="#4b6354">
+      <swiper-item wx:for="{{banners}}" wx:key="id" bindtap="handleGoMenu">
+        <image class="banner-image" src="{{item.image}}" mode="aspectFill" />
+      </swiper-item>
+    </swiper>
+  </view>
+
+  <!-- ======================================================== -->
+  <!-- 模式 A：地图找店模式 (Map View) -->
+  <!-- ======================================================== -->
+  <view class="map-view-section card" wx:if="{{viewMode === 'map'}}">
+    <view class="map-header flex-between">
+      <text class="map-title">📍 {{ selectedCity === '全部城市' ? '全国智能设备地图' : selectedCity + ' · 设备分布' }} ({{ filteredStores.length }})</text>
+      <view class="btn-compact btn-outline flex-row" bindtap="handleRelocate">
+        <text style="margin-right: 4rpx;">🎯</text>
+        <text>重新定位</text>
+      </view>
+    </view>
+
+    <map 
+      id="storeMap" 
+      class="devices-map"
+      latitude="{{mapCenterLat}}" 
+      longitude="{{mapCenterLng}}" 
+      scale="13"
+      markers="{{markers}}" 
+      bindmarkertap="handleMarkerTap"
+      show-location
+    />
+
+    <!-- 选中的标记点卡片 -->
+    <view class="selected-marker-card" wx:if="{{selectedMarkerStore}}">
+      <view class="flex-between">
+        <view class="marker-info flex-col">
+          <view class="flex-row" style="gap: 8rpx; margin-bottom: 6rpx;">
+            <text class="marker-store-name">{{ selectedMarkerStore.name }}</text>
+            <text class="tag tag-success" wx:if="{{selectedMarkerStore.statusText === '营业中'}}">营业中</text>
+            <text class="tag tag-warning" wx:else>{{ selectedMarkerStore.statusText || '今日休息' }}</text>
+          </view>
+          <text class="marker-address">📍 {{ selectedMarkerStore.address || '地址待更新' }}</text>
+          <text class="marker-dist">距离您约 {{ selectedMarkerStore.distanceText }} · ⏰ {{ selectedMarkerStore.businessHoursText }}</text>
+        </view>
+        <view class="marker-actions flex-col">
+          <view class="btn-compact btn-outline flex-center" bindtap="handleOpenNavigation" data-store="{{selectedMarkerStore}}">
+            <text style="margin-right: 4rpx;">🧭</text>
+            <text>导航</text>
+          </view>
+          <view 
+            class="btn-compact {{selectedMarkerStore.statusText === '营业中' ? 'btn-primary' : 'btn-disabled'}} flex-center" 
+            style="margin-top: 10rpx;" 
+            catchtap="{{selectedMarkerStore.statusText === '营业中' ? 'handleGoMenu' : ''}}" 
+            data-store="{{selectedMarkerStore}}"
+          >
+            <text style="margin-right: 4rpx;">☕</text>
+            <text>去点餐</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ======================================================== -->
+  <!-- 模式 B：列表展示模式 (List View) -->
+  <!-- ======================================================== -->
+  <block wx:if="{{viewMode === 'list'}}">
+    <!-- 快捷功能四大入口 (自提、取餐、领券、积分) -->
+    <view class="quick-nav-card card flex-between">
+      <view class="quick-item flex-col flex-center" bindtap="handleQuickJump" data-type="menu">
+        <view class="quick-icon-bg bg-orange">☕</view>
+        <text class="quick-label">点单自提</text>
+      </view>
+      <view class="quick-item flex-col flex-center" bindtap="handleQuickJump" data-type="scan">
+        <view class="quick-icon-bg bg-green">⚡</view>
+        <text class="quick-label">扫码取餐</text>
+      </view>
+      <view class="quick-item flex-col flex-center" bindtap="handleQuickJump" data-type="coupon">
+        <view class="quick-icon-bg bg-blue">🎁</view>
+        <text class="quick-label">领券中心</text>
+      </view>
+      <view class="quick-item flex-col flex-center" bindtap="handleQuickJump" data-type="points">
+        <view class="quick-icon-bg bg-purple">👑</view>
+        <text class="quick-label">会员积分</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- ======================================================== -->
+  <!-- 智能设备列表 (门店信息融合于设备卡片中) -->
+  <!-- ======================================================== -->
+  <view class="devices-section">
+    <view class="section-title-row flex-between">
+      <text class="section-title">{{ selectedCity === '全部城市' ? '智能设备' : selectedCity + ' · 智能设备' }} ({{ filteredStores.length }})</text>
+      <view class="relocate-text flex-row" bindtap="handleRelocate">
+        <text>🎯 重新定位</text>
+      </view>
+    </view>
+
+    <!-- 空数据提示 -->
+    <view class="empty-box card" wx:if="{{filteredStores.length === 0}}">
+      <text style="font-size: 56rpx; margin-bottom: 16rpx;">🍃</text>
+      <text style="font-size: 28rpx; color: var(--color-text-secondary); font-weight: 600;">该城市暂无可用智能设备</text>
+      <text style="font-size: 22rpx; color: var(--color-text-muted); margin-top: 8rpx;">请切换其他城市或选择“全部城市”查看</text>
+    </view>
+
+    <!-- 智能设备卡片列表 -->
+    <view 
+      class="device-card card" 
+      wx:for="{{filteredStores}}" 
+      wx:key="unique_key"
+      bindtap="{{item.statusText === '营业中' ? 'handleGoMenu' : ''}}" 
+      data-store="{{item}}"
+    >
+      <view class="device-card-header flex-between">
+        <view class="device-title-wrap flex-row">
+          <text class="device-name">{{ item.name }}</text>
+          <text class="tag tag-success" wx:if="{{item.statusText === '营业中'}}">营业中</text>
+          <text class="tag tag-warning" wx:else>{{ item.statusText || '今日休息' }}</text>
+          <text class="tag tag-primary" wx:if="{{index === 0 && hasLocationPermission}}">离我最近</text>
+        </view>
+        <text class="device-dist">{{ item.distanceText }}</text>
+      </view>
+
+      <view class="device-card-body">
+        <text class="device-meta-addr">📍 {{ item.address || '地址维护中' }}</text>
+        <text class="device-meta-time">⏰ {{ item.businessHoursText }}</text>
+      </view>
+
+      <view class="device-card-footer flex-between">
+        <view class="device-sn-badge" wx:if="{{item.device_sn}}">SN: {{ item.device_sn }}</view>
+        <view class="device-actions flex-row">
+          <view class="btn-compact btn-outline flex-center" catchtap="handleOpenNavigation" data-store="{{item}}">
+            <text style="margin-right: 4rpx;">🧭</text>
+            <text>导航</text>
+          </view>
+          <view 
+            class="btn-compact {{item.statusText === '营业中' ? 'btn-primary' : 'btn-disabled'}} flex-center" 
+            style="margin-left: 12rpx;" 
+            catchtap="{{item.statusText === '营业中' ? 'handleGoMenu' : ''}}" 
+            data-store="{{item}}"
+          >
+            <text style="margin-right: 4rpx;">☕</text>
+            <text>去点餐</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部品牌背书 -->
+  <view class="brand-footer flex-col flex-center">
+    <text class="footer-title">AutoMake 智能无人现制茶饮</text>
+    <text class="footer-desc">全自动化萃取 · 毫秒级精准控温 · 30秒立等可取</text>
+  </view>
+
+</view>

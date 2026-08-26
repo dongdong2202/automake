@@ -1,0 +1,217 @@
+<!--pages/my/my.wxml-->
+<view class="container profile-page safe-bottom">
+
+  <!-- ============================================================
+       头部用户信息卡片 (内嵌响应式，无弹窗)
+       ============================================================ -->
+  <view class="user-hero-card">
+
+    <!-- 右上角登出按钮 (仅已登录显示) -->
+    <view class="logout-corner" wx:if="{{isLoggedIn}}" bindtap="handleLogout">登出</view>
+
+    <!-- 状态 1: 未登录 -->
+    <block wx:if="{{!isLoggedIn}}">
+      <view class="user-hero-vertical btn-clear" bindtap="handleLoginFlow">
+        <image class="user-avatar guest-dim" src="/images/default_avatar.png" mode="aspectFill" />
+        <view class="quick-login-text">快捷微信登陆</view>
+        <view class="guest-sub">点击即可免密登录</view>
+      </view>
+    </block>
+
+    <!-- 状态 2: 已登录，缺资料（内嵌引导填写） -->
+    <block wx:elif="{{showOnboarding}}">
+      <view class="user-hero-vertical">
+        <view class="onboard-inline-title">点亮专属身份</view>
+        
+        <!-- 自动获取头像：点击自动保存 -->
+        <button class="avatar-btn onboard-pulse" open-type="chooseAvatar" bindchooseavatar="handleUpdateAvatar">
+          <image class="user-avatar" src="{{onboardAvatar || '/images/default_avatar.png'}}" mode="aspectFill" />
+          <view class="avatar-hint">点击获取头像</view>
+        </button>
+        
+        <!-- 自动获取昵称：键盘输入完毕自动保存 -->
+        <input 
+          class="nickname-input onboard-input" 
+          type="nickname" 
+          placeholder="点击获取微信昵称" 
+          placeholder-class="nickname-placeholder"
+          value="{{onboardNickname}}" 
+          bindblur="handleNicknameInputBlur" 
+        />
+        <view class="guest-sub" style="margin-top:-6rpx;">获取后将自动完成</view>
+      </view>
+    </block>
+
+    <!-- 状态 3: 已登录，资料齐全（最终欢迎页） -->
+    <block wx:else>
+      <view class="user-hero-vertical">
+        <button class="avatar-btn" open-type="chooseAvatar" bindchooseavatar="handleUpdateAvatar">
+          <image class="user-avatar" src="{{(userInfo.profile && userInfo.profile.avatar_url) || '/images/default_avatar.png'}}" mode="aspectFill" />
+        </button>
+        
+        <text class="welcome-text">欢迎你，{{userInfo.profile.nickname}}</text>
+        
+        <!-- 手机号区 (可选绑定) -->
+        <block wx:if="{{userInfo.phone}}">
+          <view class="phone-row">
+            <text class="phone-text">📱 {{userInfo.phone}}</text>
+            <text class="phone-verified">已认证</text>
+          </view>
+        </block>
+        <block wx:else>
+          <button class="bind-phone-btn" open-type="getPhoneNumber" bindgetphonenumber="handleBindPhone">绑定手机号 (可选)</button>
+        </block>
+      </view>
+    </block>
+
+  </view>
+
+  <!-- 资产营销栏 (购物车 / 优惠券 / 我的订单) -->
+  <view class="member-assets-card card flex-between">
+    <view class="asset-item flex-col flex-center" bindtap="handleGoCart">
+      <text class="asset-num text-primary">{{ cartCount > 0 ? cartCount + ' 件' : '空' }}</text>
+      <text class="asset-label">🛒 购物车 ›</text>
+    </view>
+    <view class="asset-divider"></view>
+    <view class="asset-item flex-col flex-center" bindtap="handleGoCoupons">
+      <text class="asset-num text-orange">{{ couponCount }} 张</text>
+      <text class="asset-label">优惠卡券 ›</text>
+    </view>
+    <view class="asset-divider"></view>
+    <view class="asset-item flex-col flex-center" bindtap="handleGoOrders">
+      <text class="asset-num">全部</text>
+      <text class="asset-label">我的订单 ›</text>
+    </view>
+  </view>
+
+  <!-- ============================================================
+       我的购物车业务卡片 (展示清单、加减步进器、清空与去结算)
+       ============================================================ -->
+  <view class="cart-section-card card">
+    <!-- 卡片顶部标题与清空操作 -->
+    <view class="cart-card-header flex-between">
+      <view class="flex-row">
+        <text class="cart-header-icon">🛒</text>
+        <text class="card-title">我的购物车</text>
+        <text class="cart-badge" wx:if="{{cartCount > 0}}">{{ cartCount }} 件</text>
+      </view>
+      <view class="clear-cart-btn flex-row" wx:if="{{cartList.length > 0}}" bindtap="handleClearCart">
+        <text class="clear-icon">🗑️</text>
+        <text class="clear-text">清空</text>
+      </view>
+    </view>
+
+    <!-- 状态 1: 购物车有商品 -->
+    <block wx:if="{{cartList.length > 0}}">
+      <view class="cart-goods-list">
+        <view wx:for="{{cartList}}" wx:key="index" class="cart-goods-item flex-between">
+          <image class="cart-goods-thumb" src="{{item.item.displayImage || '/images/drink_coffee.png'}}" mode="aspectFill" />
+          
+          <view class="cart-goods-info flex-col">
+            <text class="cart-goods-name">{{ item.item.name }}</text>
+            <text class="cart-goods-sku">{{ item.skuDesc || '标准规格' }}</text>
+            <text class="cart-goods-price">¥{{ item.unitPriceYuan }}</text>
+          </view>
+
+          <view class="cart-goods-action flex-col">
+            <text class="cart-goods-subtotal">¥{{ item.subtotalYuan }}</text>
+            <view class="cart-stepper flex-row">
+              <view class="stepper-btn btn-minus" catchtap="handleCartQuantityChange" data-index="{{index}}" data-delta="-1">-</view>
+              <text class="stepper-count">{{ item.quantity }}</text>
+              <view class="stepper-btn btn-plus" catchtap="handleCartQuantityChange" data-index="{{index}}" data-delta="1">+</view>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 卡片底部合计与结算按钮 -->
+      <view class="cart-card-footer flex-between">
+        <view class="cart-total-box flex-row">
+          <text class="total-label">合计:</text>
+          <text class="total-symbol">¥</text>
+          <text class="total-price">{{ cartTotalYuan }}</text>
+        </view>
+        <button class="btn-primary btn-checkout-mini" bindtap="handleGoCheckout">去结算 ›</button>
+      </view>
+    </block>
+
+    <!-- 状态 2: 购物车为空 -->
+    <block wx:else>
+      <view class="cart-empty-box flex-col flex-center">
+        <text class="empty-icon">☕</text>
+        <text class="empty-tip">购物车还是空的，快去挑选心仪饮品吧~</text>
+        <button class="btn-outline-primary btn-go-order-mini" bindtap="handleGoMenu">去喝一杯 ›</button>
+      </view>
+    </block>
+  </view>
+
+  <!-- 员工专属工作台入口 -->
+  <view class="staff-portal-card card flex-between" wx:if="{{isStaff}}" bindtap="handleGoStaffWorkbench">
+    <view class="portal-left flex-row">
+      <text class="portal-icon">🛠️</text>
+      <view class="portal-text flex-col">
+        <text class="portal-title">物料员与协调员移动工作台</text>
+        <text class="portal-desc">杯子耗材手动补料录入 · 设备重启与开仓取餐</text>
+      </view>
+    </view>
+    <button class="btn-sm btn-primary-staff">进入</button>
+  </view>
+
+  <!-- 我的订单快捷功能栏 -->
+  <view class="order-nav-card card">
+    <view class="order-nav-header flex-between" bindtap="handleGoOrders">
+      <text class="card-title">我的订单</text>
+      <view class="flex-row">
+        <text class="view-all-text">全部订单</text>
+        <text class="arrow-right">›</text>
+      </view>
+    </view>
+    <view class="order-nav-grid flex-between">
+      <view class="order-nav-item flex-col flex-center" bindtap="handleGoOrders">
+        <view class="nav-icon-wrap">
+          <text class="nav-icon">⏳</text>
+          <text class="badge-dot" wx:if="{{orderStats.unpaidCount > 0}}">{{ orderStats.unpaidCount }}</text>
+        </view>
+        <text class="nav-label">待支付</text>
+      </view>
+      <view class="order-nav-item flex-col flex-center" bindtap="handleGoOrders">
+        <view class="nav-icon-wrap">
+          <text class="nav-icon">☕</text>
+          <text class="badge-dot bg-green" wx:if="{{orderStats.makingCount > 0}}">{{ orderStats.makingCount }}</text>
+        </view>
+        <text class="nav-label">制作中/待取</text>
+      </view>
+      <view class="order-nav-item flex-col flex-center" bindtap="handleGoOrders">
+        <view class="nav-icon-wrap"><text class="nav-icon">📋</text></view>
+        <text class="nav-label">历史订单</text>
+      </view>
+      <view class="order-nav-item flex-col flex-center" bindtap="handleGoOrders">
+        <view class="nav-icon-wrap"><text class="nav-icon">🔄</text></view>
+        <text class="nav-label">退款/售后</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 常用功能与服务 (单行卡片形式) -->
+  <view class="service-row-card card">
+    <view class="service-row-grid flex-between">
+      <view class="service-row-item flex-col flex-center" bindtap="handleGoCoupons">
+        <text class="service-row-icon">🎁</text>
+        <text class="service-row-text">领券中心</text>
+      </view>
+      <button class="service-row-item btn-clear-square flex-col flex-center" open-type="contact">
+        <text class="service-row-icon">💬</text>
+        <text class="service-row-text">在线客服</text>
+      </button>
+      <button class="service-row-item btn-clear-square flex-col flex-center" open-type="feedback">
+        <text class="service-row-icon">📝</text>
+        <text class="service-row-text">建议反馈</text>
+      </button>
+      <view class="service-row-item flex-col flex-center" bindtap="handleAbout">
+        <text class="service-row-icon">ℹ️</text>
+        <text class="service-row-text">关于系统</text>
+      </view>
+    </view>
+  </view>
+
+</view>

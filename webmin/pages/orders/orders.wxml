@@ -1,0 +1,104 @@
+<!--pages/orders/orders.wxml-->
+<view class="container orders-page safe-bottom">
+
+  <!-- 顶部状态选项卡 -->
+  <view class="status-tabs-wrap">
+    <scroll-view class="tabs-scroll" scroll-x enable-passive>
+      <view class="tabs-flex flex-row">
+        <view 
+          wx:for="{{tabs}}" 
+          wx:key="key" 
+          class="tab-item {{activeTab === item.key ? 'active' : ''}}"
+          bindtap="handleTabChange"
+          data-tab="{{item.key}}"
+        >
+          <text>{{ item.label }}</text>
+          <view class="tab-line" wx:if="{{activeTab === item.key}}"></view>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 订单列表主体 -->
+  <view class="orders-list-body">
+
+    <!-- 空状态 -->
+    <view class="empty-box" wx:if="{{!loading && orderList.length === 0}}">
+      <image src="/images/empty_order.png" mode="aspectFit" />
+      <text>暂无相关历史订单</text>
+      <button class="btn-primary btn-sm" style="margin-top: 24rpx;" bindtap="handleGoMenu">去喝一杯</button>
+    </view>
+
+    <!-- 订单卡片列表 -->
+    <view 
+      wx:for="{{orderList}}" 
+      wx:key="id" 
+      class="order-card card"
+      bindtap="handleGoDetail"
+      data-order-no="{{item.order_no}}"
+    >
+      <!-- 卡片头部 -->
+      <view class="order-card-header flex-between">
+        <view class="order-store-info flex-row">
+          <text class="store-icon">🏬</text>
+          <text class="order-store-name">{{ item.store ? item.store.name : 'AutoMake 智能门店' }}</text>
+        </view>
+        <text class="tag {{item.statusMeta.class}}">{{ item.statusMeta.text }}</text>
+      </view>
+
+      <!-- 订单基本信息 -->
+      <view class="order-meta-row flex-between">
+        <text class="order-no-text">订单号: {{ item.order_no }}</text>
+        <text class="order-time-text">{{ item.createdAtFormatted }}</text>
+      </view>
+
+      <!-- 订单商品摘要 -->
+      <view class="order-items-summary">
+        <view wx:for="{{item.items}}" wx:for-item="goods" wx:key="id" class="summary-item-row flex-between">
+          <text class="summary-name">{{ goods.item_name }} <text class="summary-sku" wx:if="{{goods.sku_name}}">({{ goods.sku_name }})</text></text>
+          <text class="summary-qty">x{{ goods.quantity }}</text>
+        </view>
+      </view>
+
+      <!-- 卡片底部金额与操作 -->
+      <view class="order-card-footer flex-between">
+        <view class="footer-price-wrap flex-row">
+          <text class="price-label">实付</text>
+          <view class="price-box">
+            <text class="symbol">¥</text>
+            <text class="integer">{{ item.payAmountYuan }}</text>
+          </view>
+        </view>
+
+        <view class="footer-actions flex-row">
+          <!-- 待支付按钮 -->
+          <block wx:if="{{item.statusMeta.canPay}}">
+            <button class="btn-sm btn-outline" catchtap="handleCancelOrder" data-order-no="{{item.order_no}}">取消</button>
+            <button class="btn-sm btn-primary" catchtap="handleQuickPay" data-order-no="{{item.order_no}}">去支付</button>
+          </block>
+
+          <!-- 制作中按钮 -->
+          <block wx:elif="{{item.statusMeta.isMaking}}">
+            <button class="btn-sm btn-primary" catchtap="handleGoDetail" data-order-no="{{item.order_no}}">查看取餐码</button>
+          </block>
+
+          <!-- 已完成/其他按钮 -->
+          <block wx:else>
+            <button class="btn-sm btn-outline" catchtap="handleGoMenu">再来一单</button>
+          </block>
+        </view>
+      </view>
+
+    </view>
+
+    <!-- 加载中与触底提示 -->
+    <view class="loading-footer flex-center" wx:if="{{loading}}">
+      <text>正在加载中...</text>
+    </view>
+    <view class="loading-footer flex-center" wx:elif="{{orderList.length > 0 && !hasMore}}">
+      <text>仅展示最近 6 个月内的订单</text>
+    </view>
+
+  </view>
+
+</view>

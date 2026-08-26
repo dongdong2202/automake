@@ -1,0 +1,233 @@
+<!--pages/cart/cart.wxml-->
+<view class="container cart-page safe-bottom">
+
+  <!-- 购物车为空时展示 -->
+  <view class="empty-box" wx:if="{{cartList.length === 0}}">
+    <image src="/images/empty_cart.png" mode="aspectFit" />
+    <text>购物车还是空的，快去选购吧~</text>
+    <button class="btn-primary btn-go-order" bindtap="handleGoMenu">去喝一杯</button>
+  </view>
+
+  <block wx:else>
+    <!-- 顶部门店自提信息卡片 -->
+    <view class="store-card card">
+      <view class="flex-between">
+        <view class="store-info flex-col">
+          <view class="flex-row">
+            <text class="tag tag-primary">到店自提</text>
+            <text class="store-name">{{ currentStore.name }}</text>
+          </view>
+          <text class="store-address">{{ currentStore.address }}</text>
+        </view>
+        <text class="store-badge">🤖 智能现制</text>
+      </view>
+    </view>
+
+    <!-- 商品清单卡片 -->
+    <view class="goods-card card">
+      <view class="goods-header flex-between">
+        <text class="section-title">点单明细 ({{ totalCount }} 件)</text>
+        <view class="clear-btn flex-row" bindtap="handleClearAll">
+          <text class="clear-icon">🗑️</text>
+          <text>清空</text>
+        </view>
+      </view>
+
+      <view class="goods-list">
+        <view wx:for="{{cartList}}" wx:key="index" class="goods-item-row flex-between">
+          <image class="goods-thumb" src="{{item.item.displayImage || '/images/drink_coffee.png'}}" mode="aspectFill" />
+          
+          <view class="goods-main flex-col">
+            <text class="goods-name">{{ item.item.name }}</text>
+            <text class="goods-sku">{{ item.skuDesc || '标准规格' }}</text>
+            <text class="goods-unit-price">¥{{ item.unitPriceYuan }}</text>
+          </view>
+
+          <view class="goods-right flex-col">
+            <text class="goods-subtotal">¥{{ item.subtotalYuan }}</text>
+            <view class="quantity-stepper flex-row">
+              <view class="step-btn step-minus" catchtap="handleQuantityChange" data-index="{{index}}" data-delta="-1">-</view>
+              <text class="step-num">{{ item.quantity }}</text>
+              <view class="step-btn step-plus" catchtap="handleQuantityChange" data-index="{{index}}" data-delta="1">+</view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 优惠券选择卡片 -->
+    <view class="coupon-select-card card flex-between" bindtap="handleOpenCouponModal">
+      <view class="flex-row">
+        <text class="coupon-icon">🎁</text>
+        <text class="coupon-title">优惠卡券</text>
+      </view>
+      <view class="flex-row">
+        <text class="coupon-selected-text text-danger" wx:if="{{selectedCoupon}}">-¥{{ discountYuan }} ({{ selectedCoupon.title }})</text>
+        <text class="coupon-selected-text text-muted" wx:else>{{ availableCoupons.length > 0 ? availableCoupons.length + ' 张可用' : '暂无可用券' }}</text>
+        <text class="arrow-right">›</text>
+      </view>
+    </view>
+
+    <!-- 备注卡片 -->
+    <view class="remark-card card flex-between">
+      <text class="remark-label">订单备注</text>
+      <input 
+        class="remark-input" 
+        placeholder="如有特殊需求请输入 (例如: 不放吸管)" 
+        value="{{remark}}" 
+        bindinput="handleRemarkInput"
+      />
+    </view>
+
+    <!-- 电子发票开具卡片 -->
+    <view class="invoice-section-card card">
+      <view class="invoice-switch-row flex-between" bindtap="handleToggleInvoice">
+        <view class="flex-row">
+          <text class="invoice-icon">🧾</text>
+          <text class="invoice-title">开具电子发票</text>
+        </view>
+        <switch checked="{{needInvoice}}" color="#4b6354" catchtap="handleToggleInvoice" />
+      </view>
+
+      <!-- 展开的发票表单 -->
+      <view class="invoice-form-box" wx:if="{{needInvoice}}">
+        <radio-group class="invoice-type-group flex-row" bindchange="handleInvoiceTypeChange">
+          <label class="radio-label flex-row">
+            <radio value="personal" checked="{{invoiceType === 'personal'}}" color="#4b6354" />
+            <text>个人</text>
+          </label>
+          <label class="radio-label flex-row" style="margin-left: 30rpx;">
+            <radio value="company" checked="{{invoiceType === 'company'}}" color="#4b6354" />
+            <text>企业单位</text>
+          </label>
+        </radio-group>
+
+        <input 
+          class="invoice-input" 
+          placeholder="发票抬头名称 (必填)" 
+          value="{{invoiceTitle}}" 
+          data-field="invoiceTitle"
+          bindinput="handleInvoiceInput"
+        />
+
+        <input 
+          wx:if="{{invoiceType === 'company'}}"
+          class="invoice-input" 
+          placeholder="企业统一社会信用代码/税号 (必填)" 
+          value="{{invoiceTaxNo}}" 
+          data-field="invoiceTaxNo"
+          bindinput="handleInvoiceInput"
+        />
+
+        <input 
+          class="invoice-input" 
+          placeholder="电子发票接收邮箱 (必填)" 
+          value="{{invoiceEmail}}" 
+          data-field="invoiceEmail"
+          bindinput="handleInvoiceInput"
+        />
+      </view>
+    </view>
+
+    <!-- 金额明细卡片 -->
+    <view class="amount-card card">
+      <view class="amount-row flex-between">
+        <text class="amount-label">商品总额</text>
+        <text class="amount-value">¥{{ rawTotalYuan }}</text>
+      </view>
+      <view class="amount-row flex-between">
+        <text class="amount-label">打包耗材费</text>
+        <text class="amount-value text-free">免费</text>
+      </view>
+      <view class="amount-row flex-between" wx:if="{{discountAmount > 0}}">
+        <text class="amount-label">优惠抵扣</text>
+        <text class="amount-value text-discount">-¥{{ discountYuan }}</text>
+      </view>
+      
+      <view class="amount-divider"></view>
+      
+      <view class="amount-total-row flex-between">
+        <text class="total-label">实付总额</text>
+        <view class="price-box">
+          <text class="symbol">¥</text>
+          <text class="integer">{{ payAmountYuan }}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 底部固定支付操作栏 -->
+    <view class="checkout-footer-wrap safe-bottom">
+      <view class="checkout-footer flex-between">
+        <view class="footer-price-info flex-row">
+          <text class="pay-text">应付:</text>
+          <view class="price-box">
+            <text class="symbol">¥</text>
+            <text class="integer">{{ payAmountYuan }}</text>
+          </view>
+          <text class="discount-tip" wx:if="{{discountAmount > 0}}">已省¥{{ discountYuan }}</text>
+        </view>
+
+        <button 
+          class="btn-primary btn-submit-pay" 
+          loading="{{isSubmitting}}" 
+          disabled="{{isSubmitting}}"
+          bindtap="handleSubmitOrder"
+        >
+          立即支付
+        </button>
+      </view>
+    </view>
+  </block>
+
+  <!-- ======================================================== -->
+  <!-- 优惠券选择弹窗 (Coupon Modal) -->
+  <!-- ======================================================== -->
+  <view class="coupon-modal-mask" wx:if="{{showCouponModal}}" bindtap="handleCloseCouponModal"></view>
+  <view class="coupon-modal-content safe-bottom" wx:if="{{showCouponModal}}">
+    <view class="coupon-modal-header flex-between">
+      <text class="modal-title">选择优惠券</text>
+      <view class="modal-close" bindtap="handleCloseCouponModal">✕</view>
+    </view>
+
+    <scroll-view class="coupon-scroll-list" scroll-y>
+      <!-- 不使用优惠券选项 -->
+      <view 
+        class="coupon-card flex-between {{!selectedCoupon ? 'selected' : ''}}"
+        bindtap="handleSelectCoupon"
+        data-coupon="{{null}}"
+      >
+        <text class="no-coupon-text">不使用优惠券</text>
+        <text class="check-icon" wx:if="{{!selectedCoupon}}">✓</text>
+      </view>
+
+      <!-- 优惠券列表 -->
+      <view 
+        wx:for="{{availableCoupons}}" 
+        wx:key="id"
+        class="coupon-card flex-between {{!item.isUsable ? 'disabled' : ''}} {{selectedCoupon && selectedCoupon.id === item.id ? 'selected' : ''}}"
+        bindtap="handleSelectCoupon"
+        data-coupon="{{item}}"
+      >
+        <view class="coupon-left flex-row">
+          <view class="coupon-amount-box flex-col flex-center">
+            <text class="coupon-amount-num" wx:if="{{item.coupon_type === 'discount'}}">{{ item.discount_rate / 10 }}折</text>
+            <text class="coupon-amount-num" wx:else>¥{{ item.amountYuan }}</text>
+            <text class="coupon-type-tag">{{ item.type_display }}</text>
+          </view>
+          
+          <view class="coupon-info flex-col">
+            <text class="coupon-name">{{ item.title }}</text>
+            <text class="coupon-condition">{{ item.min_spend > 0 ? '满 ¥' + item.minSpendYuan + ' 可用' : '无门槛使用' }}</text>
+            <text class="coupon-expiry">有效期至: {{ item.expires_at }}</text>
+          </view>
+        </view>
+
+        <view class="coupon-right">
+          <text class="check-icon" wx:if="{{selectedCoupon && selectedCoupon.id === item.id}}">✓</text>
+          <text class="unusable-text" wx:elif="{{!item.isUsable}}">不可用</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+</view>

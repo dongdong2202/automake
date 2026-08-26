@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "员工移动工作台",
+  "navigationBarBackgroundColor": "#ffffff",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
+}

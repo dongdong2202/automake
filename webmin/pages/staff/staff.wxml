@@ -1,0 +1,151 @@
+<!--pages/staff/staff.wxml-->
+<view class="container staff-page safe-bottom">
+
+  <!-- 顶部角色身份切换 -->
+  <view class="role-switch-wrap flex-row">
+    <view 
+      class="role-tab {{activeRole === 'material' ? 'active' : ''}}" 
+      bindtap="handleRoleSwitch" 
+      data-role="material"
+    >
+      <text>📦 物料员 (补货录入)</text>
+    </view>
+    <view 
+      class="role-tab {{activeRole === 'coordinator' ? 'active' : ''}}" 
+      bindtap="handleRoleSwitch" 
+      data-role="coordinator"
+    >
+      <text>🛠️ 协调员 (设备运维)</text>
+    </view>
+  </view>
+
+  <!-- 当前选择设备卡片 -->
+  <view class="device-picker-card card">
+    <view class="flex-between">
+      <view class="device-info flex-col">
+        <picker 
+          mode="selector" 
+          range="{{devices}}" 
+          range-key="device_name" 
+          bindchange="handleDeviceChange"
+        >
+          <view class="device-selector flex-row">
+            <text class="device-name-text">{{ selectedDevice ? selectedDevice.device_name : '请选择目标设备' }}</text>
+            <text class="arrow-down">▼</text>
+          </view>
+        </picker>
+        <text class="device-meta-text">序列号: {{ selectedDevice ? selectedDevice.device_sn : '-' }} · 所属: {{ selectedDevice ? selectedDevice.store_name : '-' }}</text>
+      </view>
+
+      <button class="btn-sm btn-outline flex-row" bindtap="handleScanDevice">
+        <text style="margin-right: 4rpx;">📷</text>
+        <text>扫码锁定</text>
+      </button>
+    </view>
+
+    <view class="device-status-row flex-between" wx:if="{{selectedDevice}}">
+      <text class="status-indicator {{selectedDevice.status === 'online' ? 'online' : 'offline'}}">● {{ selectedDevice.status_display }}</text>
+      <text class="heartbeat-text">心跳: {{ selectedDevice.last_heartbeat_at }}</text>
+    </view>
+  </view>
+
+  <!-- ======================================================== -->
+  <!-- 模式 1：物料员补货录入工作台 -->
+  <!-- ======================================================== -->
+  <view class="material-mode-wrap" wx:if="{{activeRole === 'material'}}">
+    <view class="consumable-card card">
+      <view class="flex-between" style="margin-bottom: 20rpx;">
+        <text class="section-title">🥤 杯子与包装耗材补料</text>
+        <text class="tip-text">补货后手动录入最新数量</text>
+      </view>
+
+      <view class="consumable-table">
+        <view class="table-header flex-between">
+          <text class="col-name">耗材品类</text>
+          <text class="col-curr">当前剩余</text>
+          <text class="col-input">补货后数量</text>
+        </view>
+
+        <view wx:for="{{consumablesEditList}}" wx:key="code" class="table-row flex-between {{item.is_low ? 'warning-row' : ''}}">
+          <view class="col-name flex-col">
+            <text class="c-name">{{ item.name }}</text>
+            <text class="c-code">{{ item.code }}</text>
+          </view>
+          
+          <view class="col-curr flex-row">
+            <text class="curr-num {{item.is_low ? 'text-danger' : ''}}">{{ item.quantity }}</text>
+            <text class="curr-unit">{{ item.unit }}</text>
+          </view>
+
+          <view class="col-input flex-row">
+            <input 
+              class="stock-input" 
+              type="number" 
+              value="{{item.newQuantity}}"
+              data-code="{{item.code}}"
+              bindinput="handleQuantityInput"
+            />
+            <text class="input-unit">{{ item.unit }}</text>
+          </view>
+        </view>
+      </view>
+
+      <button 
+        class="btn-primary btn-save-stock" 
+        loading="{{isSubmitting}}"
+        bindtap="handleSaveConsumables"
+      >
+        确认提交并同步云端库存
+      </button>
+    </view>
+  </view>
+
+  <!-- ======================================================== -->
+  <!-- 模式 2：协调员设备运维与取餐工作台 -->
+  <!-- ======================================================== -->
+  <view class="coordinator-mode-wrap" wx:if="{{activeRole === 'coordinator'}}">
+    <!-- 设备快捷指令控制 -->
+    <view class="actions-card card">
+      <text class="section-title">⚡ 设备快捷指令控制</text>
+
+      <view class="action-buttons-grid">
+        <button class="btn-action-card flex-col flex-center bg-orange-light" bindtap="handleDeviceAction" data-action="reset">
+          <text class="action-icon">🔄</text>
+          <text class="action-title">重启/复位设备</text>
+          <text class="action-desc">下发硬件复位指令</text>
+        </button>
+
+        <button class="btn-action-card flex-col flex-center bg-green-light" bindtap="handleDeviceAction" data-action="dispense">
+          <text class="action-icon">🚪</text>
+          <text class="action-title">强制开仓取餐</text>
+          <text class="action-desc">协助顾客开门取杯</text>
+        </button>
+
+        <button class="btn-action-card flex-col flex-center bg-blue-light" bindtap="handleDeviceAction" data-action="sync">
+          <text class="action-icon">☁️</text>
+          <text class="action-title">资源配方同步</text>
+          <text class="action-desc">下发最新菜单与参数</text>
+        </button>
+      </view>
+    </view>
+
+    <!-- 原材料料桶当前高度状态 -->
+    <view class="materials-card card" wx:if="{{stockData && stockData.materials}}">
+      <text class="section-title">🛢️ 原材料料桶实时高度</text>
+
+      <view class="materials-list">
+        <view wx:for="{{stockData.materials}}" wx:key="code" class="material-item flex-between">
+          <view class="m-info flex-col">
+            <text class="m-name">{{ item.name }}</text>
+            <text class="m-code">编号: {{ item.code }}</text>
+          </view>
+          <view class="m-right flex-row">
+            <text class="m-height {{item.is_low ? 'text-danger' : 'text-green'}}">{{ item.current_height }} {{ item.unit }}</text>
+            <text class="m-warn-tip" wx:if="{{item.is_low}}"> (低料位预警)</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+</view>

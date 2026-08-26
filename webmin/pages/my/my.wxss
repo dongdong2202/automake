@@ -1,0 +1,426 @@
+/* pages/my/my.wxss */
+
+.profile-page {
+  padding: 20rpx 28rpx 60rpx 28rpx;
+  background: var(--bg-page);
+}
+
+/* ================================================================
+   用户 Hero 卡片 (深绿高质感，居中排版)
+   ================================================================ */
+.user-hero-card {
+  background: linear-gradient(145deg, #243b2e 0%, #3a5444 100%);
+  border-radius: 24rpx;
+  box-shadow: 0 10rpx 36rpx rgba(30, 50, 38, 0.26);
+  margin-bottom: 22rpx;
+  padding: 44rpx 28rpx 36rpx 28rpx;
+  position: relative;
+  color: #fff;
+  transition: all 0.3s ease;
+}
+
+.user-hero-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.btn-clear {
+  padding: 0; margin: 0; background: transparent; border: none; line-height: normal; text-align: center;
+}
+.btn-clear::after { border: none; }
+
+/* 右上角登出文字 */
+.logout-corner {
+  position: absolute;
+  top: 24rpx;
+  right: 28rpx;
+  font-size: 22rpx;
+  color: rgba(255,255,255,0.65);
+  padding: 8rpx 12rpx;
+  z-index: 10;
+}
+.logout-corner:active { opacity: 0.4; }
+
+/* 内嵌资料完善的标题 */
+.onboard-inline-title {
+  font-size: 26rpx;
+  color: rgba(255,255,255,0.7);
+  letter-spacing: 4rpx;
+  margin-bottom: 24rpx;
+  font-weight: 500;
+}
+
+/* 带有脉冲提示效果的头像容器 */
+.onboard-pulse {
+  animation: pulse 2s infinite;
+  border-radius: 50%;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
+  70% { box-shadow: 0 0 0 20rpx rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+/* 提示文字 */
+.avatar-hint {
+  font-size: 22rpx;
+  color: rgba(255,255,255,0.8);
+  margin-top: 16rpx;
+}
+
+/* 头像按钮（透明包裹，原生 chooseAvatar） */
+.avatar-btn {
+  padding: 0;
+  margin: 0 0 20rpx 0;
+  background: transparent;
+  border: none;
+  line-height: 1;
+}
+.avatar-btn::after { border: none; }
+
+/* 用户头像大图 */
+.user-avatar {
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 50%;
+  border: 4rpx solid rgba(255,255,255,0.92);
+  box-shadow: 0 6rpx 22rpx rgba(0,0,0,0.20);
+  display: block;
+  background: #e9f0ec;
+}
+.guest-dim { opacity: 0.55; }
+
+/* 昵称输入框 (未完善状态下) */
+.onboard-input {
+  margin-top: 12rpx;
+  background: rgba(255,255,255,0.15);
+  border: 1rpx solid rgba(255,255,255,0.3);
+  border-radius: 12rpx;
+  width: 320rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  text-align: center;
+  color: #fff;
+  font-size: 30rpx;
+  margin-bottom: 16rpx;
+}
+.nickname-placeholder {
+  color: rgba(255,255,255,0.6);
+  font-size: 26rpx;
+}
+
+/* 欢迎你文本 */
+.welcome-text {
+  font-size: 38rpx;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 16rpx;
+  letter-spacing: 1rpx;
+}
+
+/* 手机号已认证行 */
+.phone-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-top: 8rpx;
+}
+.phone-text {
+  font-size: 26rpx;
+  color: rgba(255,255,255,0.9);
+}
+.phone-verified {
+  font-size: 18rpx;
+  color: #d6eee0;
+  background: rgba(255,255,255,0.15);
+  border: 1rpx solid rgba(255,255,255,0.22);
+  border-radius: 20rpx;
+  padding: 2rpx 14rpx;
+  margin-left: 12rpx;
+  font-weight: 600;
+}
+
+/* 绑定手机号按钮（可选，用户可拒绝） */
+.bind-phone-btn {
+  margin-top: 8rpx;
+  padding: 0 32rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.15);
+  border: 1rpx solid rgba(255,255,255,0.3);
+  border-radius: 28rpx;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.bind-phone-btn::after { border: none; }
+.bind-phone-btn:active { background: rgba(255,255,255,0.25); }
+
+/* 未登录 Guest 卡 */
+.guest-tip {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 24rpx;
+  letter-spacing: 1rpx;
+}
+.guest-sub {
+  font-size: 22rpx;
+  color: rgba(255,255,255,0.58);
+  margin-top: 8rpx;
+}
+
+/* ================================================================
+   其他区块样式
+   ================================================================ */
+.member-assets-card { padding: 26rpx 0; margin-bottom: 22rpx; }
+.asset-item { flex: 1; }
+.asset-num { font-size: 36rpx; font-weight: 800; color: var(--text-main); }
+.asset-num.text-primary { color: #4b6354; }
+.asset-label { font-size: 20rpx; color: var(--text-sub); margin-top: 6rpx; }
+.asset-divider { width: 1rpx; height: 52rpx; background: var(--border-light); }
+
+/* ================================================================
+   我的购物车业务卡片样式
+   ================================================================ */
+.cart-section-card {
+  padding: 26rpx 28rpx;
+  margin-bottom: 22rpx;
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0,0,0,0.04);
+}
+
+.cart-card-header {
+  padding-bottom: 18rpx;
+  border-bottom: 1rpx solid var(--border-light);
+}
+
+.cart-header-icon {
+  font-size: 32rpx;
+  margin-right: 12rpx;
+}
+
+.cart-badge {
+  font-size: 20rpx;
+  color: #4b6354;
+  background: #e9f0ec;
+  padding: 2rpx 14rpx;
+  border-radius: 20rpx;
+  margin-left: 14rpx;
+  font-weight: 700;
+}
+
+.clear-cart-btn {
+  font-size: 22rpx;
+  color: var(--text-sub);
+  padding: 6rpx 10rpx;
+}
+.clear-cart-btn:active { opacity: 0.6; }
+.clear-icon { font-size: 24rpx; margin-right: 4rpx; }
+.clear-text { font-size: 22rpx; }
+
+.cart-goods-list {
+  margin-top: 10rpx;
+}
+
+.cart-goods-item {
+  padding: 20rpx 0;
+  border-bottom: 1rpx dashed var(--border-light);
+}
+.cart-goods-item:last-child {
+  border-bottom: none;
+}
+
+.cart-goods-thumb {
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 16rpx;
+  background: #f4f6f4;
+  border: 1rpx solid #e5ebe7;
+  flex-shrink: 0;
+}
+
+.cart-goods-info {
+  flex: 1;
+  margin-left: 20rpx;
+  margin-right: 16rpx;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.cart-goods-name {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart-goods-sku {
+  font-size: 20rpx;
+  color: var(--text-sub);
+  margin-top: 4rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart-goods-price {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #4b6354;
+  margin-top: 6rpx;
+}
+
+.cart-goods-action {
+  align-items: flex-end;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cart-goods-subtotal {
+  font-size: 26rpx;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-bottom: 10rpx;
+}
+
+.cart-stepper {
+  align-items: center;
+  background: #f0f4f1;
+  border-radius: 24rpx;
+  padding: 2rpx;
+}
+
+.stepper-btn {
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 40rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: bold;
+  border-radius: 22rpx;
+  color: #243b2e;
+  background: #ffffff;
+  box-shadow: 0 2rpx 6rpx rgba(0,0,0,0.06);
+}
+.stepper-btn:active { opacity: 0.6; }
+
+.stepper-count {
+  min-width: 44rpx;
+  text-align: center;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #243b2e;
+}
+
+.cart-card-footer {
+  margin-top: 14rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--border-light);
+  align-items: center;
+}
+
+.cart-total-box {
+  align-items: baseline;
+}
+
+.total-label {
+  font-size: 24rpx;
+  color: var(--text-sub);
+  margin-right: 6rpx;
+}
+
+.total-symbol {
+  font-size: 24rpx;
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.total-price {
+  font-size: 36rpx;
+  color: #dc2626;
+  font-weight: 900;
+}
+
+.btn-checkout-mini {
+  margin: 0;
+  padding: 0 32rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 32rpx;
+  font-size: 26rpx;
+  font-weight: 700;
+  background: linear-gradient(135deg, #4b6354 0%, #2f4437 100%);
+  color: #ffffff;
+  box-shadow: 0 4rpx 16rpx rgba(75, 99, 84, 0.35);
+}
+.btn-checkout-mini::after { border: none; }
+.btn-checkout-mini:active { opacity: 0.85; }
+
+.cart-empty-box {
+  padding: 36rpx 20rpx 28rpx 20rpx;
+}
+
+.empty-icon {
+  font-size: 52rpx;
+  margin-bottom: 12rpx;
+}
+
+.empty-tip {
+  font-size: 24rpx;
+  color: var(--text-sub);
+  margin-bottom: 20rpx;
+}
+
+.btn-go-order-mini {
+  margin: 0;
+  padding: 0 36rpx;
+  height: 56rpx;
+  line-height: 54rpx;
+  border-radius: 28rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  border: 2rpx solid #4b6354;
+  color: #4b6354;
+  background: #f2f7f4;
+}
+.btn-go-order-mini::after { border: none; }
+.btn-go-order-mini:active { background: #e3ede6; }
+
+.staff-portal-card { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 2rpx solid #bfdbfe; padding: 24rpx; margin-bottom: 20rpx; }
+.portal-icon { font-size: 48rpx; margin-right: 16rpx; }
+.portal-title { font-size: 28rpx; font-weight: 700; color: #1e40af; }
+.portal-desc { font-size: 20rpx; color: #3b82f6; margin-top: 4rpx; }
+.btn-primary-staff { background: #3b82f6; color: #fff; font-size: 24rpx; padding: 0 24rpx; height: 56rpx; line-height: 56rpx; border-radius: 28rpx; margin: 0;}
+
+.order-nav-card { padding: 0; overflow: hidden; margin-bottom: 22rpx; }
+.order-nav-header { padding: 28rpx 28rpx 16rpx 28rpx; border-bottom: 1rpx solid var(--border-light); }
+.card-title { font-size: 28rpx; font-weight: 700; color: var(--text-main); }
+.view-all-text { font-size: 22rpx; color: var(--text-sub); margin-right: 4rpx; }
+.order-nav-grid { padding: 18rpx 0 22rpx 0; }
+.order-nav-item { flex: 1; }
+.nav-icon-wrap { position: relative; display: inline-block; }
+.nav-icon { font-size: 42rpx; }
+.badge-dot { position: absolute; top: -8rpx; right: -18rpx; min-width: 32rpx; height: 32rpx; line-height: 32rpx; border-radius: 16rpx; background: #ef4444; color: #fff; font-size: 18rpx; font-weight: 700; text-align: center; padding: 0 6rpx; }
+.badge-dot.bg-green { background: #22c55e; }
+.nav-label { font-size: 20rpx; color: var(--text-sub); margin-top: 8rpx; }
+
+.service-row-card { padding: 0; overflow: hidden; }
+.service-row-grid { padding: 36rpx 0; }
+.service-row-item { flex: 1; background: transparent; line-height: normal; }
+.service-row-item:active { opacity: 0.6; }
+.btn-clear-square { margin: 0; border: none; padding: 0; }
+.btn-clear-square::after { border: none; }
+.service-row-icon { font-size: 52rpx; margin-bottom: 14rpx; }
+.service-row-text { font-size: 22rpx; color: var(--text-main); font-weight: 500; }
+

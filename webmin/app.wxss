@@ -1,0 +1,397 @@
+/**app.wxss - AutoMake 智能现制茶饮全新设计系统规范**/
+
+/* ============================================================
+   1. Design Tokens 变量定义 (兼容两种变量命名规范)
+   ============================================================ */
+page {
+  /* 品牌色彩系统 (草木主题：草木绿 + 枯木棕) */
+  --primary-color: #4b6354;
+  --color-primary: #4b6354;
+  --primary-hover: #3f5446;
+  --color-primary-hover: #3f5446;
+  
+  --primary-gradient: linear-gradient(135deg, #5b7565 0%, #4b6354 100%);
+  --color-primary-gradient: linear-gradient(135deg, #5b7565 0%, #4b6354 100%);
+  
+  --primary-light: #eef2ef;
+  --color-primary-light: #eef2ef;
+  --primary-subtle: #dbe4dd;
+  --color-primary-subtle: #dbe4dd;
+  
+  --secondary-color: #a88f78;
+  --color-secondary: #a88f78;
+  --secondary-light: #f5f2ef;
+  --color-secondary-light: #f5f2ef;
+  
+  --warning-color: #d97706;
+  --color-warning: #d97706;
+  --warning-light: #fffbeb;
+  --color-warning-light: #fffbeb;
+  
+  --danger-color: #ef4444;
+  --color-danger: #ef4444;
+  --danger-light: #fef2f2;
+  --color-danger-light: #fef2f2;
+  
+  /* 中性色彩 (墨绿黑 + 灰绿) */
+  --text-main: #2c352e;
+  --color-text-main: #2c352e;
+  --text-secondary: #5a6e60;
+  --color-text-secondary: #5a6e60;
+  --text-muted: #8fa196;
+  --color-text-muted: #8fa196;
+  --text-light: #cbd5e1;
+  --color-text-light: #cbd5e1;
+  
+  /* 背景与容器 (极简米白) */
+  --bg-page: #f8f9f7;
+  --color-bg-page: #f8f9f7;
+  --bg-card: #ffffff;
+  --color-bg-card: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --color-bg-subtle: #f1f5f9;
+  --border-color: #f1f5f9;
+  --color-border: #f1f5f9;
+  --border-color-dark: #e2e8f0;
+  --color-border-dark: #e2e8f0;
+  
+  /* 阴影体系 */
+  --shadow-sm: 0 2rpx 8rpx rgba(44, 53, 46, 0.03);
+  --shadow-card: 0 8rpx 28rpx rgba(44, 53, 46, 0.04);
+  --shadow-card-hover: 0 14rpx 36rpx rgba(44, 53, 46, 0.08);
+  --shadow-primary-btn: 0 8rpx 24rpx rgba(75, 99, 84, 0.25);
+  --shadow-float-bar: 0 16rpx 40rpx rgba(44, 53, 46, 0.1);
+
+  /* 圆角梯度 */
+  --radius-xs: 8rpx;
+  --radius-sm: 14rpx;
+  --radius-md: 24rpx;
+  --radius-lg: 32rpx;
+  --radius-full: 9999rpx;
+
+  /* 基础全局配置 */
+  background-color: var(--color-bg-page);
+  color: var(--color-text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  font-size: 28rpx;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+view, text, image, input, button, scroll-view, swiper, swiper-item {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   2. 基础容器与卡片
+   ============================================================ */
+.container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.card {
+  background-color: var(--color-bg-card);
+  border-radius: var(--radius-md);
+  padding: 26rpx;
+  margin-bottom: 22rpx;
+  box-shadow: var(--shadow-card);
+  border: 1rpx solid rgba(241, 245, 249, 0.9);
+  transition: all 0.2s ease;
+}
+
+/* ============================================================
+   3. 通用 Flex 布局工具类
+   ============================================================ */
+.flex-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.flex-between {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flex-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+/* ============================================================
+   4. 按钮系统 (Buttons)
+   ============================================================ */
+button {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  font-weight: normal;
+  font-size: 28rpx;
+  line-height: normal;
+  background-color: transparent;
+  width: auto;
+  min-height: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button::after {
+  border: none;
+}
+
+.btn-primary {
+  background: var(--color-primary-gradient);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 26rpx;
+  border-radius: var(--radius-full);
+  padding: 12rpx 32rpx;
+  text-align: center;
+  box-shadow: 0 4rpx 14rpx rgba(75, 99, 84, 0.22);
+  border: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.btn-primary:active {
+  transform: scale(0.97);
+  opacity: 0.92;
+}
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--color-primary);
+  border: 1.5rpx solid var(--color-primary);
+  font-weight: 600;
+  font-size: 24rpx;
+  border-radius: var(--radius-full);
+  padding: 10rpx 26rpx;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+
+.btn-outline:active {
+  transform: scale(0.97);
+  background-color: var(--color-primary-light);
+}
+
+.btn-secondary {
+  background-color: var(--color-bg-subtle);
+  color: var(--color-text-main);
+  font-weight: 600;
+  font-size: 24rpx;
+  border-radius: var(--radius-full);
+  padding: 10rpx 26rpx;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-sm {
+  font-size: 22rpx;
+  padding: 8rpx 20rpx;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-compact {
+  font-size: 24rpx;
+  padding: 10rpx 24rpx;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 54rpx;
+  box-sizing: border-box;
+}
+
+.btn-disabled {
+  background: #e2e8e4 !important;
+  color: #9aa89f !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* ============================================================
+   5. 数量步进器 (Stepper)
+   ============================================================ */
+.quantity-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.step-btn {
+  width: 48rpx;
+  height: 48rpx;
+  border-radius: 50%;
+  background-color: #f1f5f9;
+  color: var(--color-text-main);
+  font-size: 32rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.1s ease;
+}
+
+.step-btn:active {
+  transform: scale(0.9);
+}
+
+.step-minus {
+  background-color: #f1f5f9;
+  color: var(--color-text-secondary);
+}
+
+.step-plus {
+  background: var(--color-primary-gradient);
+  color: #ffffff;
+  box-shadow: 0 4rpx 12rpx rgba(75, 99, 84, 0.25);
+}
+
+.step-num {
+  min-width: 40rpx;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 800;
+  color: var(--color-text-main);
+  font-family: 'DIN Alternate', -apple-system, sans-serif;
+}
+
+/* ============================================================
+   6. 价格展示 (Price Typography)
+   ============================================================ */
+.price-box {
+  display: inline-flex;
+  align-items: baseline;
+  color: var(--color-primary);
+  font-weight: 800;
+  font-family: 'DIN Alternate', -apple-system, sans-serif;
+}
+
+.price-box .symbol {
+  font-size: 24rpx;
+  font-weight: 700;
+  margin-right: 2rpx;
+}
+
+.price-box .integer {
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.price-suffix {
+  font-size: 22rpx;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-left: 4rpx;
+}
+
+/* ============================================================
+   7. 标签与徽标 (Badges & Tags)
+   ============================================================ */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  border-radius: var(--radius-xs);
+  background-color: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+.tag-success {
+  background-color: var(--color-secondary-light);
+  color: var(--color-secondary);
+  font-weight: 600;
+}
+
+.tag-warning {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.tag-primary {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.tag-danger {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* ============================================================
+   8. 底部安全留白
+   ============================================================ */
+.safe-bottom {
+  padding-bottom: calc(constant(safe-area-inset-bottom) + 140rpx);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 140rpx);
+}
+
+/* ============================================================
+   9. 空状态与加载状态
+   ============================================================ */
+.empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80rpx 0;
+  color: var(--color-text-muted);
+}
+
+.empty-box image {
+  width: 240rpx;
+  height: 240rpx;
+  margin-bottom: 24rpx;
+}
+
+.empty-box text {
+  font-size: 28rpx;
+}

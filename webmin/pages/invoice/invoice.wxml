@@ -1,0 +1,108 @@
+<!--pages/invoice/invoice.wxml-->
+<view class="container invoice-page safe-bottom">
+
+  <!-- 订单开票信息概要 -->
+  <view class="invoice-summary-card card" wx:if="{{order}}">
+    <view class="flex-between">
+      <text class="card-title">订单开票信息</text>
+      <text class="tag tag-primary">{{ invoice ? invoice.status_display : '未开票' }}</text>
+    </view>
+    
+    <view class="summary-meta-row flex-between">
+      <text class="meta-label">订单号</text>
+      <text class="meta-value">{{ order.order_no }}</text>
+    </view>
+    <view class="summary-meta-row flex-between">
+      <text class="meta-label">开票金额</text>
+      <text class="meta-value text-orange font-bold">¥{{ amountYuan }}</text>
+    </view>
+  </view>
+
+  <!-- 情况 1：已开具发票展示 -->
+  <view class="invoice-detail-card card" wx:if="{{invoice}}">
+    <text class="card-title">🧾 电子发票凭据</text>
+
+    <view class="detail-row flex-between">
+      <text class="row-label">发票类型</text>
+      <text class="row-value">{{ invoice.invoice_type === 'company' ? '企业单位' : '个人/非企业' }}</text>
+    </view>
+    <view class="detail-row flex-between">
+      <text class="row-label">发票抬头</text>
+      <text class="row-value">{{ invoice.title }}</text>
+    </view>
+    <view class="detail-row flex-between" wx:if="{{invoice.tax_no}}">
+      <text class="row-label">企业税号</text>
+      <text class="row-value">{{ invoice.tax_no }}</text>
+    </view>
+    <view class="detail-row flex-between">
+      <text class="row-label">接收邮箱</text>
+      <text class="row-value">{{ invoice.email }}</text>
+    </view>
+    <view class="detail-row flex-between">
+      <text class="row-label">开具时间</text>
+      <text class="row-value">{{ invoice.created_at }}</text>
+    </view>
+
+    <button class="btn-primary btn-download flex-center" bindtap="handleCopyDownloadUrl">
+      <text>📋 复制电子发票 PDF 下载链接</text>
+    </button>
+  </view>
+
+  <!-- 情况 2：未开具，显示开票表单 -->
+  <view class="invoice-form-card card" wx:elif="{{order}}">
+    <text class="card-title">申请开具电子发票</text>
+
+    <radio-group class="form-type-group flex-row" bindchange="handleTypeChange">
+      <label class="radio-label flex-row">
+        <radio value="personal" checked="{{invoiceType === 'personal'}}" color="#4b6354" />
+        <text>个人/非企业</text>
+      </label>
+      <label class="radio-label flex-row" style="margin-left: 40rpx;">
+        <radio value="company" checked="{{invoiceType === 'company'}}" color="#4b6354" />
+        <text>企业单位</text>
+      </label>
+    </radio-group>
+
+    <view class="form-item">
+      <text class="input-label">发票抬头 (必填)</text>
+      <input 
+        class="form-input" 
+        placeholder="请输入发票抬头" 
+        value="{{title}}" 
+        data-field="title"
+        bindinput="handleInput"
+      />
+    </view>
+
+    <view class="form-item" wx:if="{{invoiceType === 'company'}}">
+      <text class="input-label">企业税号 (必填)</text>
+      <input 
+        class="form-input" 
+        placeholder="纳税人识别号或统一社会信用代码" 
+        value="{{taxNo}}" 
+        data-field="taxNo"
+        bindinput="handleInput"
+      />
+    </view>
+
+    <view class="form-item">
+      <text class="input-label">电子邮箱 (必填)</text>
+      <input 
+        class="form-input" 
+        placeholder="用于接收电子发票 PDF 邮件" 
+        value="{{email}}" 
+        data-field="email"
+        bindinput="handleInput"
+      />
+    </view>
+
+    <button 
+      class="btn-primary btn-submit-invoice" 
+      loading="{{isSubmitting}}"
+      bindtap="handleSubmitInvoice"
+    >
+      确认提交开票
+    </button>
+  </view>
+
+</view>

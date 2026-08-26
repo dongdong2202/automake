@@ -1,0 +1,41 @@
+# Environment & Virtualenvs
+.env
+.env.*
+.venv*
+venv/
+env/
+
+# Certificates, Keys & Secrets
+cert/
+certs/
+nginx/certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Python cache & logs
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+*.sqlite3
+
+# Temporary & debug files
+a1.txt
+a2.txt
+*.md
+**/*.md
+*.txt
+*.png
+*_error.png
+playwright_error_screenshot.png
+.DS_Store
+
+# Node & frontend build caches
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.preview_build/

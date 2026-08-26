@@ -1,0 +1,64 @@
+<!--pages/coupon/coupon.wxml-->
+<view class="container coupon-page safe-bottom">
+
+  <!-- 顶部状态栏 -->
+  <view class="coupon-tabs-wrap flex-row">
+    <view class="tab-item {{activeTab === 'available' ? 'active' : ''}}" bindtap="handleTabChange" data-tab="available">
+      <text>可用优惠券</text>
+    </view>
+    <view class="tab-item {{activeTab === 'claim' ? 'active' : ''}}" bindtap="handleTabChange" data-tab="claim">
+      <text>🎁 领券中心</text>
+    </view>
+    <view class="tab-item {{activeTab === 'used' ? 'active' : ''}}" bindtap="handleTabChange" data-tab="used">
+      <text>已使用</text>
+    </view>
+    <view class="tab-item {{activeTab === 'expired' ? 'active' : ''}}" bindtap="handleTabChange" data-tab="expired">
+      <text>已过期</text>
+    </view>
+  </view>
+
+  <!-- 领券中心列表 -->
+  <view class="coupon-list-body" wx:if="{{activeTab === 'claim'}}">
+    <view wx:for="{{claimableList}}" wx:key="id" class="coupon-item card flex-between">
+      <view class="coupon-left flex-row">
+        <view class="amount-box flex-col flex-center">
+          <text class="amount-num">¥{{ item.amount / 100 }}</text>
+          <text class="amount-type">活动券</text>
+        </view>
+        <view class="coupon-meta flex-col">
+          <text class="coupon-title">{{ item.title }}</text>
+          <text class="coupon-desc">{{ item.desc }}</text>
+          <text class="coupon-validity">领取后 14 天内有效</text>
+        </view>
+      </view>
+      <button class="btn-sm btn-primary" bindtap="handleClaim" data-item="{{item}}">免费领取</button>
+    </view>
+  </view>
+
+  <!-- 用户优惠券列表 -->
+  <view class="coupon-list-body" wx:else>
+    <view class="empty-box" wx:if="{{!loading && coupons.length === 0}}">
+      <image src="/images/empty_order.png" mode="aspectFit" />
+      <text>暂无相关优惠券</text>
+      <button class="btn-sm btn-outline" style="margin-top: 24rpx;" bindtap="handleTabChange" data-tab="claim">去领券中心逛逛</button>
+    </view>
+
+    <view wx:for="{{coupons}}" wx:key="id" class="coupon-item card flex-between {{activeTab !== 'available' ? 'disabled' : ''}}">
+      <view class="coupon-left flex-row">
+        <view class="amount-box flex-col flex-center">
+          <text class="amount-num" wx:if="{{item.coupon_type === 'discount'}}">{{ item.discount_rate / 10 }}折</text>
+          <text class="amount-num" wx:else>¥{{ item.amountYuan }}</text>
+          <text class="amount-type">{{ item.type_display }}</text>
+        </view>
+        <view class="coupon-meta flex-col">
+          <text class="coupon-title">{{ item.title }}</text>
+          <text class="coupon-desc">{{ item.min_spend > 0 ? '满 ¥' + item.minSpendYuan + ' 可用' : '无门槛使用' }}</text>
+          <text class="coupon-validity">有效期至: {{ item.expires_at }}</text>
+        </view>
+      </view>
+      <button class="btn-sm btn-outline" wx:if="{{activeTab === 'available'}}" bindtap="handleUseCoupon">去使用</button>
+      <text class="status-tag" wx:else>{{ item.status_display }}</text>
+    </view>
+  </view>
+
+</view>

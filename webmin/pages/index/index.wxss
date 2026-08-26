@@ -1,0 +1,304 @@
+/* pages/index/index.wxss */
+
+.index-page {
+  padding: 24rpx 32rpx 48rpx 32rpx;
+}
+
+/* 顶部搜索与城市切换栏 */
+.header-search-bar {
+  margin-bottom: 20rpx;
+  gap: 12rpx;
+}
+
+.city-selector {
+  background-color: var(--color-bg-card);
+  padding: 12rpx 20rpx;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  border: 1rpx solid var(--color-border);
+}
+
+.city-name {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: var(--color-text-main);
+  max-width: 140rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrow-down {
+  font-size: 18rpx;
+  color: var(--color-text-muted);
+  margin-left: 8rpx;
+}
+
+.search-input-wrap {
+  flex: 1;
+  background-color: var(--color-bg-card);
+  padding: 12rpx 22rpx;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  border: 1rpx solid var(--color-border);
+}
+
+.search-icon {
+  font-size: 24rpx;
+  margin-right: 10rpx;
+  color: var(--color-text-muted);
+}
+
+.search-input {
+  flex: 1;
+  font-size: 24rpx;
+  color: var(--color-text-main);
+}
+
+.view-switch-btns {
+  background-color: var(--color-bg-subtle);
+  border-radius: var(--radius-full);
+  padding: 4rpx;
+}
+
+.switch-btn {
+  padding: 8rpx 18rpx;
+  border-radius: var(--radius-full);
+  font-size: 22rpx;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.switch-btn.active {
+  background-color: var(--color-bg-card);
+  color: var(--color-primary);
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.08);
+}
+
+/* 轮播 Banner */
+.banner-section {
+  margin-bottom: 20rpx;
+}
+
+.banner-swiper {
+  height: 300rpx;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.banner-image {
+  width: 100%;
+  height: 100%;
+}
+
+/* 地图找店区域 */
+.map-view-section {
+  padding: 20rpx;
+}
+
+.map-header {
+  margin-bottom: 16rpx;
+}
+
+.map-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--color-text-main);
+}
+
+.devices-map {
+  width: 100%;
+  height: 520rpx;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.selected-marker-card {
+  margin-top: 18rpx;
+  padding: 20rpx;
+  background-color: var(--color-primary-light);
+  border: 1rpx solid var(--color-primary-subtle);
+  border-radius: var(--radius-md);
+}
+
+.marker-info {
+  flex: 1;
+  padding-right: 16rpx;
+}
+
+.marker-store-name {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--color-text-main);
+  margin-right: 10rpx;
+}
+
+.marker-address {
+  font-size: 22rpx;
+  color: var(--color-text-secondary);
+  margin: 6rpx 0;
+}
+
+.marker-dist {
+  font-size: 20rpx;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 快捷功能卡片 */
+.quick-nav-card {
+  padding: 28rpx 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.quick-item {
+  flex: 1;
+}
+
+.quick-icon-bg {
+  width: 92rpx;
+  height: 92rpx;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42rpx;
+  margin-bottom: 12rpx;
+  box-shadow: 0 4rpx 12rpx rgba(44, 53, 46, 0.02);
+}
+
+.bg-orange { background-color: #f5f2ef; }
+.bg-green { background-color: #eef2ef; }
+.bg-blue { background-color: #f0f4f8; }
+.bg-purple { background-color: #f8f5f0; }
+
+.quick-label {
+  font-size: 24rpx;
+  color: var(--color-text-main);
+  font-weight: 600;
+}
+
+/* 智能设备列表卡片区 */
+.devices-section {
+  margin-top: 8rpx;
+}
+
+.section-title-row {
+  margin-bottom: 18rpx;
+  padding: 0 4rpx;
+}
+
+.section-title {
+  font-size: 30rpx;
+  font-weight: 800;
+  color: var(--color-text-main);
+}
+
+.relocate-text {
+  font-size: 24rpx;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.device-card {
+  margin-bottom: 20rpx;
+  padding: 26rpx 28rpx;
+  background-color: var(--color-bg-card);
+  border: 1rpx solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.device-card-header {
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+
+.device-title-wrap {
+  flex: 1;
+  min-width: 0;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.device-name {
+  font-size: 30rpx;
+  font-weight: 800;
+  color: var(--color-text-main);
+  max-width: 320rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-dist {
+  font-size: 26rpx;
+  color: var(--color-primary);
+  font-weight: 800;
+  font-family: 'DIN Alternate', -apple-system, sans-serif;
+  margin-left: 12rpx;
+}
+
+.device-card-body {
+  padding: 10rpx 0 16rpx 0;
+  border-bottom: 1rpx dashed var(--color-border-dark);
+  margin-bottom: 16rpx;
+}
+
+.device-meta-addr {
+  font-size: 24rpx;
+  color: var(--color-text-secondary);
+  display: block;
+  margin-bottom: 6rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-meta-time {
+  font-size: 22rpx;
+  color: var(--color-text-muted);
+  display: block;
+}
+
+.device-sn-badge {
+  font-size: 22rpx;
+  color: var(--color-text-muted);
+  background-color: var(--color-bg-subtle);
+  padding: 4rpx 14rpx;
+  border-radius: var(--radius-xs);
+  font-family: monospace;
+}
+
+.device-card-footer {
+  align-items: center;
+}
+
+.device-actions {
+  align-items: center;
+}
+
+.btn-mini-icon {
+  margin-right: 4rpx;
+  font-size: 22rpx;
+}
+
+/* 品牌底部标语 */
+.brand-footer {
+  padding: 40rpx 0 20rpx 0;
+}
+
+.footer-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  letter-spacing: 2rpx;
+}
+
+.footer-desc {
+  font-size: 20rpx;
+  color: var(--color-text-light);
+  margin-top: 6rpx;
+}

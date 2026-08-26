@@ -1,0 +1,51 @@
+<!--pages/points/points.wxml-->
+<view class="container points-page safe-bottom">
+
+  <!-- 头部积分资产卡片 -->
+  <view class="points-hero-card card flex-between">
+    <view class="points-meta flex-col">
+      <text class="hero-label">当前可用积分</text>
+      <text class="hero-points">{{ points }}</text>
+      <text class="hero-sub">每消费 ¥1 可积 1 积分</text>
+    </view>
+    <view class="hero-badge flex-col flex-center">
+      <text class="badge-icon">👑</text>
+      <text class="badge-title">VIP 黄金会员</text>
+    </view>
+  </view>
+
+  <!-- 积分商城好礼兑换 -->
+  <view class="exchange-section card">
+    <text class="card-title">🎁 积分好礼兑换</text>
+    
+    <view class="reward-list">
+      <view wx:for="{{exchangeRewards}}" wx:key="id" class="reward-item flex-between">
+        <view class="reward-info flex-col">
+          <text class="reward-title">{{ item.title }}</text>
+          <text class="reward-cost">所需积分: <text class="text-orange font-bold">{{ item.pointsCost }}</text> 分</text>
+        </view>
+        <button class="btn-sm btn-primary" bindtap="handleExchange" data-item="{{item}}">立即兑换</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 积分流水明细 -->
+  <view class="point-logs-section card">
+    <text class="card-title">📋 积分变动明细</text>
+
+    <view class="empty-box" wx:if="{{pointLogs.length === 0}}">
+      <text>暂无积分变动流水</text>
+    </view>
+
+    <view class="log-list">
+      <view wx:for="{{pointLogs}}" wx:key="id" class="log-item flex-between">
+        <view class="log-info flex-col">
+          <text class="log-action">{{ item.action }}</text>
+          <text class="log-time">{{ item.created_at }}</text>
+        </view>
+        <text class="log-change {{item.points > 0 ? 'text-green' : 'text-danger'}}">{{ item.points > 0 ? '+' : '' }}{{ item.points }}</text>
+      </view>
+    </view>
+  </view>
+
+</view>

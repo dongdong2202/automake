@@ -1,0 +1,77 @@
+/* pages/invoice/invoice.wxss */
+
+.invoice-page {
+  padding: 20rpx 28rpx;
+}
+
+.invoice-summary-card, .invoice-detail-card, .invoice-form-card {
+  margin-bottom: 24rpx;
+}
+
+.card-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 16rpx;
+  display: block;
+}
+
+.summary-meta-row, .detail-row {
+  font-size: 26rpx;
+  padding: 14rpx 0;
+  border-bottom: 1rpx dashed #f1f5f9;
+}
+
+.meta-label, .row-label {
+  color: var(--text-secondary);
+}
+
+.meta-value, .row-value {
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.font-bold {
+  font-weight: 700;
+}
+
+.text-orange {
+  color: var(--primary-color);
+}
+
+.btn-download {
+  margin-top: 30rpx;
+  font-size: 28rpx;
+  padding: 20rpx 0;
+}
+
+/* 开票表单 */
+.form-type-group {
+  margin: 20rpx 0 24rpx 0;
+}
+
+.form-item {
+  margin-bottom: 20rpx;
+}
+
+.input-label {
+  font-size: 26rpx;
+  color: var(--text-secondary);
+  margin-bottom: 8rpx;
+  display: block;
+}
+
+.form-input {
+  background-color: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  font-size: 26rpx;
+}
+
+.btn-submit-invoice {
+  margin-top: 36rpx;
+  width: 100%;
+  font-size: 30rpx;
+  padding: 22rpx 0;
+}

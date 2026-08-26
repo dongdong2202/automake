@@ -1,0 +1,146 @@
+<!--pages/order-detail/order-detail.wxml-->
+<view class="container order-detail-page safe-bottom" wx:if="{{order}}">
+
+  <!-- 顶部状态横幅与取餐码 Hero 区域 -->
+  <view class="status-hero-card card">
+    
+    <!-- 制作完成：大字取餐码展示 -->
+    <view class="pickup-code-box flex-col flex-center" wx:if="{{order.status === 'success' || (pickupInfo && pickupInfo.pickupCode)}}">
+      <text class="pickup-label">取餐码 (核销验证码)</text>
+      <text class="pickup-code">{{ pickupInfo.pickupCode || 'A08' }}</text>
+      <text class="pickup-tip">请前往 {{ order.store ? order.store.name : '门店' }} 智能设备出餐口自提</text>
+    </view>
+
+    <!-- 制作中 / 排队中 -->
+    <view class="making-status-box flex-col flex-center" wx:elif="{{order.status === 'making' || order.status === 'pending_dispense'}}">
+      <view class="spinner-ring"></view>
+      <text class="making-title">智能设备正在调配制作中</text>
+      <text class="making-wait-tip">预计还需等候约 {{ pickupInfo.waitMinutes || 2 }} 分钟</text>
+      <text class="queue-tip" wx:if="{{pickupInfo.queueAhead > 0}}">前方还有 {{ pickupInfo.queueAhead }} 杯待制作</text>
+    </view>
+
+    <!-- 待支付 -->
+    <view class="pending-pay-box flex-col flex-center" wx:elif="{{order.status === 'created'}}">
+      <text class="pending-icon">⏳</text>
+      <text class="pending-title">订单已创建，等待支付</text>
+      <text class="pending-desc">请在 15 分钟内完成支付，超时将自动取消</text>
+    </view>
+
+    <!-- 已取消 / 已退款 -->
+    <view class="cancelled-box flex-col flex-center" wx:else>
+      <text class="cancelled-icon">✕</text>
+      <text class="cancelled-title">{{ order.status_display || '订单已结束' }}</text>
+    </view>
+
+    <!-- 4 步进度步骤条 -->
+    <view class="steps-container flex-row" wx:if="{{!['cancelled', 'refunded', 'failed'].includes(order.status)}}">
+      <view wx:for="{{statusSteps}}" wx:key="key" class="step-node flex-col flex-center {{currentStepIndex >= index ? 'active' : ''}}">
+        <view class="node-circle flex-center">
+          <text wx:if="{{currentStepIndex > index}}">✓</text>
+          <text wx:else>{{ index + 1 }}</text>
+        </view>
+        <text class="node-title">{{ item.title }}</text>
+      </view>
+    </view>
+
+  </view>
+
+  <!-- 门店地址与导航卡片 -->
+  <view class="store-nav-card card flex-between" wx:if="{{order.store}}">
+    <view class="store-nav-info flex-col">
+      <text class="store-nav-name">{{ order.store.name }}</text>
+      <text class="store-nav-address">{{ order.store.address }}</text>
+    </view>
+    <button class="btn-sm btn-outline flex-row" bindtap="handleOpenNavigation">
+      <text style="margin-right: 6rpx;">🧭</text>
+      <text>导航</text>
+    </button>
+  </view>
+
+  <!-- 商品明细卡片 -->
+  <view class="order-goods-card card">
+    <view class="goods-header flex-between">
+      <text class="section-title">点单明细</text>
+      <text class="goods-count-label">共 {{ order.items.length }} 种商品</text>
+    </view>
+
+    <view class="goods-list">
+      <view wx:for="{{order.items}}" wx:key="id" class="goods-item flex-between">
+        <view class="goods-info flex-col">
+          <text class="goods-name">{{ item.item_name }}</text>
+          <text class="goods-sku">{{ item.skuDesc || '标准配置' }}</text>
+          <text class="goods-qty">单价: ¥{{ item.unitPriceYuan }} × {{ item.quantity }}</text>
+        </view>
+        <text class="goods-subtotal">¥{{ item.subtotalYuan }}</text>
+      </view>
+    </view>
+
+    <view class="price-summary-box">
+      <view class="summary-row flex-between">
+        <text>商品总额</text>
+        <text>¥{{ order.totalAmountYuan }}</text>
+      </view>
+      <view class="summary-row flex-between" wx:if="{{order.discount_amount > 0}}">
+        <text>优惠金额</text>
+        <text class="text-discount">-¥{{ order.discountAmountYuan }}</text>
+      </view>
+      <view class="summary-divider"></view>
+      <view class="summary-total-row flex-between">
+        <text class="total-text">实付款</text>
+        <view class="price-box">
+          <text class="symbol">¥</text>
+          <text class="integer">{{ order.payAmountYuan }}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 订单详细信息卡片 -->
+  <view class="order-meta-card card">
+    <view class="meta-row flex-between">
+      <text class="meta-label">订单编号</text>
+      <text class="meta-value">{{ order.order_no }}</text>
+    </view>
+    <view class="meta-row flex-between">
+      <text class="meta-label">下单时间</text>
+      <text class="meta-value">{{ order.createdAtFormatted }}</text>
+    </view>
+    <view class="meta-row flex-between" wx:if="{{order.paid_at}}">
+      <text class="meta-label">支付时间</text>
+      <text class="meta-value">{{ order.paidAtFormatted }}</text>
+    </view>
+    <view class="meta-row flex-between" wx:if="{{order.remark}}">
+      <text class="meta-label">订单备注</text>
+      <text class="meta-value">{{ order.remark }}</text>
+    </view>
+    <view class="meta-row flex-between" wx:if="{{order.status === 'success' || order.paid_at}}" bindtap="handleGoInvoice">
+      <text class="meta-label">电子发票</text>
+      <view class="flex-row">
+        <text class="text-orange" style="font-size: 24rpx; font-weight: 600;">申请/查看发票</text>
+        <text class="arrow-right">›</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部固定操作按钮区 -->
+  <view class="order-action-footer-wrap safe-bottom">
+    <view class="order-action-footer flex-between">
+      
+      <block wx:if="{{order.status === 'created'}}">
+        <button class="btn-outline flex-center" bindtap="handleCancelOrder">取消订单</button>
+        <button class="btn-primary flex-center" bindtap="handleQuickPay">立即模拟支付</button>
+      </block>
+
+      <block wx:elif="{{order.status === 'pending_dispense'}}">
+        <button class="btn-outline flex-center text-danger" bindtap="handleRefund">申请退款</button>
+        <button class="btn-primary flex-center" bindtap="handleReOrder">再来一单</button>
+      </block>
+
+      <block wx:else>
+        <button class="btn-primary btn-full flex-center" bindtap="handleReOrder">再来一单</button>
+      </block>
+
+    </view>
+  </view>
+
+</view>

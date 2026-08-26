@@ -1,0 +1,191 @@
+<!--pages/menu/menu.wxml-->
+<view class="container menu-page">
+
+  <!-- 顶部门店信息栏 -->
+  <view class="store-top-bar flex-between">
+    <view class="store-info flex-row" bindtap="handleSwitchStore">
+      <text class="store-icon">🏬</text>
+      <view class="store-title-box">
+        <view class="flex-row">
+          <text class="store-name">{{ currentStore ? currentStore.name : '请选择门店' }}</text>
+          <text class="tag tag-success" wx:if="{{currentStore && currentStore.statusText === '营业中'}}">营业中</text>
+          <text class="tag tag-warning" wx:else>{{ currentStore ? (currentStore.statusText || '今日休息') : '已打烊' }}</text>
+        </view>
+        <text class="store-hours">⏰ {{ currentStore.businessHoursText }}</text>
+      </view>
+    </view>
+    
+    <view class="store-top-right flex-row">
+      <view class="hide-sold-btn {{hideSoldOut ? 'active' : ''}}" bindtap="handleToggleHideSoldOut">
+        <text>{{ hideSoldOut ? '显示售罄' : '隐藏售罄' }}</text>
+      </view>
+      <view class="switch-store-btn flex-row" bindtap="handleSwitchStore">
+        <text>切换</text>
+        <text class="arrow-right">›</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 活动与特色专区横幅 -->
+  <view class="menu-campaign-bar flex-between">
+    <view class="campaign-chip flex-row">
+      <text class="chip-icon">🔥</text>
+      <text class="chip-text">秋季新品专区 · 现制鲜爽</text>
+    </view>
+    <text class="campaign-badge">自提免打包费</text>
+  </view>
+
+  <!-- 主体区域：左右双联动菜单 -->
+  <view class="menu-main-wrap">
+    
+    <!-- 左侧分类导航 -->
+    <scroll-view class="category-sidebar" scroll-y enable-passive>
+      <view 
+        wx:for="{{categories}}" 
+        wx:key="id" 
+        class="category-item flex-row {{activeCategoryIndex === index ? 'active' : ''}}"
+        bindtap="handleCategoryTap"
+        data-index="{{index}}"
+      >
+        <text class="cat-active-bar" wx:if="{{activeCategoryIndex === index}}"></text>
+        <text class="category-name">{{ item.name }}</text>
+      </view>
+    </scroll-view>
+
+    <!-- 右侧商品列表 -->
+    <scroll-view 
+      class="product-scroll" 
+      scroll-y 
+      scroll-into-view="{{rightScrollIntoView}}"
+      scroll-with-animation
+      enable-passive
+    >
+      <view wx:for="{{categories}}" wx:key="id" id="category-{{index}}" class="category-group">
+        
+        <!-- 分类组标题 -->
+        <view class="category-group-header">
+          <text class="group-title">{{ item.name }}</text>
+        </view>
+
+        <!-- 商品卡片列表 -->
+        <block wx:for="{{item.items}}" wx:for-item="product" wx:key="id">
+          <view 
+            wx:if="{{ !hideSoldOut || !product.isSoldOut }}"
+            class="product-card card flex-row {{product.isSoldOut ? 'sold-out' : ''}}"
+          >
+            <!-- 点击大图或主体进入商品大图详情页 -->
+            <view class="thumb-wrap" catchtap="handleGoProductDetail" data-item="{{product}}">
+              <image 
+                class="product-thumb" 
+                src="{{product.displayImage}}" 
+                mode="aspectFill" 
+                lazy-load 
+              />
+              <view class="thumb-sold-mask flex-center" wx:if="{{product.isSoldOut}}">
+                <text class="thumb-sold-text">售罄</text>
+              </view>
+            </view>
+            
+            <view class="product-info flex-col">
+              <view class="product-title-row" catchtap="handleGoProductDetail" data-item="{{product}}">
+                <text class="product-name">{{ product.name }}</text>
+              </view>
+              <text class="product-desc" catchtap="handleGoProductDetail" data-item="{{product}}" wx:if="{{product.description || product.price_description || product.main_ingredients}}">{{ product.description || product.price_description || product.main_ingredients }}</text>
+              
+              <view class="product-bottom-row flex-between">
+                <view class="price-box" catchtap="handleGoProductDetail" data-item="{{product}}">
+                  <text class="symbol">¥</text>
+                  <text class="integer">{{ product.basePriceYuan }}</text>
+                  <text class="price-suffix">起</text>
+                </view>
+
+                <view class="product-action">
+                  <view 
+                    class="btn-buy-mini flex-center" 
+                    wx:if="{{!product.isSoldOut}}"
+                    catchtap="handleGoProductDetail"
+                    data-item="{{product}}"
+                  >
+                    <text class="buy-mini-plus">+</text>
+                  </view>
+                  <text class="sold-out-badge" wx:else>已售罄</text>
+                </view>
+              </view>
+            </view>
+          </view>
+        </block>
+
+      </view>
+
+      <!-- 空分类提示 -->
+      <view class="empty-wrap flex-col flex-center" wx:if="{{!loading && categories.length === 0}}">
+        <text class="empty-icon">☕</text>
+        <text class="empty-text">当前门店/设备暂无上架饮品</text>
+      </view>
+
+      <!-- 底部安全留白 -->
+      <view style="height: 40rpx;"></view>
+    </scroll-view>
+  </view>
+
+  <!-- ======================================================== -->
+  <!-- SKU 规格选择弹窗 (SKU Customizer Modal) -->
+  <!-- ======================================================== -->
+  <view class="sku-modal-mask" wx:if="{{showSkuModal}}" bindtap="handleCloseSkuModal"></view>
+  <view class="sku-modal-content safe-bottom" wx:if="{{showSkuModal}}">
+    
+    <!-- 头部商品基础信息 -->
+    <view class="sku-modal-header flex-row">
+      <image class="sku-modal-thumb" src="{{selectedProduct.displayImage}}" mode="aspectFill" />
+      <view class="sku-modal-meta flex-col">
+        <text class="sku-modal-name">{{ selectedProduct.name }}</text>
+        <text class="sku-modal-ingredients" wx:if="{{selectedProduct.main_ingredients}}">用料: {{ selectedProduct.main_ingredients }}</text>
+        <view class="price-box">
+          <text class="symbol">¥</text>
+          <text class="integer">{{ currentUnitPriceYuan }}</text>
+        </view>
+      </view>
+      <view class="sku-modal-close" bindtap="handleCloseSkuModal">✕</view>
+    </view>
+
+    <!-- 各规格选项分组 -->
+    <scroll-view class="sku-options-scroll" scroll-y>
+      <view wx:for="{{skuGroups}}" wx:key="category" class="sku-group-box">
+        <text class="sku-group-title">{{ item.category }}</text>
+        <view class="sku-pills-wrap flex-row">
+          <view 
+            wx:for="{{item.skus}}" 
+            wx:for-item="sku" 
+            wx:key="id"
+            class="sku-pill {{selectedSkuMap[item.category] && selectedSkuMap[item.category].id === sku.id ? 'selected' : ''}}"
+            bindtap="handleSelectSkuOption"
+            data-category="{{item.category}}"
+            data-sku="{{sku}}"
+          >
+            <text class="pill-name">{{ sku.name }}</text>
+            <text class="pill-delta" wx:if="{{sku.priceDeltaText}}">{{ sku.priceDeltaText }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 购买数量 -->
+      <view class="sku-quantity-row flex-between">
+        <text class="sku-group-title">购买数量</text>
+        <view class="quantity-stepper flex-row">
+          <view class="step-btn step-minus" bindtap="handleModalQuantityChange" data-delta="-1">-</view>
+          <text class="step-num">{{ buyQuantity }}</text>
+          <view class="step-btn step-plus" bindtap="handleModalQuantityChange" data-delta="1">+</view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 底部加入购物车按钮 -->
+    <view class="sku-modal-footer">
+      <button class="btn-primary btn-add-cart flex-center" bindtap="handleConfirmAddToCart">
+        <text>加入购物车 (¥{{ currentTotalPriceYuan }})</text>
+      </button>
+    </view>
+
+  </view>
+
+</view>

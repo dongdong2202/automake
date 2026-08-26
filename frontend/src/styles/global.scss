@@ -1,0 +1,128 @@
+@use './variables.scss' as *;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  background-color: $bg-color;
+  color: #333333;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* 卡片与页面容器公共类 */
+.page-container {
+  padding: 16px 20px 24px;
+}
+
+.kpi-card {
+  background: #ffffff;
+  border-radius: $border-radius-base;
+  padding: 18px 20px;
+  box-shadow: $card-shadow;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+
+  &:hover {
+    box-shadow: $card-shadow-hover;
+    transform: translateY(-2px);
+  }
+
+  .kpi-title {
+    font-size: 14px;
+    color: #606266;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .kpi-value {
+    font-size: 26px;
+    font-weight: bold;
+    color: #303133;
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+
+  .kpi-footer {
+    font-size: 12px;
+    color: #909399;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .trend-up {
+      color: $danger-color;
+      font-weight: 500;
+    }
+    .trend-down {
+      color: $success-color;
+      font-weight: 500;
+    }
+  }
+}
+
+.chart-card {
+  background: #ffffff;
+  border-radius: $border-radius-base;
+  padding: 18px 20px;
+  box-shadow: $card-shadow;
+  margin-bottom: 16px;
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #303133;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+  }
+}
+
+.guide-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #409EFF;
+  background: #ecf5ff;
+  border: 1px solid #d9ecff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  margin-bottom: 14px;
+}

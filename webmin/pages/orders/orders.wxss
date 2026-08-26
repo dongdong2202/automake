@@ -1,0 +1,165 @@
+/* pages/orders/orders.wxss */
+
+.orders-page {
+  padding: 0 0 40rpx 0;
+}
+
+/* 顶部选项卡 */
+.status-tabs-wrap {
+  position: sticky;
+  top: 0;
+  background-color: #ffffff;
+  z-index: 20;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.03);
+}
+
+.tabs-scroll {
+  white-space: nowrap;
+  width: 100%;
+}
+
+.tabs-flex {
+  padding: 0 20rpx;
+  justify-content: space-around;
+}
+
+.tab-item {
+  position: relative;
+  padding: 24rpx 16rpx;
+  font-size: 28rpx;
+  color: var(--text-secondary);
+  text-align: center;
+  min-width: 120rpx;
+}
+
+.tab-item.active {
+  color: var(--primary-color);
+  font-weight: 700;
+}
+
+.tab-line {
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  right: 25%;
+  height: 6rpx;
+  background-color: var(--primary-color);
+  border-radius: 6rpx 6rpx 0 0;
+}
+
+/* 订单列表主体 */
+.orders-list-body {
+  padding: 24rpx 28rpx;
+}
+
+.order-card {
+  padding: 24rpx;
+  margin-bottom: 24rpx;
+  border: 1rpx solid #f1f5f9;
+}
+
+.order-card-header {
+  padding-bottom: 16rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.order-store-info {
+  align-items: center;
+  flex: 1;
+  padding-right: 16rpx;
+  overflow: hidden;
+}
+
+.store-icon {
+  font-size: 32rpx;
+  margin-right: 10rpx;
+}
+
+.order-store-name {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-meta-row {
+  padding: 14rpx 0 8rpx 0;
+  font-size: 22rpx;
+  color: var(--text-muted);
+}
+
+.order-items-summary {
+  background-color: #f8fafc;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  margin: 12rpx 0 20rpx 0;
+}
+
+.summary-item-row {
+  margin-bottom: 8rpx;
+  font-size: 26rpx;
+}
+
+.summary-item-row:last-child {
+  margin-bottom: 0;
+}
+
+.summary-name {
+  color: var(--text-main);
+  font-weight: 500;
+  flex: 1;
+  padding-right: 16rpx;
+}
+
+.summary-sku {
+  color: var(--text-muted);
+  font-size: 22rpx;
+}
+
+.summary-qty {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-family: 'DIN Alternate', -apple-system, sans-serif;
+}
+
+/* 缩略图规范 */
+.goods-thumbnails {
+  gap: 12rpx;
+}
+
+.goods-thumb {
+  width: 90rpx;
+  height: 90rpx;
+  border-radius: 12rpx;
+  background-color: #f1f5f9;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+/* 卡片底部 */
+.order-card-footer {
+  padding-top: 16rpx;
+  border-top: 1rpx dashed #f1f5f9;
+}
+
+.footer-price-wrap {
+  align-items: baseline;
+}
+
+.price-label {
+  font-size: 24rpx;
+  color: var(--text-secondary);
+  margin-right: 8rpx;
+}
+
+.footer-actions {
+  gap: 16rpx;
+}
+
+.loading-footer {
+  padding: 30rpx 0;
+  font-size: 24rpx;
+  color: var(--text-muted);
+}

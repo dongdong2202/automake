@@ -1,0 +1,102 @@
+<!--pages/product-detail/product-detail.wxml-->
+<view class="container product-detail-page safe-bottom" wx:if="{{product}}">
+
+  <!-- 1. 商品主图 (750rpx × 750rpx) -->
+  <view class="product-hero-wrap">
+    <image class="hero-image" src="{{product.displayImage}}" mode="aspectFill" />
+    <view class="hero-tag-pill flex-row">
+      <text class="hero-tag-dot"></text>
+      <text>100% 鲜榨现萃</text>
+    </view>
+  </view>
+
+  <!-- 2. 商品名称 + 商品说明 -->
+  <view class="product-info-card card">
+    <view class="info-header flex-between">
+      <text class="product-title">{{ product.name }}</text>
+      <text class="product-badge">现点现制</text>
+    </view>
+
+    <text class="product-desc" wx:if="{{product.description || product.price_description}}">{{ product.description || product.price_description }}</text>
+    
+    <view class="ingredients-line" wx:if="{{product.main_ingredients}}">
+      <text class="ing-label">主要原料：</text>
+      <text class="ing-val">{{ product.main_ingredients }}</text>
+    </view>
+  </view>
+
+  <!-- 3. 专属定制 (实时单价、规格选项) -->
+  <view class="custom-card card">
+    <view class="custom-section-title flex-between">
+      <text class="section-title">专属定制</text>
+      <!-- 实时单价展示 -->
+      <view class="price-main flex-row">
+        <view class="price-box">
+          <text class="symbol">¥</text>
+          <text class="integer">{{ currentUnitPriceYuan }}</text>
+        </view>
+        <text class="price-unit-tag">/ 杯</text>
+      </view>
+    </view>
+
+    <!-- 专属规格选项 -->
+    <view class="sku-section">
+      <view wx:for="{{skuGroups}}" wx:key="category" class="sku-group-box">
+        <text class="group-title">{{ item.category }}</text>
+        <view class="sku-chips-wrap flex-row">
+          <view 
+            wx:for="{{item.skus}}" 
+            wx:for-item="sku" 
+            wx:key="id"
+            class="sku-chip {{selectedSkuMap[item.category] && selectedSkuMap[item.category].id === sku.id ? 'active' : ''}}"
+            bindtap="handleSelectSkuOption"
+            data-category="{{item.category}}"
+            data-sku="{{sku}}"
+          >
+            <text class="chip-name">{{ sku.name }}</text>
+            <text class="chip-delta" wx:if="{{sku.priceDeltaText}}">{{ sku.priceDeltaText }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 4. 详情页 (detail_page 宽度 750rpx) -->
+  <view class="detail-page-card">
+    <image class="detail-page-img" src="{{product.detail_page || '/images/orange_juice_detail.png'}}" mode="widthFix" />
+  </view>
+
+  <!-- 5. 购买数量与购物车结算卡片 (紧接详情页图片结束处) -->
+  <view class="detail-checkout-card card">
+    <!-- 购买数量选择行 -->
+    <view class="quantity-row flex-between">
+      <view class="quantity-label-box flex-col">
+        <text class="quantity-title">购买数量</text>
+        <text class="quantity-sub">单次制作 · 新鲜现榨</text>
+      </view>
+      <view class="quantity-stepper flex-row">
+        <view class="step-btn step-minus {{buyQuantity <= 1 ? 'disabled' : ''}}" bindtap="handleQuantityChange" data-delta="-1">-</view>
+        <text class="step-num">{{ buyQuantity }}</text>
+        <view class="step-btn step-plus" bindtap="handleQuantityChange" data-delta="1">+</view>
+      </view>
+    </view>
+
+    <!-- 底部操作按钮行 (立即购买明显更大) -->
+    <view class="bottom-action-buttons flex-row">
+      <!-- 加入购物车 (较小尺寸) -->
+      <view class="btn-detail-cart flex-center" bindtap="handleAddToCart">
+        <text class="cart-btn-icon">🛒</text>
+        <text class="cart-btn-text">加入购物车</text>
+      </view>
+      <!-- 立即购买 (明显更大更醒目) -->
+      <view class="btn-detail-buy flex-center" bindtap="handleBuyNow">
+        <text class="buy-btn-icon">⚡</text>
+        <text class="buy-btn-text">立即购买</text>
+        <text class="btn-sub-price">¥{{ currentTotalPriceYuan }}</text>
+      </view>
+    </view>
+  </view>
+
+</view>
+
+
