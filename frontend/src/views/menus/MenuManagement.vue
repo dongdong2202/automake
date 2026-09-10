@@ -34,9 +34,9 @@
           </div>
         </template>
 
-        <!-- 筛选条件 -->
-        <el-form :inline="true" size="default" style="margin-bottom: 14px;">
-          <el-form-item label="所属菜单分类">
+        <!-- 筛选与搜索工具栏 -->
+        <div class="table-toolbar">
+          <div class="toolbar-left">
             <el-select
               v-model="selectedCategory"
               placeholder="全部分类"
@@ -51,110 +51,116 @@
                 :value="c.id"
               />
             </el-select>
-          </el-form-item>
-          <el-form-item label="商品名称">
-            <el-input v-model="itemSearchKeyword" placeholder="输入商品名称" clearable />
-          </el-form-item>
-          <el-form-item>
+            <el-input
+              v-model="itemSearchKeyword"
+              placeholder="搜索商品名称..."
+              clearable
+              prefix-icon="Search"
+              style="width: 240px;"
+              @keyup.enter="fetchItems"
+              @clear="fetchItems"
+            />
             <el-button type="primary" icon="Search" @click="fetchItems">查询</el-button>
-          </el-form-item>
-        </el-form>
+          </div>
+        </div>
 
         <!-- 商品大表 -->
         <el-table v-loading="loadingItems" :data="itemList" stripe style="width: 100%">
-          <el-table-column prop="id" label="ID" width="65" align="center" />
-
-          <el-table-column label="商品主图" width="80" align="center">
+          <el-table-column label="商品基本信息" min-width="280">
             <template #default="{ row }">
-              <el-image
-                v-if="row.image_url"
-                :src="row.image_url"
-                :preview-src-list="[row.image_url]"
-                fit="cover"
-                preview-teleported
-                style="width: 44px; height: 44px; border-radius: 4px; border: 1px solid #ebeef5; cursor: pointer;"
-              />
-              <span v-else style="color: #c0c4cc; font-size: 11px;">无主图</span>
+              <div class="product-cell">
+                <div class="product-avatar-wrapper">
+                  <el-image
+                    v-if="row.image_url"
+                    :src="row.image_url"
+                    :preview-src-list="row.detail_page ? [row.image_url, row.detail_page] : [row.image_url]"
+                    fit="cover"
+                    preview-teleported
+                    class="product-avatar"
+                  />
+                  <div v-else class="product-avatar-placeholder">
+                    <span>☕</span>
+                  </div>
+                  <el-tooltip v-if="row.detail_page" content="包含长图详情页，点击主图可联动大图预览" placement="top">
+                    <span class="detail-badge">长图</span>
+                  </el-tooltip>
+                </div>
+                <div class="product-meta">
+                  <div class="product-name-row">
+                    <span class="product-name">{{ row.name }}</span>
+                    <el-tag size="small" type="primary" effect="light" class="category-tag">
+                      {{ row.category_name }}
+                    </el-tag>
+                  </div>
+                  <div class="product-sub-row">
+                    <span class="product-id">ID: #{{ row.id }}</span>
+                    <span v-if="row.device_model_name" class="model-badge">
+                      🖥 {{ row.device_model_name }}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </template>
           </el-table-column>
 
-          <el-table-column label="详情页图" width="80" align="center">
+          <el-table-column prop="base_price" label="基准售价" width="120" align="right">
             <template #default="{ row }">
-              <el-image
-                v-if="row.detail_page"
-                :src="row.detail_page"
-                :preview-src-list="[row.detail_page]"
-                fit="cover"
-                preview-teleported
-                style="width: 44px; height: 44px; border-radius: 4px; border: 1px solid #ebeef5; cursor: pointer;"
-              />
-              <span v-else style="color: #c0c4cc; font-size: 11px;">无详情图</span>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="name" label="商品名称" min-width="140" />
-
-          <el-table-column prop="category_name" label="所属分类" min-width="130">
-            <template #default="{ row }">
-              <el-tag size="small" type="info">{{ row.category_name }}</el-tag>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="device_model_name" label="适配机型" width="130">
-            <template #default="{ row }">
-              <el-tag size="small" effect="plain">{{ row.device_model_name || '-' }}</el-tag>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="base_price" label="基准售价" width="110">
-            <template #default="{ row }">
-              <span style="font-weight: bold; color: #E6A23C;">
-                {{ formatCurrency(row.base_price) }}
-              </span>
+              <div class="price-cell">
+                <span class="currency-symbol">¥</span>
+                <span class="price-value">{{ (fenToYuan(row.base_price || 0)).toFixed(2) }}</span>
+              </div>
             </template>
           </el-table-column>
 
           <el-table-column label="挂载规格 (SKU)" min-width="260">
             <template #default="{ row }">
-              <div v-if="row.skus && row.skus.length > 0" style="display: flex; flex-wrap: wrap; gap: 4px;">
-                <el-tag
+              <div v-if="row.skus && row.skus.length > 0" class="sku-tags-wrap">
+                <div
                   v-for="sku in row.skus"
                   :key="sku.id"
-                  size="small"
-                  :type="sku.is_active ? 'primary' : 'info'"
-                  effect="plain"
+                  class="sku-pill"
+                  :class="{ 'is-disabled': !sku.is_active }"
                 >
-                  {{ sku.template_name || sku.name }}
-                  <span v-if="sku.price_delta > 0" style="color: #E6A23C; font-weight: 600;">
-                    (+{{ formatCurrency(sku.price_delta) }})
+                  <span>{{ sku.template_name || sku.name }}</span>
+                  <span v-if="sku.price_delta > 0" class="sku-pill-delta">
+                    +{{ (fenToYuan(sku.price_delta)).toFixed(2) }}
                   </span>
-                </el-tag>
+                </div>
               </div>
-              <span v-else style="color: #909399; font-size: 12px;">未配置规格</span>
+              <span v-else class="sku-empty-hint">暂未挂载规格</span>
             </template>
           </el-table-column>
 
           <el-table-column prop="sort_order" label="排序" width="75" align="center" sortable />
 
-          <el-table-column label="上架状态" width="95" align="center">
+          <el-table-column label="上架状态" width="100" align="center">
             <template #default="{ row }">
-              <el-switch v-model="row.is_active" @change="handleToggleItemStatus(row)" />
+              <el-switch
+                v-model="row.is_active"
+                active-text="上架"
+                inactive-text="下架"
+                inline-prompt
+                size="small"
+                @change="handleToggleItemStatus(row)"
+              />
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column label="操作" width="200" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button type="primary" link size="small" @click="openEditItemDialog(row)">
-                编辑档案/规格
-              </el-button>
-              <el-button type="warning" link size="small" @click="openRecipeModal(row)">
-                定制配方
-              </el-button>
-              <el-popconfirm title="确定删除该全局商品吗？" @confirm="handleDeleteItem(row.id)">
-                <template #reference>
-                  <el-button type="danger" link size="small">删除</el-button>
-                </template>
-              </el-popconfirm>
+              <div class="action-btn-group">
+                <el-button type="primary" link size="small" @click="openEditItemDialog(row)">
+                  编辑档案
+                </el-button>
+                <el-button type="warning" link size="small" @click="openRecipeModal(row)">
+                  定制配方
+                </el-button>
+                <el-popconfirm title="确定删除该全局商品吗？" @confirm="handleDeleteItem(row.id)">
+                  <template #reference>
+                    <el-button type="danger" link size="small">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -692,14 +698,9 @@
                   选择该商品支持的规格，并在右侧直接调整专属加价（叠加计算基于当前最新值）
                 </span>
               </div>
-              <div style="display: flex; gap: 8px;">
-                <el-button type="success" plain size="small" icon="Plus" @click="openCreateTemplateDialog">
-                  + 新建规格模板
-                </el-button>
-                <el-button type="primary" size="small" icon="Plus" @click="handleAddSkuRow">
-                  + 添加规格
-                </el-button>
-              </div>
+              <el-button type="primary" size="small" icon="Plus" @click="handleAddSkuRow">
+                + 添加规格
+              </el-button>
             </div>
           </template>
 
@@ -800,14 +801,6 @@
               </template>
             </el-table-column>
 
-            <!-- 默认加价 -->
-            <el-table-column label="模板默认加价" width="110" align="center">
-              <template #default="{ row }">
-                <span style="color: #909399;">
-                  +{{ formatCurrency(row.default_price_delta || 0) }}
-                </span>
-              </template>
-            </el-table-column>
 
             <!-- 商品专属加价 (可编辑) -->
             <el-table-column label="本商品加价 (元)" width="150" align="center">
@@ -823,17 +816,6 @@
               </template>
             </el-table-column>
 
-            <!-- 计算后叠加最新售价 (加当前最新值) -->
-            <el-table-column label="叠加后最新售价" width="130" align="center">
-              <template #default="{ row, $index }">
-                <div style="font-weight: bold; color: #E6A23C; font-size: 13px;">
-                  ¥{{ getAccumulatedPrice($index) }}
-                </div>
-                <div style="font-size: 10px; color: #909399;">
-                  (前值 + ¥{{ Number(row.priceDeltaYuan || 0).toFixed(2) }})
-                </div>
-              </template>
-            </el-table-column>
 
             <!-- 状态 -->
             <el-table-column label="启用" width="75" align="center">
@@ -852,18 +834,6 @@
             </el-table-column>
           </el-table>
 
-          <!-- 底部叠加汇总 -->
-          <div v-if="itemFormData.skus.length > 0" class="sku-summary-bar">
-            <div class="summary-item">
-              基准售价: <strong>¥{{ Number(itemFormData.priceYuan || 0).toFixed(2) }}</strong>
-            </div>
-            <div class="summary-item">
-              + 规格累计加价: <strong style="color: #E6A23C;">{{ getTotalDeltaPrice() }} 元</strong>
-            </div>
-            <div class="summary-item total">
-              叠加后最终总售价: <strong>¥{{ getTotalCombinedPrice() }}</strong>
-            </div>
-          </div>
         </el-card>
       </el-form>
 
@@ -1833,36 +1803,6 @@ function isTemplateAlreadySelected(currentRow: any, tplId: number) {
   return itemFormData.skus.some((s: any) => s !== currentRow && s.template === tplId)
 }
 
-function getAccumulatedPrice(index: number): string {
-  let total = Number(itemFormData.priceYuan || 0)
-  for (let i = 0; i <= index; i++) {
-    const sku = itemFormData.skus[i]
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return total.toFixed(2)
-}
-
-function getTotalCombinedPrice(): string {
-  let total = Number(itemFormData.priceYuan || 0)
-  for (const sku of itemFormData.skus) {
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return total.toFixed(2)
-}
-
-function getTotalDeltaPrice(): string {
-  let total = 0
-  for (const sku of itemFormData.skus) {
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return (total >= 0 ? '+' : '') + total.toFixed(2)
-}
 
 async function handleUploadImage(uploadFile: any, field: 'image_url' | 'detail_page') {
   const rawFile = uploadFile.raw
@@ -2316,27 +2256,169 @@ onMounted(() => {
   gap: 8px;
   align-items: center;
 }
-.sku-summary-bar {
-  margin-top: 12px;
-  padding: 10px 16px;
-  background: #fdf6ec;
-  border-radius: 6px;
-  border: 1px solid #faecd8;
+
+/* 工具栏 */
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.toolbar-left {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* 商品大表基本信息单元格 */
+.product-cell {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 24px;
-  font-size: 13px;
-  color: #606266;
+  gap: 14px;
+  padding: 4px 0;
 }
-.summary-item strong {
+.product-avatar-wrapper {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}
+.product-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.product-avatar-placeholder {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  background-color: #f1f5f9;
+  border: 1px dashed #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.detail-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.product-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+}
+.product-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.product-name {
+  font-weight: 600;
   font-size: 14px;
+  color: #1e293b;
+  line-height: 1.3;
 }
-.summary-item.total {
-  color: #303133;
+.category-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  height: 20px;
+  line-height: 18px;
+  border-radius: 4px;
 }
-.summary-item.total strong {
-  color: #E6A23C;
-  font-size: 16px;
+.product-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.product-id {
+  color: #94a3b8;
+  font-family: monospace;
+}
+.model-badge {
+  color: #64748b;
+  background-color: #f8fafc;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  font-size: 11px;
+}
+
+/* 价格单元格 */
+.price-cell {
+  display: inline-flex;
+  align-items: baseline;
+  color: #0f172a;
+  font-weight: 600;
+}
+.currency-symbol {
+  font-size: 12px;
+  margin-right: 2px;
+  color: #64748b;
+}
+.price-value {
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -0.2px;
+}
+
+/* 挂载规格胶囊 tags */
+.sku-tags-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sku-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  transition: all 0.2s ease;
+}
+.sku-pill.is-disabled {
+  background-color: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+.sku-pill-delta {
+  font-weight: 600;
+  color: #ea580c;
+  font-size: 11px;
+  background-color: #fff7ed;
+  border-radius: 8px;
+  padding: 0 4px;
+}
+.sku-empty-hint {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* 操作按钮 */
+.action-btn-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 </style>

@@ -83,7 +83,7 @@ class OrderMainAdmin(ModelAdmin):
         'paid_at', 'done_at', 'created_at', 'updated_at'
     )
     inlines = [OrderItemInline, OrderStatusLogInline]
-    actions = ['action_manual_refund']
+    actions = ['action_auto_refund', 'action_force_refund']
     date_hierarchy = 'created_at'
     show_full_result_count = False
 
@@ -103,21 +103,53 @@ class OrderMainAdmin(ModelAdmin):
             )
         return '—'
 
-    @admin.action(description='手动退款（调用微信退款接口）')
-    def action_manual_refund(self, request, queryset):
+    @admin.action(description='自动退款（未制作，放库存，自动退款）')
+    def action_auto_refund(self, request, queryset):
         from django.contrib import messages
+        from orders.services import restore_order_inventory
         from payments.services import refund_order
 
         success_count = 0
         for order in queryset:
+            if order.status == OrderMain.STATUS_DONE:
+                self.message_user(request, f'订单 {order.order_no} 已制作完成，物料已被物理消耗，无法使用自动退款，请使用【强制退款】', level=messages.WARNING)
+                continue
+            if order.status in [OrderMain.STATUS_REFUNDED, OrderMain.STATUS_REFUNDING]:
+                self.message_user(request, f'订单 {order.order_no} 已处于退款状态，跳过', level=messages.WARNING)
+                continue
             try:
-                refund_order(order, reason=f'管理后台手动退款: 操作员 {request.user.username}')
+                restore_order_inventory(order, operator=request.user.username, reason=f'后台批量自动退款放库')
+                refund_order(order, reason=f'[自动退款] 管理员 {request.user.username} 批量操作')
                 success_count += 1
             except Exception as e:
-                self.message_user(request, f'订单 {order.order_no} 退款失败: {e}', level=messages.ERROR)
+                self.message_user(request, f'订单 {order.order_no} 自动退款失败: {e}', level=messages.ERROR)
 
         if success_count > 0:
-            self.message_user(request, f'成功发起 {success_count} 笔订单的退款请求', level=messages.SUCCESS)
+            self.message_user(request, f'成功对 {success_count} 笔未制作订单执行自动退款并释放库存', level=messages.SUCCESS)
+
+    @admin.action(description='强制退款（不退库存，客诉或制作失败）')
+    def action_force_refund(self, request, queryset):
+        from django.contrib import messages
+        from payments.services import refund_order
+        from orders.models import ProductionTask
+
+        success_count = 0
+        for order in queryset:
+            if order.status in [OrderMain.STATUS_REFUNDED, OrderMain.STATUS_REFUNDING]:
+                self.message_user(request, f'订单 {order.order_no} 已处于退款状态，跳过', level=messages.WARNING)
+                continue
+            try:
+                ProductionTask.objects.filter(
+                    order=order,
+                    status__in=[ProductionTask.TASK_PENDING, ProductionTask.TASK_SENT, ProductionTask.TASK_MAKING]
+                ).update(status=ProductionTask.TASK_FAILED, failure_reason=f'强制退款: 管理员 {request.user.username}')
+                refund_order(order, reason=f'[强制退款] 管理员 {request.user.username} 批量操作(不退库存)')
+                success_count += 1
+            except Exception as e:
+                self.message_user(request, f'订单 {order.order_no} 强制退款失败: {e}', level=messages.ERROR)
+
+        if success_count > 0:
+            self.message_user(request, f'成功对 {success_count} 笔订单执行强制退款（未归还物料库存）', level=messages.SUCCESS)
 
 
 @admin.register(ProductionTask)

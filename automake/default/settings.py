@@ -345,6 +345,7 @@ WECHAT_APP_SECRET = os.environ.get('WECHAT_APP_SECRET', '')   # 小程序 AppSec
 # ============================================================
 WECHAT_PAY_MCH_ID = os.environ.get('WECHAT_PAY_MCH_ID', '')              # 商户号
 WECHAT_PAY_API_V3_KEY = os.environ.get('WECHAT_PAY_API_V3_KEY', '')      # APIv3 密钥
+WECHAT_PAY_API_KEY = os.environ.get('WECHAT_PAY_API_KEY', '') or WECHAT_PAY_API_V3_KEY  # APIv2 密钥（付款码支付专用）
 WECHAT_PAY_CERT_SERIAL = os.environ.get('WECHAT_PAY_CERT_SERIAL', '')    # 证书序列号
 WECHAT_PAY_PRIVATE_KEY_PATH = os.environ.get(                             # 商户私钥文件路径
     'WECHAT_PAY_PRIVATE_KEY_PATH',
@@ -514,6 +515,9 @@ LOGGING = {
         'monitor':       {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
         'global_config': {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
         'utils':         {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'admin_api':     {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'ws_device':     {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
+        'simulator':     {'handlers': ['console', 'async_app', 'async_err'], 'level': 'DEBUG', 'propagate': False},
     },
 
     # ── Root Logger（兜底，捕获未列举模块的日志） ──────────

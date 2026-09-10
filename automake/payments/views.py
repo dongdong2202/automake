@@ -11,6 +11,8 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
+from rest_framework import serializers
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from utils.response import ok, error
 from utils.wechat import WechatPayV3
@@ -20,6 +22,78 @@ from .services import create_pay_request, process_payment_success
 logger = logging.getLogger(__name__)
 
 
+class PayCreateRequestSerializer(serializers.Serializer):
+    order_no = serializers.CharField(required=True, max_length=64, help_text="商户订单号")
+
+
+class PayNativeCreateRequestSerializer(serializers.Serializer):
+    order_no = serializers.CharField(required=False, max_length=64, help_text="商户订单号")
+
+
+class PayCodePayRequestSerializer(serializers.Serializer):
+    order_no = serializers.CharField(required=True, max_length=64, help_text="商户订单号")
+    auth_code = serializers.CharField(required=True, max_length=64, help_text="用户 18 位付款码")
+    device_sn = serializers.CharField(required=False, allow_blank=True, max_length=128, help_text="设备编号 (可选)")
+
+
+class PayTestCreateOrderRequestSerializer(serializers.Serializer):
+    store_id = serializers.IntegerField(required=False, default=1, help_text="门店 ID")
+    device_sn = serializers.CharField(required=False, default="sn005", help_text="设备 SN")
+    item_id = serializers.IntegerField(required=False, help_text="商品 ID (可选)")
+
+
+class PayMockSuccessRequestSerializer(serializers.Serializer):
+    order_no = serializers.CharField(required=True, max_length=64, help_text="商户订单号")
+
+
+class PayRefundRequestSerializer(serializers.Serializer):
+    device_sn = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=128,
+        help_text="设备编号 (如: sn005)"
+    )
+    refund_stock = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text="退款退库存单号列表 (如: ['202608300001'])"
+    )
+    refund_no_stock = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text="退款不退库存单号列表 (如: ['202608300002'])"
+    )
+    order_no = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        help_text="单个退款订单号 (可选，兼容单单退款)"
+    )
+    reason = serializers.CharField(
+        required=False,
+        default="设备或用户申请退款",
+        max_length=256,
+        help_text="退款原因"
+    )
+
+
+class PayRefundResponseDataSerializer(serializers.Serializer):
+    success = serializers.BooleanField(help_text="是否全部成功")
+    success_orders = serializers.ListField(
+        child=serializers.CharField(),
+        default=list,
+        help_text="成功退款的订单号列表"
+    )
+
+
+class PayRefundResponseSerializer(serializers.Serializer):
+    code = serializers.IntegerField(default=1, help_text="状态码 (1: 全部成功, 0: 失败或部分成功)")
+    message = serializers.CharField(default="ok", help_text="提示信息")
+    data = PayRefundResponseDataSerializer(help_text="返回数据")
+
+
 class PayCreateView(APIView):
     """
     发起支付接口
@@ -27,11 +101,14 @@ class PayCreateView(APIView):
     POST /api/pay/create
     请求体：{ "order_no": "202506090001234" }
     响应：微信小程序 wx.requestPayment() 所需参数
-
-    前置条件：订单已创建且状态为"待支付"
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="小程序支付下单 (JSAPI)",
+        description="传入 order_no，返回微信小程序调起支付所需签名参数。",
+        request=PayCreateRequestSerializer,
+    )
     def post(self, request):
         order_no = request.data.get('order_no', '').strip()
         if not order_no:
@@ -66,11 +143,15 @@ class PayNativeCreateView(APIView):
 
     POST /api/pay/wechat/native
     POST /api/orders/<str:order_id>/native-payment/
-    请求体：{ "order_no": "20260825123456" } (若 URL 中包含 order_id 可省略)
-    响应：包含 code_url，供上位机/前端生成二维码展示
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
+    @extend_schema(
+        summary="Native 扫码支付下单",
+        description="传入 order_no，返回支付二维码 code_url。",
+        request=PayNativeCreateRequestSerializer,
+    )
     def post(self, request, order_id=None):
         order_no = order_id or request.data.get('order_no', '').strip()
         if not order_no:
@@ -84,6 +165,7 @@ class PayNativeCreateView(APIView):
         try:
             from .services import create_native_pay_request
             res = create_native_pay_request(order, user=request.user if request.user.is_authenticated else order.user)
+            
             return ok(res, message='Native 支付二维码生成成功')
         except ValueError as e:
             return error(str(e), code=5003)
@@ -98,15 +180,15 @@ class PayCodePayView(APIView):
 
     POST /api/internal/payments/wechat/codepay/
     POST /api/pay/wechat/codepay
-    请求体：
-    {
-        "order_no": "20260825123456",
-        "auth_code": "134567890123456789",  // 18位付款码
-        "device_sn": "sn005"                 // 可选
-    }
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
+    @extend_schema(
+        summary="付款码支付 / 被扫支付",
+        description="商户扫用户微信付款码扣款。",
+        request=PayCodePayRequestSerializer,
+    )
     def post(self, request):
         order_no = request.data.get('order_no', '').strip()
         auth_code = request.data.get('auth_code', '').strip()
@@ -133,6 +215,8 @@ class PayCodePayView(APIView):
                 user=request.user if request.user.is_authenticated else order.user,
                 spbill_create_ip=client_ip
             )
+            if res.get('status') == 'failed':
+                return error(res.get('message', '付款码支付失败'), code=5007, data=res)
             return ok(res, message=res.get('message', '扣款请求已处理'))
         except ValueError as e:
             return error(str(e), code=5003)
@@ -150,7 +234,15 @@ class PayStatusQueryView(APIView):
     GET /api/internal/payments/<str:out_trade_no>/status/
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
+    @extend_schema(
+        summary="订单支付状态查询",
+        description="根据订单号或交易号查询并同步最新支付状态。",
+        parameters=[
+            OpenApiParameter(name='order_no', description='商户订单号', required=False, type=str),
+        ]
+    )
     def get(self, request, order_id=None, order_no=None, out_trade_no=None):
         target_no = order_id or order_no or out_trade_no or request.query_params.get('order_no')
         if not target_no:
@@ -158,7 +250,8 @@ class PayStatusQueryView(APIView):
 
         try:
             from .services import query_and_sync_payment_status
-            status_data = query_and_sync_payment_status(target_no)
+            sync_wechat = request.query_params.get('sync_wechat', '').lower() in ('1', 'true')
+            status_data = query_and_sync_payment_status(target_no, sync_wechat=sync_wechat)
             return ok(status_data, message='查询成功')
         except ValueError as e:
             return error(str(e), code=5002, status=404)
@@ -173,6 +266,7 @@ class PaymentTestPageView(APIView):
     GET /payment-test/
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def get(self, request):
         from django.shortcuts import render
@@ -198,6 +292,7 @@ class PayTestCreateOrderView(APIView):
     POST /api/pay/test/create-order
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         from users.models import User
@@ -401,7 +496,13 @@ class PayMockSuccessView(APIView):
     请求体：{ "order_no": "202506090001234" }
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
+    @extend_schema(
+        summary="模拟支付成功 (开发环境)",
+        description="模拟微信支付成功并推进后续制作与出库流程。",
+        request=PayMockSuccessRequestSerializer,
+    )
     def post(self, request):
         from django.conf import settings
         from django.utils import timezone
@@ -449,52 +550,155 @@ class PayMockSuccessView(APIView):
 
 class PayRefundView(APIView):
     """
-    主动退款接口
+    退款接口 (支持设备批量退款与单单退款)
     
     POST /api/pay/refund
-    请求体：{ "order_no": "202506090001234" }
-    逻辑：只有在订单尚未开始制作时（STATUS_PAID），允许自动退款。
-    操作包括：向下发取消指令、释放Redis库存、调用微信退款接口。
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+    throttle_classes = []
 
+    @extend_schema(
+        summary="退款接口 (支持设备批量退款与单单退款)",
+        description="支持设备批量退款：输入 device_sn、退款退库存单号列表 (refund_stock)、退款不退库存单号列表 (refund_no_stock) 及 reason；也支持传入单个 order_no 执行单笔退款。",
+        request=PayRefundRequestSerializer,
+        responses={200: PayRefundResponseSerializer}
+    )
     def post(self, request):
-        order_no = request.data.get('order_no', '').strip()
-        if not order_no:
-            return error('order_no 不能为空', code=5001)
+        data = request.data if isinstance(request.data, dict) else {}
+        params = request.query_params
 
-        try:
-            order = OrderMain.objects.prefetch_related('items').get(order_no=order_no, user=request.user)
-        except OrderMain.DoesNotExist:
-            return error('订单不存在', code=5002, status=404)
+        device_sn = (
+            data.get('device_sn') or params.get('device_sn') or
+            data.get('sn') or params.get('sn') or
+            data.get('device_no') or params.get('device_no') or ''
+        )
+        if isinstance(device_sn, str):
+            device_sn = device_sn.strip()
 
-        # 检查是否可以自动退款：必须是 PENDING_DISPENSE (STATUS_PAID)
-        if order.status != OrderMain.STATUS_PAID:
-            return error('无法自动完成退款，订单可能已开始制作或已处理，请联系客服', code=5008)
-
-        from mqtt import issue_device_command
-        from orders.services import update_order_status
-
-        # 1. 向设备下发取消指令 (撤单)
-        if order.device:
-            success = issue_device_command(
-                device_sn=order.device.device_sn,
-                command_type='cancel',
-                order_no=order.order_no
-            )
-            if not success:
-                return error('设备离线或下发指令失败，无法自动撤单退款，请联系客服', code=5010)
-        else:
-            return error('订单未绑定设备，无法撤单', code=5011)
-
-        # 记录状态（可选，标识正在撤单中）
-        update_order_status(
-            order=order,
-            new_status=OrderMain.STATUS_REFUNDING,
-            operator='user',
-            remark='用户申请退款，等待设备确认撤单'
+        refund_stock = (
+            data.get('refund_stock') or
+            data.get('with_stock') or
+            data.get('stock_orders') or
+            data.get('refund_restore_stock_order_nos') or
+            []
         )
 
-        return ok(message='撤单指令已下发，等待设备确认后将自动退款')
+        refund_no_stock = (
+            data.get('refund_no_stock') or
+            data.get('without_stock') or
+            data.get('no_stock_orders') or
+            data.get('refund_no_restore_stock_order_nos') or
+            []
+        )
 
+        order_no = (
+            data.get('order_no') or params.get('order_no') or
+            data.get('orderNo') or params.get('orderNo') or ''
+        )
+        if isinstance(order_no, str):
+            order_no = order_no.strip()
 
+        reason = str(data.get('reason') or params.get('reason') or '退款申请').strip()
+
+        # 场景 1：设备批量退款（传入 device_sn 或 退款单号列表）
+        if device_sn or refund_stock or refund_no_stock:
+            if not device_sn:
+                sample_no = (refund_stock[0] if refund_stock else (refund_no_stock[0] if refund_no_stock else ''))
+                order_obj = OrderMain.objects.filter(order_no=sample_no).first()
+                if order_obj and order_obj.device:
+                    device_sn = order_obj.device.device_sn
+                else:
+                    return Response({
+                        'code': 0,
+                        'message': '缺少设备编号 (device_sn)',
+                        'data': {'success': False, 'success_orders': []}
+                    }, status=400)
+
+            from payments.services import batch_refund_device_orders
+            try:
+                result = batch_refund_device_orders(
+                    device_sn=device_sn,
+                    refund_stock=refund_stock,
+                    refund_no_stock=refund_no_stock,
+                    reason=reason
+                )
+                is_success = result.get('success', False)
+                msg = 'ok' if is_success else ('部分退款成功' if result.get('success_orders') else '退款处理失败')
+                return Response({
+                    'code': 1 if is_success else 0,
+                    'message': msg,
+                    'data': result
+                })
+            except ValueError as e:
+                return Response({
+                    'code': 0,
+                    'message': str(e),
+                    'data': {'success': False, 'success_orders': []}
+                }, status=400)
+            except Exception as e:
+                logger.exception(f"批量退款异常: {e}")
+                return Response({
+                    'code': 0,
+                    'message': f"退款处理异常: {e}",
+                    'data': {'success': False, 'success_orders': []}
+                }, status=500)
+
+        # 场景 2：单单退款（传入 order_no）
+        if not order_no:
+            return Response({
+                'code': 0,
+                'message': '请提供 device_sn 与退款单号列表，或提供单个 order_no',
+                'data': {'success': False, 'success_orders': []}
+            }, status=400)
+
+        try:
+            order_qs = OrderMain.objects.prefetch_related('items').filter(order_no=order_no)
+            if request.user and request.user.is_authenticated:
+                order = order_qs.filter(user=request.user).first() or order_qs.first()
+            else:
+                order = order_qs.first()
+            if not order:
+                return Response({
+                    'code': 0,
+                    'message': '订单不存在',
+                    'data': {'success': False, 'success_orders': []}
+                }, status=404)
+        except Exception as e:
+            return Response({
+                'code': 0,
+                'message': f'查询订单失败: {e}',
+                'data': {'success': False, 'success_orders': []}
+            }, status=400)
+
+        from payments.services import refund_order
+        from orders.services import restore_order_inventory
+        try:
+            restore_res = None
+            is_unproduced = order.status in [OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING]
+            should_restore = is_unproduced or bool(data.get('restore_stock', False))
+
+            refund_order(order, reason=reason)
+            if should_restore:
+                restore_res = restore_order_inventory(
+                    order=order,
+                    operator=f'user:{request.user.id if request.user.is_authenticated else "kiosk"}',
+                    reason=reason
+                )
+
+            return Response({
+                'code': 1,
+                'message': '退款处理成功（已释放物料库存）' if (restore_res and restore_res.get('restored_materials')) else '退款处理成功',
+                'data': {
+                    'success': True,
+                    'success_orders': [order.order_no],
+                    'order_no': order.order_no,
+                    'restored_materials': restore_res.get('restored_materials', []) if restore_res else []
+                }
+            })
+        except Exception as e:
+            logger.exception(f"单单退款异常: {e}")
+            return Response({
+                'code': 0,
+                'message': f"退款处理异常: {e}",
+                'data': {'success': False, 'success_orders': []}
+            }, status=500)

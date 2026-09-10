@@ -207,9 +207,12 @@ export interface StoreMenuItem {
   store: number
   store_name?: string
   device_model?: number
+  device_model_name?: string
   global_item: number
   global_item_name: string
   category_name?: string
+  image_url?: string
+  detail_page?: string
   global_base_price: number
   base_price: number
   is_active: boolean
@@ -245,9 +248,16 @@ export interface MaterialItem {
   code: string
   material_type: string
   price: string | number
+  latest_price?: string | number
   quantity: string | number
   unit: string
   shelf_life?: string
+  shelf_life_days?: number
+  default_expiration_date?: string
+  nearest_expiration_date?: string | null
+  nearest_days_left?: number | null
+  nearest_batch_no?: string
+  nearest_expiration_status?: string
   storage_conditions?: string
   retrieve_count: number
   created_at: string
@@ -261,14 +271,39 @@ export interface InventoryRecordItem {
   material_unit: string
   record_type: 'in' | 'out'
   quantity: string | number
+  remaining_quantity?: string | number
+  batch_no?: string
+  source_batch?: number
+  source_batch_no?: string
   price?: string | number
   store?: number
   store_name?: string
   operator?: number
   operator_username?: string
   expiration_date?: string
+  days_until_expiration?: number
+  expiration_status?: string
   remarks?: string
   created_at: string
+}
+
+export interface StoreInventoryBatchItem {
+  id: number
+  store: number
+  store_name?: string
+  material: number
+  material_name?: string
+  material_code?: string
+  material_unit?: string
+  batch_no: string
+  quantity: string | number
+  cost_price: string | number
+  expiration_date?: string
+  days_until_expiration?: number
+  expiration_status?: string
+  source_inbound?: number
+  created_at: string
+  updated_at: string
 }
 
 export interface OrderItemRecord {

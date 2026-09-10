@@ -1,3 +1,4 @@
+import logging
 from django.db.models import Q
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -10,6 +11,8 @@ from ..serializers import (
     StoreInventoryRecordSerializer
 )
 from ..filters import StandardPagination
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceListCreateView(APIView):
@@ -85,9 +88,11 @@ class DeviceListCreateView(APIView):
 
         serializer = DeviceAdminSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"[AdminDeviceCreate] 添加设备参数错误: {serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         device = serializer.save()
+        logger.info(f"[AdminDeviceCreate] 超级管理员 {request.user.username} 录入新设备: sn={device.device_sn}, name={device.device_name}")
         return ok(DeviceAdminSerializer(device).data, message='设备添加成功')
 
 
@@ -137,9 +142,11 @@ class DeviceDetailView(APIView):
 
         serializer = DeviceAdminSerializer(device, data=request.data, partial=True)
         if not serializer.is_valid():
+            logger.warning(f"[AdminDeviceUpdate] 更新设备参数错误: sn={sn}, errors={serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         updated_device = serializer.save()
+        logger.info(f"[AdminDeviceUpdate] 超级管理员 {request.user.username} 更新设备: sn={sn}, name={updated_device.device_name}")
         return ok(DeviceAdminSerializer(updated_device).data, message='设备更新成功')
 
     def delete(self, request, sn):
@@ -152,6 +159,7 @@ class DeviceDetailView(APIView):
 
         device_name = device.device_name
         device.delete()
+        logger.info(f"[AdminDeviceDelete] 超级管理员 {request.user.username} 删除设备: sn={sn}, name={device_name}")
         return ok(message=f'设备 [{device_name} ({sn})] 已成功删除')
 
 

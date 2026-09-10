@@ -1,3 +1,4 @@
+import logging
 from django.utils import timezone
 from rest_framework.views import APIView
 from utils.permissions import IsAdmin
@@ -5,6 +6,9 @@ from utils.response import ok, error
 from notifications.models import NotifyEvent
 from ..serializers import NotifyEventAdminSerializer
 from ..filters import StandardPagination
+
+logger = logging.getLogger(__name__)
+
 
 
 class NotifyEventListView(APIView):
@@ -52,5 +56,7 @@ class NotifyEventHandleView(APIView):
         event.handled_at = timezone.now()
         event.handled_by = request.user
         event.save(update_fields=['is_handled', 'handled_at', 'handled_by'])
+        logger.info("NotifyEvent marked handled: id=%s by user=%s", pk, request.user)
 
         return ok(message='告警事件已成功标记为已处理')
+

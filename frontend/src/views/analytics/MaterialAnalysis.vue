@@ -21,7 +21,7 @@
               物料库存余量总览 (%)
             </span>
           </div>
-          <BaseChart :option="stockProgressChartOption" height="340px" />
+          <BaseChart :option="stockProgressChartOption" height="350px" />
         </div>
       </el-col>
 
@@ -33,19 +33,19 @@
               物料出库分拨消耗趋势
             </span>
           </div>
-          <BaseChart :option="consumptionChartOption" height="340px" />
+          <BaseChart :option="consumptionChartOption" height="350px" />
         </div>
       </el-col>
     </el-row>
 
     <!-- 补货建议与预测表格 -->
-    <div class="chart-card">
+    <div class="chart-card" style="margin-top: 16px;">
       <div class="card-header">
         <span class="card-title">
           <el-icon><Warning /></el-icon>
           物料消耗预测与智能补货建议
         </span>
-        <el-tag type="info" size="small">基于近 7 天平均出库速率推算</el-tag>
+        <el-tag type="info" size="small" effect="plain">基于近 7 天平均出库速率推算</el-tag>
       </div>
 
       <el-table :data="forecastList" stripe style="width: 100%">
@@ -53,7 +53,7 @@
         <el-table-column prop="name" label="物料名称" min-width="160" />
         <el-table-column prop="current_stock" label="当前总库存" width="140">
           <template #default="{ row }">
-            {{ row.current_stock }} {{ row.unit }}
+            <strong>{{ row.current_stock }}</strong> {{ row.unit }}
           </template>
         </el-table-column>
         <el-table-column prop="avg_daily_consumption" label="日均消耗速率" width="150">
@@ -63,8 +63,10 @@
         </el-table-column>
         <el-table-column prop="days_remaining" label="预计剩余可用" width="150" sortable>
           <template #default="{ row }">
-            <span v-if="row.days_remaining > 365">充足 (>1年)</span>
-            <span v-else>{{ row.days_remaining }} 天</span>
+            <span v-if="row.days_remaining > 365" class="text-success">充足 (>1年)</span>
+            <span v-else :class="row.days_remaining <= 3 ? 'text-danger fw-bold' : row.days_remaining <= 7 ? 'text-warning' : ''">
+              {{ row.days_remaining }} 天
+            </span>
           </template>
         </el-table-column>
         <el-table-column prop="urgency" label="补货建议" width="140">
@@ -72,10 +74,10 @@
             <el-tag v-if="row.urgency === 'critical'" type="danger" effect="dark" size="small">
               ⚠️ 紧急需补货
             </el-tag>
-            <el-tag v-else-if="row.urgency === 'warning'" type="warning" size="small">
+            <el-tag v-else-if="row.urgency === 'warning'" type="warning" size="small" effect="plain">
               需近期补货
             </el-tag>
-            <el-tag v-else type="success" size="small">
+            <el-tag v-else type="success" size="small" effect="plain">
               库存充足
             </el-tag>
           </template>
@@ -102,44 +104,90 @@ import {
   getMaterialConsumptionTrendApi,
   getMaterialForecastApi,
 } from '@/api/analytics'
+import {
+  createLinearGradient,
+  CHART_COLORS,
+  MODERN_TOOLTIP,
+  MODERN_GRID,
+} from '@/utils/chartThemes'
 
 const stockList = ref<any[]>([])
 const consumptionList = ref<any[]>([])
 const forecastList = ref<any[]>([])
 
-// 1. 库存百分比进度 Option
+/**
+ * 1. 库存余量百分比进度水平胶囊柱图 Option
+ * - 动态三段色板预警：>=60% 绿色 (安全)；30%-60% 橙黄 (待补)；<30% 红色 (缺料警告)
+ */
 const stockProgressChartOption = computed(() => {
   const names = stockList.value.map((i) => i.name).reverse()
   const percents = stockList.value.map((i) => i.percentage).reverse()
 
   return {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '8%', bottom: '5%', top: '5%', containLabel: true },
-    xAxis: { type: 'value', max: 100, name: '余量(%)' },
-    yAxis: { type: 'category', data: names },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+    },
+    grid: {
+      ...MODERN_GRID,
+      left: '4%',
+      right: '8%',
+      top: '4%',
+      bottom: '6%',
+    },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      name: '余量 (%)',
+      axisLabel: { color: '#909399' },
+      splitLine: { lineStyle: { color: '#F2F6FC', type: 'dashed' } },
+    },
+    yAxis: {
+      type: 'category',
+      data: names,
+      axisLine: { lineStyle: { color: '#E4E7ED' } },
+      axisLabel: { color: '#606266', fontSize: 12 },
+    },
     series: [
       {
         name: '余量百分比',
         type: 'bar',
+        barMaxWidth: 18,
         data: percents,
         itemStyle: {
           color: (params: any) => {
             const val = params.value
-            return val >= 60 ? '#67C23A' : val >= 30 ? '#E6A23C' : '#F56C6C'
+            if (val >= 60) {
+              return createLinearGradient('#67C23A', '#95D475', false)
+            } else if (val >= 30) {
+              return createLinearGradient('#E6A23C', '#F3D19E', false)
+            }
+            return createLinearGradient('#F56C6C', '#F89898', false)
           },
-          borderRadius: [0, 4, 4, 0],
+          borderRadius: [0, 6, 6, 0],
+        },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: '{c}%',
+          color: '#909399',
+          fontSize: 11,
         },
       },
     ],
   }
 })
 
-// 2. 物料消耗趋势 Option
+/**
+ * 2. 物料出库分拨消耗趋势多折线 Option
+ * - 结合现代色彩网格与平滑贝塞尔曲线，观察各物料随时间出库消耗动向
+ */
 const consumptionChartOption = computed(() => {
   const dates = Array.from(new Set(consumptionList.value.map((i) => i.date))).sort()
   const materials = Array.from(new Set(consumptionList.value.map((i) => i.material_name)))
 
-  const series = materials.map((mat) => {
+  const series = materials.map((mat, idx) => {
     const data = dates.map((d) => {
       const match = consumptionList.value.find((c) => c.date === d && c.material_name === mat)
       return match ? match.quantity : 0
@@ -147,17 +195,37 @@ const consumptionChartOption = computed(() => {
     return {
       name: mat,
       type: 'line',
-      smooth: true,
+      smooth: 0.35,
+      symbol: 'circle',
+      symbolSize: 5,
       data: data,
     }
   })
 
   return {
-    tooltip: { trigger: 'axis' },
-    legend: { bottom: 0 },
-    grid: { left: '3%', right: '4%', bottom: '10%', top: '8%', containLabel: true },
-    xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: '出库量' },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'axis',
+    },
+    color: CHART_COLORS.palette,
+    legend: {
+      bottom: 0,
+      icon: 'roundRect',
+      textStyle: { fontSize: 11, color: '#606266' },
+    },
+    grid: MODERN_GRID,
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: '#E4E7ED' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      name: '出库用量',
+      axisLabel: { color: '#909399' },
+      splitLine: { lineStyle: { color: '#F2F6FC', type: 'dashed' } },
+    },
     series: series,
   }
 })
@@ -182,3 +250,26 @@ onMounted(() => {
   fetchData()
 })
 </script>
+
+<style scoped>
+.chart-card {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+}
+
+.text-success {
+  color: #67c23a;
+}
+
+.text-warning {
+  color: #e6a23c;
+}
+
+.text-danger {
+  color: #f56c6c;
+}
+
+.fw-bold {
+  font-weight: 600;
+}
+</style>

@@ -83,15 +83,44 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="price" label="参考单价(元)" width="120">
-            <template #default="{ row }">¥{{ Number(row.price).toFixed(2) }}</template>
-          </el-table-column>
-          <el-table-column prop="shelf_life" label="保质期" width="130">
+          <el-table-column prop="price" label="参考进价(元)" width="130">
             <template #default="{ row }">
-              <el-tag v-if="!row.shelf_life_days && (!row.shelf_life || row.shelf_life === '永久有效')" type="info" size="small" effect="plain">
-                永久有效
-              </el-tag>
-              <span v-else>{{ row.shelf_life }}</span>
+              <div style="display: flex; flex-direction: column;">
+                <span style="font-weight: 600;">¥{{ Number(row.price || 0).toFixed(2) }}</span>
+                <span style="font-size: 11px; color: #909399;">最新采购价</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="在库批次最近到期日" min-width="190">
+            <template #default="{ row }">
+              <template v-if="row.nearest_expiration_date">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 13px; font-weight: 600;">{{ row.nearest_expiration_date }}</span>
+                  <div>
+                    <el-tag v-if="row.nearest_expiration_status === 'expired'" type="danger" size="small" effect="dark">
+                      🚨 已过期 ({{ Math.abs(row.nearest_days_left) }}天前)
+                    </el-tag>
+                    <el-tag v-else-if="row.nearest_expiration_status === 'expiring_soon'" type="warning" size="small" effect="dark">
+                      ⚠️ 临期 (剩 {{ row.nearest_days_left }} 天)
+                    </el-tag>
+                    <el-tag v-else type="success" size="small" effect="plain">
+                      正常 (剩 {{ row.nearest_days_left }} 天)
+                    </el-tag>
+                    <span v-if="row.nearest_batch_no" style="margin-left: 6px; font-size: 11px; color: #909399; font-family: monospace;">
+                      [{{ row.nearest_batch_no }}]
+                    </span>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="row.shelf_life">
+                <el-tag v-if="!row.shelf_life_days && (!row.shelf_life || row.shelf_life === '永久有效')" type="info" size="small" effect="plain">
+                  永久有效
+                </el-tag>
+                <span v-else>{{ row.shelf_life }}</span>
+              </template>
+              <template v-else>
+                <span style="color: #c0c4cc;">-</span>
+              </template>
             </template>
           </el-table-column>
           <el-table-column prop="storage_conditions" label="储存条件" width="130">
@@ -178,6 +207,37 @@
             </template>
           </el-table-column>
           <el-table-column prop="material_name" label="物料名称" min-width="160" />
+          <el-table-column prop="batch_no" label="批次编号" width="170">
+            <template #default="{ row }">
+              <el-tag v-if="row.batch_no" size="small" type="info" effect="plain" style="font-family: monospace;">
+                {{ row.batch_no }}
+              </el-tag>
+              <span v-else style="color: #c0c4cc;">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="remaining_quantity" label="总仓批次余量" width="130">
+            <template #default="{ row }">
+              <template v-if="row.record_type === 'in'">
+                <span
+                  style="font-weight: 600;"
+                  :style="{ color: Number(row.remaining_quantity) > 0 ? '#409EFF' : '#909399' }"
+                >
+                  {{ row.remaining_quantity }} {{ row.material_unit }}
+                </span>
+              </template>
+              <template v-else>
+                <span style="color: #c0c4cc;">-</span>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column prop="source_batch_no" label="核销来源批次" width="170">
+            <template #default="{ row }">
+              <el-tag v-if="row.source_batch_no" size="small" type="warning" effect="plain" style="font-family: monospace;">
+                🔗 {{ row.source_batch_no }}
+              </el-tag>
+              <span v-else style="color: #c0c4cc;">-</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="quantity" label="变动数量" width="130">
             <template #default="{ row }">
               <span style="font-weight: 600;" :style="{ color: row.record_type === 'in' ? '#67C23A' : '#E6A23C' }">
@@ -268,6 +328,9 @@
           <el-input-number v-model="recordForm.quantity" :min="0.1" :step="1" :precision="2" style="width: 100%;" />
         </el-form-item>
 
+        <el-form-item v-if="recordForm.record_type === 'in'" label="批次编号">
+          <el-input v-model="recordForm.batch_no" placeholder="留空自动生成 (如 BAT-20260909-XXXXXX)" clearable />
+        </el-form-item>
         <el-form-item v-if="recordForm.record_type === 'in'" label="采购单价(元)">
           <el-input-number v-model="recordForm.price" :min="0" :step="1" :precision="2" style="width: 100%;" />
         </el-form-item>
@@ -475,6 +538,7 @@ const recordForm = reactive({
   material_id: undefined as number | undefined,
   record_type: 'in' as 'in' | 'out',
   quantity: 10,
+  batch_no: '',
   price: 50,
   expiration_date: '',
   store_id: undefined as number | undefined,
@@ -722,8 +786,8 @@ async function handleRecordSubmit() {
 
   submitLoading.value = true
   try {
-    await createInventoryRecordApi(recordForm as any)
-    ElMessage.success('操作成功！物料库存及流水记录已实时同步更新')
+    const res = await createInventoryRecordApi(recordForm as unknown as Parameters<typeof createInventoryRecordApi>[0])
+    ElMessage.success(res.message || '操作成功！物料库存及流水记录已实时同步更新')
     showRecordDialog.value = false
     fetchMaterials()
     fetchRecords()

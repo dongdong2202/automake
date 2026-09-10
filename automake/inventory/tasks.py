@@ -9,7 +9,7 @@ from celery import shared_task
 from django.utils import timezone
 from django.conf import settings
 
-from inventory.models import Material, InventoryRecord
+from inventory.models import Material, InventoryRecord, StoreInventoryBatch
 from notifications.models import NotifyEvent
 from notifications.services import send_sms_notify
 from users.models import User
@@ -37,12 +37,12 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
 
     logger.info(f'[Celery] 开始执行物料保质期预警扫描: 今日={today}, 预警阈值={threshold_date} (<= {alert_days}天)')
 
-    # 查询所有入库批次且当前物料库存大于 0 的记录
+    # 查询所有入库批次且当前批次在总仓剩余量大于 0 的记录
     records = InventoryRecord.objects.filter(
         record_type=InventoryRecord.RECORD_TYPE_IN,
         expiration_date__isnull=False,
         expiration_date__lte=threshold_date,
-        material__quantity__gt=0
+        remaining_quantity__gt=0
     ).select_related('material').order_by('expiration_date')
 
     # 获取具有手机号的管理员列表 (SUPER_ADMIN, MATERIAL_ADMIN, ADMIN)
@@ -97,11 +97,12 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
                 skipped_count += 1
                 continue
 
+        batch_label = f"批次[{record.batch_no}]" if record.batch_no else f"单号#{record.id}"
         content = (
             f'物料【{mat.name}】(编号:{mat.code}, 类别:{mat.get_material_type_display()}) '
-            f'入库批次 (单号#{record.id}) 到期日为 {exp_date}，'
+            f'总仓入库{batch_label} 到期日为 {exp_date}，'
             f'{"已过期 " + str(abs(days_left)) + " 天" if is_expired else "距离保质期仅剩 " + str(days_left) + " 天"}！'
-            f'当前在库余量为 {mat.quantity} {mat.unit}。请及时处理、分拨或下架清理。'
+            f'当前批次在库余量为 {record.remaining_quantity} {mat.unit}。请及时处理、分拨或下架清理。'
         )
 
         extra_data = {
@@ -109,9 +110,10 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
             'material_name': mat.name,
             'material_code': mat.code,
             'record_id': record.id,
+            'batch_no': record.batch_no,
             'expiration_date': str(exp_date),
             'days_left': days_left,
-            'quantity': str(mat.quantity),
+            'quantity': str(record.remaining_quantity),
             'unit': mat.unit,
             'is_expired': is_expired,
         }
@@ -155,6 +157,110 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
         alerted_count += 1
         logger.info(f'[Celery] 保质期告警触发成功: {title}, 事件ID={notify_event.id}, 短信通知={len(sms_sent_phones)}人')
 
+    # 扫描门店端在店批次
+    store_batches = StoreInventoryBatch.objects.filter(
+        expiration_date__isnull=False,
+        expiration_date__lte=threshold_date,
+        quantity__gt=0
+    ).select_related('store', 'material').order_by('expiration_date')
+
+    store_scanned_count = store_batches.count()
+    store_expiring_soon_count = 0
+    store_expired_count = 0
+    store_alerted_count = 0
+    store_skipped_count = 0
+
+    for s_batch in store_batches:
+        store = s_batch.store
+        mat = s_batch.material
+        exp_date = s_batch.expiration_date
+        days_left = (exp_date - today).days
+
+        if days_left < 0:
+            store_expired_count += 1
+            is_expired = True
+            level = NotifyEvent.LEVEL_CRITICAL
+            title = f'【门店物料过期告警】[{store.name}] {mat.name} 已过期 {abs(days_left)} 天'
+        else:
+            store_expiring_soon_count += 1
+            is_expired = False
+            level = NotifyEvent.LEVEL_WARNING
+            title = f'【门店物料保质期预警】[{store.name}] {mat.name} 距过期仅剩 {days_left} 天'
+
+        dedup_key = f'automake:store_exp_alert:{s_batch.id}:{today.isoformat()}'
+        if not force:
+            if redis_conn and redis_conn.get(dedup_key):
+                store_skipped_count += 1
+                continue
+            today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            if NotifyEvent.objects.filter(
+                event_type=NotifyEvent.EVENT_MATERIAL_EXPIRING,
+                extra_data__store_batch_id=s_batch.id,
+                created_at__gte=today_start
+            ).exists():
+                store_skipped_count += 1
+                continue
+
+        content = (
+            f'【{store.name}】店主/管理员您好：门店物料【{mat.name}】批次[{s_batch.batch_no}] 到期日为 {exp_date}，'
+            f'{"已过期 " + str(abs(days_left)) + " 天" if is_expired else "距离保质期仅剩 " + str(days_left) + " 天"}！'
+            f'当前在店批次库存为 {s_batch.quantity} {mat.unit}。请尽快加料至设备或下架处理。'
+        )
+
+        extra_data = {
+            'store_id': store.id,
+            'store_name': store.name,
+            'material_id': mat.id,
+            'material_name': mat.name,
+            'material_code': mat.code,
+            'store_batch_id': s_batch.id,
+            'batch_no': s_batch.batch_no,
+            'expiration_date': str(exp_date),
+            'days_left': days_left,
+            'quantity': str(s_batch.quantity),
+            'unit': mat.unit,
+            'is_expired': is_expired,
+        }
+
+        notify_event = NotifyEvent.objects.create(
+            level=level,
+            event_type=NotifyEvent.EVENT_MATERIAL_EXPIRING,
+            title=title,
+            content=content,
+            extra_data=extra_data,
+        )
+
+        # 发送短信通知 (SMS)：优先精准提醒该门店店主/管理员 (store.admins)，并抄送系统管理员
+        store_admins = list(store.admins.filter(is_active=True).exclude(phone__isnull=True).exclude(phone=''))
+        recipient_users = list({u.id: u for u in (store_admins + list(admin_users))}.values())
+
+        sms_sent_phones = []
+        if recipient_users:
+            phone_list = [u.phone.strip() for u in recipient_users if u.phone and u.phone.strip()]
+            for phone in phone_list:
+                try:
+                    template_param = json.dumps({
+                        "material": f"[{store.name[:4]}]{mat.name[:6]}",
+                        "days": str(days_left) if days_left >= 0 else "0",
+                        "code": mat.code[:10]
+                    }, ensure_ascii=False)
+                    res = send_sms_notify(
+                        phone_numbers=phone,
+                        template_param=template_param
+                    )
+                    if res.get('ok'):
+                        sms_sent_phones.append(phone)
+                except Exception as sms_err:
+                    logger.warning(f'[Celery] 门店保质期短信发送失败 phone={phone}: {sms_err}')
+        if redis_conn:
+            try:
+                redis_conn.setex(dedup_key, 86400, '1')
+            except Exception:
+                pass
+
+        store_alerted_count += 1
+        logger.info(f'[Celery] 门店保质期告警触发成功: {title}, 事件ID={notify_event.id}, 短信通知={len(sms_sent_phones)}人')
+
     result = {
         'status': 'completed',
         'scan_date': str(today),
@@ -164,6 +270,11 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
         'expired_batches': expired_count,
         'alerted_batches': alerted_count,
         'skipped_dedup_batches': skipped_count,
+        'store_scanned_batches': store_scanned_count,
+        'store_expiring_soon_batches': store_expiring_soon_count,
+        'store_expired_batches': store_expired_count,
+        'store_alerted_batches': store_alerted_count,
+        'store_skipped_dedup_batches': store_skipped_count,
     }
     logger.info(f'[Celery] 保质期预警扫描完成: {result}')
     return result

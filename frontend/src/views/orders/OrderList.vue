@@ -45,19 +45,28 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="下单时间" width="170" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openOrderDetail(row.order_no)">
               明细
             </el-button>
             <el-button
-              v-if="row.status === 'pending_dispense' || row.status === 'success' || row.status === 'failed'"
+              v-if="row.status === 'pending_dispense'"
+              type="warning"
+              link
+              size="small"
+              @click="openRefundDialog(row, 'auto')"
+            >
+              自动退款
+            </el-button>
+            <el-button
+              v-if="['pending_dispense', 'making', 'success', 'failed'].includes(row.status)"
               type="danger"
               link
               size="small"
-              @click="openRefundDialog(row)"
+              @click="openRefundDialog(row, 'force')"
             >
-              申请退款
+              强制退款
             </el-button>
           </template>
         </el-table-column>
@@ -91,29 +100,75 @@
         </el-table>
 
         <h4 style="margin: 20px 0 10px;">履约流转时间线</h4>
-        <el-timeline>
+        <el-timeline style="padding-left: 5px;">
           <el-timeline-item
             v-for="(log, idx) in currentOrder.status_logs || []"
             :key="idx"
             :timestamp="log.created_at"
-            type="primary"
+            :type="getTimelineType(log)"
+            size="large"
           >
-            {{ log.from_status }} → {{ log.to_status }} ({{ log.remark || log.operator }})
+            <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <span>{{ log.action_name || (log.from_status + ' → ' + log.to_status) }}</span>
+              <el-tag :type="getOperatorTypeBadge(log.operator_type).type" size="small" effect="plain">
+                {{ getOperatorTypeBadge(log.operator_type).text }}: {{ log.operator || 'system' }}
+              </el-tag>
+            </div>
+            <div style="color: #606266; font-size: 13px; margin-bottom: 4px;">
+              {{ log.remark || '状态流转更新' }}
+            </div>
+            <div
+              v-if="log.payload && Object.keys(log.payload).length > 0"
+              style="background: #f8f9fa; padding: 6px 10px; border-radius: 4px; font-size: 12px; color: #555; margin-top: 4px; border: 1px dashed #dcdfe6;"
+            >
+              <div v-for="(v, k) in log.payload" :key="k" style="margin-bottom: 2px;">
+                <span style="color: #909399;">{{ k }}:</span> {{ typeof v === 'object' ? JSON.stringify(v) : v }}
+              </div>
+            </div>
           </el-timeline-item>
         </el-timeline>
       </div>
     </el-drawer>
 
     <!-- 退款弹窗 -->
-    <el-dialog v-model="showRefundDialog" title="管理员人工退款" width="460px">
+    <el-dialog
+      v-model="showRefundDialog"
+      :title="refundType === 'auto' ? '自动退款确认（未制作·释放库存）' : '强制退款确认（不退库存·客诉/失败）'"
+      width="500px"
+    >
+      <el-alert
+        v-if="refundType === 'auto'"
+        type="success"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px;"
+      >
+        <template #title>未制作订单自动退款</template>
+        确认后系统将<strong>自动释放并归还纸杯、耗材与物料库存</strong>，作废生产任务，并向微信发起全额原路退款。
+      </el-alert>
+      <el-alert
+        v-else
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px;"
+      >
+        <template #title>客诉或制作失败强制退款</template>
+        物料已实际消耗冲泡或损耗，确认后<strong>不会退回物料库存</strong>，作废未完成任务，直接向微信发起全额原路退款。
+      </el-alert>
+
       <p style="margin-bottom: 12px; color: #606266;">
         确定为订单 <b>{{ refundOrderNo }}</b> 发起全额原路退款吗？
       </p>
       <el-input v-model="refundReason" placeholder="请输入退款原因说明" />
       <template #footer>
         <el-button @click="showRefundDialog = false">取消</el-button>
-        <el-button type="danger" :loading="refundLoading" @click="handleConfirmRefund">
-          确认退款
+        <el-button
+          :type="refundType === 'auto' ? 'warning' : 'danger'"
+          :loading="refundLoading"
+          @click="handleConfirmRefund"
+        >
+          {{ refundType === 'auto' ? '确认自动退款 (放库存)' : '确认强制退款 (不退库存)' }}
         </el-button>
       </template>
     </el-dialog>
@@ -143,7 +198,8 @@ const currentOrder = ref<any>(null)
 const showRefundDialog = ref(false)
 const refundLoading = ref(false)
 const refundOrderNo = ref('')
-const refundReason = ref('管理员人工后台退款')
+const refundType = ref<'auto' | 'force'>('auto')
+const refundReason = ref('')
 
 async function fetchOrders() {
   loading.value = true
@@ -169,23 +225,57 @@ async function openOrderDetail(orderNo: string) {
   }
 }
 
-function openRefundDialog(row: any) {
+function openRefundDialog(row: any, type: 'auto' | 'force') {
   refundOrderNo.value = row.order_no
-  refundReason.value = '管理员人工后台退款'
+  refundType.value = type
+  if (type === 'auto') {
+    refundReason.value = '未制作自动退款放库'
+  } else {
+    refundReason.value = row.status === 'failed' ? '制作失败强制退款' : '客诉问题强制退款'
+  }
   showRefundDialog.value = true
 }
 
 async function handleConfirmRefund() {
   refundLoading.value = true
   try {
-    await refundOrderApi(refundOrderNo.value, { reason: refundReason.value })
-    ElMessage.success('退款指令已成功提交并处理')
+    const res = await refundOrderApi(refundOrderNo.value, {
+      refund_type: refundType.value,
+      reason: refundReason.value
+    })
+    ElMessage.success(res.message || '退款指令已成功提交并处理')
     showRefundDialog.value = false
     fetchOrders()
   } catch (e) {
     //
   } finally {
     refundLoading.value = false
+  }
+}
+
+function getTimelineType(log: any) {
+  if (['failed', 'refund_failed'].includes(log.action) || log.to_status === 'failed') {
+    return 'danger'
+  }
+  if (['refund_applied', 'refunding'].includes(log.action) || log.to_status === 'refunding') {
+    return 'warning'
+  }
+  if (['refund_success', 'refunded'].includes(log.action) || log.to_status === 'refunded') {
+    return 'info'
+  }
+  if (['making_done', 'success'].includes(log.action) || log.to_status === 'success') {
+    return 'success'
+  }
+  return 'primary'
+}
+
+function getOperatorTypeBadge(type?: string) {
+  switch (type) {
+    case 'user': return { text: '顾客', type: 'info' }
+    case 'device': return { text: '设备', type: 'warning' }
+    case 'admin': return { text: '管理员', type: 'primary' }
+    case 'wechat': return { text: '微信网关', type: 'success' }
+    default: return { text: '系统', type: 'info' }
   }
 }
 

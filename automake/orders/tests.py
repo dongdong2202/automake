@@ -9,7 +9,7 @@ from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem
 from menus.models import MenuItem, MenuSku
 from users.models import User
 from orders.models import OrderMain, OrderItem, ProductionTask, OrderStatusLog
-from orders.services import precheck_order, create_order, process_dispense_failure, reconcile_device_orders, get_redis_stock_key, update_order_status
+from orders.services import precheck_order, create_order, create_production_task, process_dispense_failure, reconcile_device_orders, get_redis_stock_key, update_order_status
 from payments.services import process_payment_success, PaymentRecord
 
 
@@ -538,6 +538,200 @@ class OptimizedOrderProcessTests(TestCase):
             self.assertEqual(mats.get('coffee_bean'), Decimal('15.00'))
             self.assertEqual(mats.get('fresh_milk'), Decimal('160.00'))
             self.assertEqual(mats.get('syrup'), Decimal('20.00'))
+
+    def test_create_production_task_standardized_payload(self, mock_get_redis):
+        """验证标准化 MQTT make 命令 Payload 结构与内容"""
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.side_effect = lambda key: b"5000" if "coffee_bean" in key else b"50000"
+        mock_redis_client.mget.side_effect = lambda keys: [b"5000" if "coffee_bean" in k else b"50000" for k in keys]
+        mock_redis_client.register_script.return_value = MagicMock(return_value=1)
+        mock_get_redis.return_value = mock_redis_client
+
+        items_data = [
+            {
+                'item': self.menu_item.id,
+                'sku': [self.menu_sku.id],
+                'quantity': 2
+            }
+        ]
+        order = create_order(self.user, self.store.id, items_data, device_sn=self.device.device_sn)
+        order.order_token = 'token-payload-test-001'
+        order.status = OrderMain.STATUS_PAID
+        order.paid_at = timezone.now()
+        order.save()
+
+        task = create_production_task(order)
+        payload = task.command_payload
+
+        # 验证基础字段
+        self.assertEqual(payload.get('type'), 'make')
+        self.assertEqual(payload.get('order_no'), order.order_no)
+        self.assertEqual(payload.get('order_token'), str(order.order_token))
+        self.assertEqual(payload.get('tradeState'), 'SUCCESS')
+        self.assertEqual(payload.get('ticketNo'), '1')
+        self.assertEqual(payload.get('payerTotal'), order.pay_amount)
+        self.assertEqual(payload.get('qrCode'), str(order.order_token))
+        self.assertTrue(payload.get('createdAt').endswith('Z'))
+        self.assertTrue(payload.get('paidAt').endswith('Z'))
+
+        # 验证 merchInfos 与单杯物料结构
+        merch_infos = payload.get('merchInfos', [])
+        self.assertEqual(len(merch_infos), 1)
+        merch = merch_infos[0]
+        self.assertEqual(merch['item_name'], '拿铁')
+        self.assertEqual(merch['quantity'], 2)
+        self.assertIsInstance(merch['materials'], dict)
+        self.assertEqual(merch['materials'].get('coffee_bean'), 15)
+        self.assertEqual(merch['materials'].get('fresh_milk'), 150)
+        self.assertEqual(merch['materials'].get('paperL'), 1)
+
+
+@patch('django_redis.get_redis_connection')
+class OrderTimelineLifecycleTests(TestCase):
+    """
+    订单履约流转时间线生命周期专项测试
+    验证：create、待支付、已支付、开始制作、制作完成、退款申请、退款失败、退款成功全链路日志追溯
+    """
+    def setUp(self):
+        self.user = User.objects.create_user(openid='openid-timeline-user')
+        self.store = Store.objects.create(name="时间线测试门店", code="STORE-TL-1")
+        self.dev_type = DeviceModel.objects.create(name="咖啡机", code="coffee_tl")
+        self.device = Device.objects.create(
+            store=self.store, device_sn="SN-TL-001", device_name="时间线咖啡机",
+            device_model=self.dev_type, status=Device.STATUS_ONLINE
+        )
+        from inventory.models import Material
+        self.bean, _ = Material.objects.get_or_create(name="豆", code="bean_tl", unit="g")
+        self.cup, _ = Material.objects.get_or_create(code="paperL", defaults={"name": "纸大杯", "unit": "个", "material_type": "cup"})
+        self.cat = GlobalMenuCategory.objects.create(device_model=self.dev_type, name="品类")
+        self.item = GlobalMenuItem.objects.create(category=self.cat, name="美式", base_price=1000)
+        self.tpl = GlobalSkuTemplate.objects.create(name="热大杯", category="默认")
+        self.sku = GlobalMenuSku.objects.create(item=self.item, template=self.tpl)
+        GlobalSkuIngredient.objects.create(sku=self.sku, material=self.bean, quantity=10)
+        GlobalSkuIngredient.objects.create(sku=self.sku, material=self.cup, quantity=1)
+
+        MenuItem.sync_store_menu(self.store)
+        self.menu_item = MenuItem.objects.get(store=self.store, global_item=self.item)
+        self.menu_sku = MenuSku.objects.get(item=self.menu_item, global_sku=self.sku)
+
+        from devices.models import DeviceConsumableStock
+        for c in ['paperL', 'paperM', 'plasticL', 'plasticM', 'membrane', 'lid']:
+            mat, _ = Material.objects.get_or_create(code=c, defaults={'name': c, 'material_type': 'cup'})
+            DeviceConsumableStock.objects.create(device=self.device, code=mat, quantity=100, init_quantity=100)
+
+    def test_order_creation_timeline(self, mock_redis):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = b"5000"
+        mock_conn.mget.return_value = [b"5000", b"5000", b"5000"]
+        mock_redis.return_value = mock_conn
+
+        items_data = [{'item': self.menu_item.id, 'sku': [self.menu_sku.id], 'quantity': 1}]
+        order = create_order(
+            user=self.user, store_id=self.store.id, items_data=items_data,
+            remark="少糖", device_sn=self.device.device_sn
+        )
+
+        logs = order.status_logs.all()
+        self.assertEqual(logs.count(), 1)
+        log = logs.first()
+        self.assertEqual(log.action, OrderStatusLog.ACTION_CREATE)
+        self.assertEqual(log.action_name, '订单创建（待支付）')
+        self.assertEqual(log.to_status, OrderMain.STATUS_PENDING_PAY)
+        self.assertEqual(log.operator_type, OrderStatusLog.OP_USER)
+        self.assertEqual(log.payload.get('user_remark'), '少糖')
+        self.assertEqual(len(log.payload.get('items', [])), 1)
+
+    def test_order_cancel_timeline(self, mock_redis):
+        from orders.services import cancel_order
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = b"5000"
+        mock_conn.mget.return_value = [b"5000", b"5000", b"5000"]
+        mock_redis.return_value = mock_conn
+
+        items_data = [{'item': self.menu_item.id, 'sku': [self.menu_sku.id], 'quantity': 1}]
+        order = create_order(user=self.user, store_id=self.store.id, items_data=items_data, device_sn=self.device.device_sn)
+
+        cancel_order(order, operator=f'user:{self.user.id}', remark="用户不想买了")
+        self.assertEqual(order.status, OrderMain.STATUS_CANCELLED)
+
+        cancel_log = order.status_logs.filter(action=OrderStatusLog.ACTION_CANCELLED).first()
+        self.assertIsNotNone(cancel_log)
+        self.assertEqual(cancel_log.operator_type, OrderStatusLog.OP_USER)
+        self.assertEqual(cancel_log.payload.get('cancel_reason'), '用户不想买了')
+
+    def test_making_and_done_timeline(self, mock_redis):
+        order = OrderMain.objects.create(
+            user=self.user, store=self.store, device=self.device,
+            status=OrderMain.STATUS_PAID, pay_amount=1000
+        )
+        # 1. 任务下发
+        create_production_task(order)
+        task_log = order.status_logs.filter(action=OrderStatusLog.ACTION_TASK_SENT).first()
+        self.assertIsNotNone(task_log)
+        self.assertEqual(task_log.action_name, '制作任务生成并下发')
+
+        # 2. 设备开始制作
+        update_order_status(
+            order=order, new_status=OrderMain.STATUS_MAKING,
+            operator=f'device:{self.device.device_sn}',
+            operator_type=OrderStatusLog.OP_DEVICE,
+            action=OrderStatusLog.ACTION_MAKING_START,
+            action_name='设备开始制作',
+            remark='研磨机开始工作',
+            payload={'step': 'grinding'}
+        )
+        making_log = order.status_logs.filter(action=OrderStatusLog.ACTION_MAKING_START).first()
+        self.assertIsNotNone(making_log)
+        self.assertEqual(making_log.payload.get('step'), 'grinding')
+
+        # 3. 制作完成
+        update_order_status(
+            order=order, new_status=OrderMain.STATUS_DONE,
+            operator=f'device:{self.device.device_sn}',
+            operator_type=OrderStatusLog.OP_DEVICE,
+            action=OrderStatusLog.ACTION_MAKING_DONE,
+            action_name='制作完成（出杯成功）',
+            remark='出杯成功'
+        )
+        done_log = order.status_logs.filter(action=OrderStatusLog.ACTION_MAKING_DONE).first()
+        self.assertIsNotNone(done_log)
+        self.assertEqual(done_log.to_status, OrderMain.STATUS_DONE)
+
+    def test_refund_failure_and_success_timeline(self, mock_redis):
+        from payments.models import PaymentRecord, RefundRecord
+        from payments.services import refund_order
+        import uuid
+
+        order = OrderMain.objects.create(
+            user=self.user, store=self.store, device=self.device,
+            status=OrderMain.STATUS_PAID, pay_amount=1000
+        )
+        # 1. 无交易号退款失败，应当捕获并写入 refund_failed 时间线
+        payment = PaymentRecord.objects.create(
+            order=order, user=self.user, out_trade_no=f"OTN-{uuid.uuid4().hex[:12]}",
+            pay_method='wechat_jsapi', amount=1000,
+            status=PaymentRecord.STATUS_SUCCESS, transaction_id=''
+        )
+
+        with self.assertRaises(ValueError):
+            refund_order(order, reason="缺料退款测试")
+
+        fail_log = order.status_logs.filter(action=OrderStatusLog.ACTION_REFUND_FAILED).first()
+        self.assertIsNotNone(fail_log)
+        self.assertEqual(fail_log.action_name, '退款失败')
+        self.assertIn('无法退款', fail_log.payload.get('error', ''))
+
+        # 2. 模拟微信退款成功，应当写入 refund_success 时间线
+        payment.transaction_id = f"mock_tx_{uuid.uuid4().hex[:12]}"
+        payment.save()
+
+        refund_order(order, reason="正常退款成功测试")
+        success_log = order.status_logs.filter(action=OrderStatusLog.ACTION_REFUND_SUCCESS).first()
+        self.assertIsNotNone(success_log)
+        self.assertEqual(success_log.action_name, '退款成功')
+        self.assertEqual(success_log.payload.get('reason'), '正常退款成功测试')
+
+
 
 
 

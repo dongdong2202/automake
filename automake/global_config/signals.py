@@ -1,13 +1,23 @@
+"""
+全局菜单与门店菜单自动同步信号 (global_config.signals)
+
+当全局商品或规格（GlobalMenuItem, GlobalMenuSku）发生增删改时，
+自动通过 Django Signal 机制将基础数据级联同步至各门店的本地菜单表（MenuItem, MenuSku）。
+"""
+
+import logging
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from .models import GlobalMenuItem, GlobalMenuSku
+
+logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender=GlobalMenuItem)
 def auto_sync_global_menu_item(sender, instance, created, **kwargs):
     """
     当全局商品新增或修改时，自动批量级联下发更新所有门店的 MenuItem。
-    使用精准批量 SQL 更新，耗时 < 3ms，极度轻量且绝不浪费资源。
+    使用精准批量 SQL 更新，耗时 < 3ms，轻量且不浪费资源。
     """
     try:
         from menus.models import MenuItem
@@ -27,15 +37,17 @@ def auto_sync_global_menu_item(sender, instance, created, **kwargs):
                         'sort_order': instance.sort_order
                     }
                 )
+            logger.info(f"[Signal] 全局商品创建，已同步下发至各门店: item_id={instance.id}, name={instance.name}")
         else:
             # 修改商品：一条 SQL 批量下发基础价格与排序
-            MenuItem.objects.filter(global_item=instance).update(
+            updated_count = MenuItem.objects.filter(global_item=instance).update(
                 base_price=instance.base_price,
                 is_active=instance.is_active,
                 sort_order=instance.sort_order
             )
+            logger.info(f"[Signal] 全局商品变更，已同步更新 {updated_count} 家门店: item_id={instance.id}")
     except Exception as e:
-        print(f"[Signal auto_sync_global_menu_item Error]: {e}")
+        logger.error(f"[Signal auto_sync_global_menu_item Error]: {e}", exc_info=True)
 
 
 @receiver(post_save, sender=GlobalMenuSku)
@@ -59,15 +71,17 @@ def auto_sync_global_menu_sku(sender, instance, created, **kwargs):
                         'sort_order': instance.sort_order
                     }
                 )
+            logger.info(f"[Signal] 全局规格创建，已同步关联至对应门店商品: sku_id={instance.id}, name={instance.name}")
         else:
             # 修改规格：一条 SQL 批量同步价格增量
-            MenuSku.objects.filter(global_sku=instance).update(
+            updated_count = MenuSku.objects.filter(global_sku=instance).update(
                 price_delta=instance.price_delta,
                 is_active=instance.is_active,
                 sort_order=instance.sort_order
             )
+            logger.info(f"[Signal] 全局规格变更，已同步更新 {updated_count} 条门店规格: sku_id={instance.id}")
     except Exception as e:
-        print(f"[Signal auto_sync_global_menu_sku Error]: {e}")
+        logger.error(f"[Signal auto_sync_global_menu_sku Error]: {e}", exc_info=True)
 
 
 @receiver(post_delete, sender=GlobalMenuItem)
@@ -77,9 +91,10 @@ def auto_delete_global_menu_item(sender, instance, **kwargs):
     """
     try:
         from menus.models import MenuItem
-        MenuItem.objects.filter(global_item=instance).delete()
+        deleted_count, _ = MenuItem.objects.filter(global_item=instance).delete()
+        logger.info(f"[Signal] 全局商品删除，已级联清理 {deleted_count} 条门店商品: item_id={instance.id}")
     except Exception as e:
-        print(f"[Signal auto_delete_global_menu_item Error]: {e}")
+        logger.error(f"[Signal auto_delete_global_menu_item Error]: {e}", exc_info=True)
 
 
 @receiver(post_delete, sender=GlobalMenuSku)
@@ -89,6 +104,7 @@ def auto_delete_global_menu_sku(sender, instance, **kwargs):
     """
     try:
         from menus.models import MenuSku
-        MenuSku.objects.filter(global_sku=instance).delete()
+        deleted_count, _ = MenuSku.objects.filter(global_sku=instance).delete()
+        logger.info(f"[Signal] 全局规格删除，已级联清理 {deleted_count} 条门店规格: sku_id={instance.id}")
     except Exception as e:
-        print(f"[Signal auto_delete_global_menu_sku Error]: {e}")
+        logger.error(f"[Signal auto_delete_global_menu_sku Error]: {e}", exc_info=True)

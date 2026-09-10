@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -180,7 +181,189 @@ class AdminApiTestCase(TestCase):
         self.store.save()
 
         res_closed = self.client.get('/api/admin/devices/', {'search': self.device.device_sn})
+        self.assertEqual(res_closed.status_code, 200)
+        dev_closed_data = res_closed.json()['data']['results'][0]
         self.assertFalse(dev_closed_data['is_in_business_hours'])
         self.assertEqual(dev_closed_data['business_status'], '今日休息')
         self.assertEqual(dev_closed_data['business_status_text'], '今日休息')
+
+    def test_admin_order_refund_wechat_error_message(self):
+        """测试退款遇到微信商户余额不足等错误时，友好返回具体错误信息"""
+        from unittest.mock import patch, MagicMock
+        from payments.models import PaymentRecord
+        import requests
+
+        self.client.force_authenticate(user=self.super_admin)
+
+        order = OrderMain.objects.create(
+            order_no='ORD_TEST_REFUND_FAIL_001',
+            order_token='token-fail-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_PAID,
+            total_amount=100,
+            pay_amount=100
+        )
+        PaymentRecord.objects.create(
+            order=order,
+            user=self.super_admin,
+            transaction_id='4500000000000000000000000001',
+            out_trade_no=order.order_no,
+            amount=100,
+            status=PaymentRecord.STATUS_SUCCESS
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.text = '{"code":"NOT_ENOUGH","message":"基本账户余额不足，请充值后重新发起"}'
+        mock_resp.json.return_value = {"code": "NOT_ENOUGH", "message": "基本账户余额不足，请充值后重新发起"}
+        http_error = requests.exceptions.HTTPError("403 Client Error: Forbidden", response=mock_resp)
+        mock_resp.raise_for_status.side_effect = http_error
+
+        with patch('requests.request', return_value=mock_resp):
+            res = self.client.post(f'/api/admin/orders/{order.order_no}/refund/', {'reason': '人工退款'}, format='json')
+            self.assertEqual(res.status_code, 400)
+            data = res.json()
+            self.assertEqual(data['code'], 4001)
+            self.assertIn('基本账户余额不足', data['message'])
+            self.assertIn('NOT_ENOUGH', data['message'])
+
+    def test_admin_order_refund_offline(self):
+        """测试管理员标记线下退款成功流程"""
+        from payments.models import PaymentRecord, RefundRecord
+
+        self.client.force_authenticate(user=self.super_admin)
+
+        order = OrderMain.objects.create(
+            order_no='ORD_TEST_REFUND_OFFLINE_001',
+            order_token='token-offline-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_PAID,
+            total_amount=200,
+            pay_amount=200
+        )
+        PaymentRecord.objects.create(
+            order=order,
+            user=self.super_admin,
+            transaction_id='4500000000000000000000000002',
+            out_trade_no=order.order_no,
+            amount=200,
+            status=PaymentRecord.STATUS_SUCCESS
+        )
+
+        res = self.client.post(
+            f'/api/admin/orders/{order.order_no}/refund/',
+            {'reason': '现场赔付现金', 'offline': True},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['code'], 0)
+        self.assertIn('线下退款已成功记录', data['message'])
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderMain.STATUS_REFUNDED)
+        refund_record = RefundRecord.objects.filter(order=order).first()
+        self.assertIsNotNone(refund_record)
+        self.assertEqual(refund_record.status, RefundRecord.STATUS_SUCCESS)
+        self.assertIn('现场赔付现金', refund_record.reason)
+
+    @patch('orders.services.restore_order_inventory')
+    @patch('admin_api.views.orders.refund_order')
+    def test_admin_order_auto_refund_flow(self, mock_refund_order, mock_restore_inventory):
+        """测试未制作订单自动退款（放库存，自动退款）"""
+        self.client.force_authenticate(user=self.super_admin)
+        mock_restore_inventory.return_value = {
+            'success': True,
+            'restored_materials': [
+                {'name': '纸大杯', 'quantity': 1, 'unit': '个'}
+            ]
+        }
+
+        order = OrderMain.objects.create(
+            order_no='ORD_TEST_AUTO_REFUND_001',
+            order_token='token-auto-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_PAID,
+            total_amount=1800,
+            pay_amount=1800
+        )
+
+        res = self.client.post(
+            f'/api/admin/orders/{order.order_no}/refund/',
+            {'refund_type': 'auto', 'reason': '用户未制作取消'},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['code'], 0)
+        self.assertIn('自动退款成功', data['message'])
+        self.assertIn('纸大杯 x1个', data['message'])
+
+        mock_restore_inventory.assert_called_once()
+        mock_refund_order.assert_called_once()
+
+    def test_admin_order_auto_refund_on_done_order_fails(self):
+        """测试已完成订单调用自动退款会被拦截并提示改用强制退款"""
+        self.client.force_authenticate(user=self.super_admin)
+
+        order = OrderMain.objects.create(
+            order_no='ORD_TEST_AUTO_DONE_FAIL_001',
+            order_token='token-auto-fail-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_DONE,  # 已完成制作
+            total_amount=1800,
+            pay_amount=1800
+        )
+
+        res = self.client.post(
+            f'/api/admin/orders/{order.order_no}/refund/',
+            {'refund_type': 'auto', 'reason': '已出杯退款测试'},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 400)
+        data = res.json()
+        self.assertEqual(data['code'], 4003)
+        self.assertIn('无法使用自动退款（放库存），请使用【强制退款】', data['message'])
+
+    @patch('orders.services.restore_order_inventory')
+    @patch('admin_api.views.orders.refund_order')
+    def test_admin_order_force_refund_flow(self, mock_refund_order, mock_restore_inventory):
+        """测试强制退款（不退库存，如客诉或制作失败）"""
+        self.client.force_authenticate(user=self.super_admin)
+
+        order = OrderMain.objects.create(
+            order_no='ORD_TEST_FORCE_REFUND_001',
+            order_token='token-force-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_DONE,
+            total_amount=1800,
+            pay_amount=1800
+        )
+
+        res = self.client.post(
+            f'/api/admin/orders/{order.order_no}/refund/',
+            {'refund_type': 'force', 'reason': '顾客投诉咖啡口感变质'},
+            format='json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['code'], 0)
+        self.assertIn('强制退款成功', data['message'])
+        self.assertIn('未归还物料库存', data['message'])
+
+        # 验证：绝不调用放库函数
+        mock_restore_inventory.assert_not_called()
+        # 验证：微信退款正常触发
+        mock_refund_order.assert_called_once()
+
 

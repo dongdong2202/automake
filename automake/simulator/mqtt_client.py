@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 BROKER = "tinylab.store"
 PORT = 443
 WS_PATH = "/mqtt"
-DEVICE_SN = "sn005"  # 模拟连接的设备序列号
+DEVICE_SN = "sn001"  # 模拟连接的设备序列号
 
 # 3. 定义 MQTT 消息主题
 STATUS_TOPIC = f"c2s/shop/{DEVICE_SN}/state/selfPack"
@@ -104,7 +104,7 @@ client = mqtt.Client(
     client_id=DEVICE_SN,
     transport="websockets"
 )
-
+client.username_pw_set(username='sn001', password='9058298')
 # 7. 配置 WebSocket 与 SSL/TLS 证书规则
 client.ws_set_options(path=WS_PATH)
 client.tls_set(cert_reqs=ssl.CERT_NONE)  # 忽略自签名证书检测限制以确保直连成功

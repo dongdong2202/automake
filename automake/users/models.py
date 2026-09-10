@@ -61,12 +61,16 @@ class User(AbstractBaseUser, PermissionsMixin):
     SUPER_ADMIN = 'super_admin'        # 超级管理员
     ADMIN = 'admin'                    # 门店管理员
     MATERIAL_ADMIN = 'material_admin'  # 物料员
+    COORDINATOR = 'coordinator'        # 协调员
+    GUIDE = 'guide'                    # 引导员
     CUSTOMER = 'customer'              # 客户（微信小程序用户）
 
     ROLE_CHOICES = [
         (SUPER_ADMIN, '超级管理员'),
         (ADMIN, '门店管理员'),
         (MATERIAL_ADMIN, '物料员'),
+        (COORDINATOR, '协调员'),
+        (GUIDE, '引导员'),
         (CUSTOMER, '客户'),
     ]
 
@@ -153,8 +157,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     @property
     def is_admin(self):
-        """判断是否为管理员（超级管理员、门店管理员或物料员）"""
-        return self.role in (self.SUPER_ADMIN, self.ADMIN, self.MATERIAL_ADMIN)
+        """判断是否为管理员/工作人员（超级管理员、门店管理员、物料员、协调员或引导员）"""
+        return self.role in (self.SUPER_ADMIN, self.ADMIN, self.MATERIAL_ADMIN, self.COORDINATOR, self.GUIDE)
 
     @property
     def is_material_admin(self):
@@ -162,13 +166,23 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role == self.MATERIAL_ADMIN
 
     @property
+    def is_coordinator(self):
+        """判断是否为协调员"""
+        return self.role == self.COORDINATOR
+
+    @property
+    def is_guide(self):
+        """判断是否为引导员"""
+        return self.role == self.GUIDE
+
+    @property
     def is_customer(self):
         """判断是否为普通客户"""
         return self.role == self.CUSTOMER
 
     def save(self, *args, **kwargs):
-        # 如果是超级管理员、门店管理员或物料员，自动允许登录后台
-        if self.role in (self.SUPER_ADMIN, self.ADMIN, self.MATERIAL_ADMIN):
+        # 如果是超级管理员、门店管理员、物料员、协调员或引导员，自动允许登录后台
+        if self.role in (self.SUPER_ADMIN, self.ADMIN, self.MATERIAL_ADMIN, self.COORDINATOR, self.GUIDE):
             self.is_staff = True
         super().save(*args, **kwargs)
 

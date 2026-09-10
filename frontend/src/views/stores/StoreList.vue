@@ -154,7 +154,53 @@
         </el-form>
 
         <!-- 门店库存大表 -->
-        <el-table v-loading="loadingInventory" :data="storeInventoryList" stripe style="width: 100%">
+        <el-table v-loading="loadingInventory" :data="storeInventoryList" stripe style="width: 100%" @expand-change="onTableRowExpand">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <div style="padding: 12px 20px; background: #fafbfc; border-radius: 4px;">
+                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                  <span>📦 【{{ row.material_name }}】在店批次资产明细 (FEFO 到期日优先流转)</span>
+                  <el-button size="small" link type="primary" icon="Refresh" @click="loadStoreBatches(row.material)">刷新批次</el-button>
+                </div>
+                <el-table
+                  :data="materialBatchesMap[row.material] || []"
+                  size="small"
+                  border
+                  stripe
+                  v-loading="batchLoadingMap[row.material]"
+                >
+                  <el-table-column prop="batch_no" label="批次编号" width="180">
+                    <template #default="{ row: b }">
+                      <el-tag size="small" type="info" style="font-family: monospace;">{{ b.batch_no }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="quantity" label="在店批次库存" width="130">
+                    <template #default="{ row: b }">
+                      <span style="font-weight: bold; color: #409EFF;">{{ b.quantity }} {{ row.unit }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="批次到期日 / 状态" min-width="180">
+                    <template #default="{ row: b }">
+                      <div v-if="b.expiration_date" style="display: flex; align-items: center; gap: 6px;">
+                        <span>{{ b.expiration_date }}</span>
+                        <el-tag v-if="b.expiration_status === 'expired'" size="small" type="danger" effect="dark">已过期</el-tag>
+                        <el-tag v-else-if="b.expiration_status === 'expiring_soon'" size="small" type="warning" effect="dark">临期 (剩 {{ b.days_until_expiration }} 天)</el-tag>
+                        <el-tag v-else size="small" type="success" effect="plain">正常</el-tag>
+                      </div>
+                      <el-tag v-else size="small" type="info" effect="plain">永久有效</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="created_at" label="入店时间" width="160" />
+                </el-table>
+                <div
+                  v-if="(!materialBatchesMap[row.material] || materialBatchesMap[row.material].length === 0) && !batchLoadingMap[row.material]"
+                  style="padding: 8px 0; color: #909399; font-size: 12px;"
+                >
+                  暂无独立批次资产分录（属于历史存量总库存）
+                </div>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column prop="material_code" label="物料编号" width="140">
             <template #default="{ row }">
               <span style="font-family: monospace; font-weight: 600;">{{ row.material_code }}</span>
@@ -180,25 +226,47 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="material_price" label="参考进价(元)" width="120">
+          <el-table-column label="在店批次最近到期日" min-width="190">
             <template #default="{ row }">
-              ¥{{ Number(row.material_price || 0).toFixed(2) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="shelf_life" label="保质期/时长" width="130">
-            <template #default="{ row }">
-              <el-tag v-if="!row.shelf_life_days && (!row.shelf_life || row.shelf_life === '永久有效')" type="info" size="small" effect="plain">
-                永久有效
-              </el-tag>
-              <span v-else>{{ row.shelf_life }}</span>
+              <template v-if="row.nearest_expiration_date">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 13px; font-weight: 600;">{{ row.nearest_expiration_date }}</span>
+                  <div>
+                    <el-tag v-if="row.nearest_expiration_status === 'expired'" type="danger" size="small" effect="dark">
+                      🚨 已过期 ({{ Math.abs(row.nearest_days_left) }}天前)
+                    </el-tag>
+                    <el-tag v-else-if="row.nearest_expiration_status === 'expiring_soon'" type="warning" size="small" effect="dark">
+                      ⚠️ 临期 (剩 {{ row.nearest_days_left }} 天)
+                    </el-tag>
+                    <el-tag v-else type="success" size="small" effect="plain">
+                      正常 (剩 {{ row.nearest_days_left }} 天)
+                    </el-tag>
+                    <span v-if="row.nearest_batch_no" style="margin-left: 6px; font-size: 11px; color: #909399; font-family: monospace;">
+                      [{{ row.nearest_batch_no }}]
+                    </span>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="row.shelf_life">
+                <el-tag v-if="!row.shelf_life_days && (!row.shelf_life || row.shelf_life === '永久有效')" type="info" size="small" effect="plain">
+                  永久有效
+                </el-tag>
+                <span v-else>{{ row.shelf_life }}</span>
+              </template>
+              <template v-else>
+                <span style="color: #c0c4cc;">-</span>
+              </template>
             </template>
           </el-table-column>
           <el-table-column prop="storage_conditions" label="储存条件" width="140">
             <template #default="{ row }">{{ row.storage_conditions || '常温' }}</template>
           </el-table-column>
           <el-table-column prop="updated_at" label="最后入库/变动时间" width="170" />
-          <el-table-column label="操作" width="140" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
+              <el-button type="info" link size="small" @click="openStoreBatchDrawer(row)">
+                批次明细
+              </el-button>
               <el-button type="primary" link size="small" @click="openQuickDispatch(row)">
                 出库到设备
               </el-button>
@@ -304,6 +372,19 @@
               <span style="font-weight: 600;">
                 {{ row.record_type === 'in_from_warehouse' ? '+' : '-' }}{{ row.quantity }} {{ row.material_unit }}
               </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="batch_no" label="流转批次号" width="160">
+            <template #default="{ row }">
+              <el-tag v-if="row.batch_no" size="small" type="info" effect="plain" style="font-family: monospace;">
+                {{ row.batch_no }}
+              </el-tag>
+              <span v-else style="color: #c0c4cc;">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="expiration_date" label="批次到期日" width="130">
+            <template #default="{ row }">
+              {{ row.expiration_date || '-' }}
             </template>
           </el-table-column>
           <el-table-column prop="device_name" label="目标设备" width="160">
@@ -475,6 +556,46 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 门店物料在店批次明细抽屉 -->
+    <el-drawer
+      v-model="showBatchDrawer"
+      :title="`【${currentDrawerMaterial?.material_name || ''}】在店批次资产明细 (FEFO 流转)`"
+      size="620px"
+      direction="rtl"
+    >
+      <div v-if="currentDrawerMaterial" style="margin-bottom: 16px; padding: 12px; background: #f4f4f5; border-radius: 4px;">
+        <p style="margin: 0; font-size: 14px; font-weight: 500;">
+          当前门店：{{ currentStoreName }} | 总在店库存：<span style="color: #409EFF; font-weight: bold;">{{ currentDrawerMaterial.quantity }} {{ currentDrawerMaterial.unit }}</span>
+        </p>
+      </div>
+      <el-table :data="currentDrawerBatches" v-loading="drawerBatchLoading" border stripe style="width: 100%;">
+        <el-table-column prop="batch_no" label="批次编号" min-width="160">
+          <template #default="{ row }">
+            <span style="font-family: monospace; font-weight: 600;">{{ row.batch_no }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="quantity" label="在店库存" width="110">
+          <template #default="{ row }">
+            <span style="font-weight: bold; color: #409EFF;">{{ row.quantity }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期日 / 状态" min-width="170">
+          <template #default="{ row }">
+            <div v-if="row.expiration_date">
+              <div>{{ row.expiration_date }}</div>
+              <el-tag v-if="row.expiration_status === 'expired'" size="small" type="danger">已过期</el-tag>
+              <el-tag v-else-if="row.expiration_status === 'expiring_soon'" size="small" type="warning">临期</el-tag>
+              <el-tag v-else size="small" type="success" effect="plain">正常</el-tag>
+            </div>
+            <el-tag v-else size="small" type="info" effect="plain">永久有效</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="showBatchDrawer = false">关闭</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -493,11 +614,11 @@ import {
   deleteStoreApi,
   getStoreInventoryApi,
   dispatchStoreInventoryToDeviceApi,
-  getStoreInventoryRecordsApi
+  getStoreInventoryRecordsApi,
+  getStoreBatchesApi
 } from '@/api/stores'
 import { getDevicesApi } from '@/api/devices'
-import type { StoreItem } from '@/types'
-
+import type { StoreItem, StoreInventoryBatchItem } from '@/types'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -534,6 +655,49 @@ const showDialog = ref(false)
 const isEdit = ref(false)
 const currentId = ref<number | null>(null)
 const submitLoading = ref(false)
+
+const materialBatchesMap = ref<Record<number, StoreInventoryBatchItem[]>>({})
+const batchLoadingMap = ref<Record<number, boolean>>({})
+const showBatchDrawer = ref(false)
+const currentDrawerMaterial = ref<any>(null)
+const currentDrawerBatches = ref<StoreInventoryBatchItem[]>([])
+const drawerBatchLoading = ref(false)
+
+
+async function loadStoreBatches(materialId: number) {
+  if (!selectedStoreId.value) return
+  batchLoadingMap.value[materialId] = true
+  try {
+    const res = await getStoreBatchesApi(selectedStoreId.value, { material_id: materialId, has_stock: 1 })
+    materialBatchesMap.value[materialId] = res.data?.results || []
+  } catch (err: any) {
+    ElMessage.error(err.message || '获取在店批次失败')
+  } finally {
+    batchLoadingMap.value[materialId] = false
+  }
+}
+
+function onTableRowExpand(row: any, expandedRows: any[]) {
+  const isExpanded = expandedRows.some((r: any) => r.id === row.id)
+  if (isExpanded && (!materialBatchesMap.value[row.material] || materialBatchesMap.value[row.material].length === 0)) {
+    loadStoreBatches(row.material)
+  }
+}
+
+async function openStoreBatchDrawer(row: any) {
+  currentDrawerMaterial.value = row
+  showBatchDrawer.value = true
+  drawerBatchLoading.value = true
+  try {
+    const res = await getStoreBatchesApi(selectedStoreId.value, { material_id: row.material })
+    currentDrawerBatches.value = res.data?.results || []
+    materialBatchesMap.value[row.material] = currentDrawerBatches.value
+  } catch (err: any) {
+    ElMessage.error(err.message || '获取在店批次明细失败')
+  } finally {
+    drawerBatchLoading.value = false
+  }
+}
 
 const formData = reactive({
   name: '',

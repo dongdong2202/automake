@@ -32,6 +32,7 @@ export function createInventoryRecordApi(data: {
   price?: number | string
   store_id?: number | string
   remarks?: string
+  expiration_date?: string
 }): Promise<ApiResponse<InventoryRecordItem>> {
   return http.post('/admin/inventory/records/', data)
 }

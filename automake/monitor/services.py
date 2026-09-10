@@ -82,7 +82,7 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
                 
             v_val = b_info.get('v', 0)
             try:
-                v_num = int(v_val)
+                v_num = max(0, int(v_val))
             except (ValueError, TypeError):
                 v_num = 0
                 
@@ -104,26 +104,28 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
             if damaged:
                 abnormalities[f"{section}.{b_code}.a1"] = f"料桶 {b_code}({mat_name}) 模块损坏"
 
-            # 相同 code 物料聚合累加
+            # 相同 code 物料聚合累加（排除损坏料桶计入可用容量）
             if mat_code:
                 if mat_code not in aggregated_materials:
                     aggregated_materials[mat_code] = {
                         'code': mat_code,
                         'name': mat_name,
                         'total_volume': 0,
+                        'usable_volume': 0,
                         'barrels': [],
                         'has_available_barrel': False,
                         'is_low': False,
                         'is_empty': False,
                     }
                 aggregated_materials[mat_code]['total_volume'] += v_num
+                if not damaged and v_num > 0:
+                    aggregated_materials[mat_code]['usable_volume'] += v_num
+                    aggregated_materials[mat_code]['has_available_barrel'] = True
                 aggregated_materials[mat_code]['barrels'].append({
                     'barrel_code': b_code,
                     'volume': v_num,
                     'damaged': damaged
                 })
-                if not damaged and v_num > 0:
-                    aggregated_materials[mat_code]['has_available_barrel'] = True
 
     # 4. 获取物料库存预警配置 (DeviceMaterialStock)
     material_stock_configs = {
@@ -253,7 +255,8 @@ def update_device_status_to_redis(device_sn: str, parsed_data: dict) -> None:
         # 键名规范：automake:stock:{device_sn}:{material_code}
         for mat_code, mat_info in parsed_data.get('materials', {}).items():
             stock_key = f"automake:stock:{device_sn}:{mat_code}"
-            redis_conn.set(stock_key, int(mat_info['total_volume']))
+            usable_vol = mat_info.get('usable_volume') if 'usable_volume' in mat_info else mat_info.get('total_volume', 0)
+            redis_conn.set(stock_key, max(0, int(usable_vol)))
 
         # 2. 写入耗材可用状态（若用尽则设为 0，若正常且原来没有则设为默认可用）
         for cup_code, cup_info in parsed_data.get('cups', {}).items():

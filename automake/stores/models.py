@@ -73,28 +73,32 @@ class Store(models.Model):
         """判断门店是否处于营业状态"""
         return self.status == self.STATUS_OPEN
 
-    @property
-    def is_in_business_hours(self):
-        """判断当前时间是否在门店营业时间内（基于北京时间 UTC+8）"""
+    def _parse_business_hours_status(self) -> tuple[bool, str]:
+        """
+        内部辅助方法：解析当前门店营业状态与提示文案
+
+        Returns:
+            tuple[bool, str]: (是否处于营业时间内, 营业状态提示文案)
+        """
         from django.utils import timezone
         import datetime
 
+        if self.status != self.STATUS_OPEN:
+            return False, '已打烊'
+
         if not self.business_hours:
-            # 如果没有设置营业时间，默认视为全天24小时营业
-            return True
+            return True, '营业中'
 
         # 如果 business_hours 的所有星期配置均为空字符串，视为全天24小时营业
         has_any_config = any(bool(str(v).strip()) for v in self.business_hours.values() if v is not None)
         if not has_any_config:
-            return True
+            return True, '营业中'
 
-        # 获取当前北京时间 (Asia/Shanghai)
+        # 使用 Django 的 localtime，支持 TIME_ZONE 配置及单元测试 mock
         try:
-            import zoneinfo
-            beijing_tz = zoneinfo.ZoneInfo('Asia/Shanghai')
-            now = timezone.now().astimezone(beijing_tz)
-        except Exception:
             now = timezone.localtime()
+        except Exception:
+            now = timezone.now()
 
         weekday_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
         current_day = weekday_map[now.weekday()]
@@ -102,18 +106,18 @@ class Store(models.Model):
         time_range = self.business_hours.get(current_day)
         if time_range is None or str(time_range).strip() == '':
             # 今天留空未设置，默认视为全天营业
-            return True
+            return True, '营业中'
 
         time_range_str = str(time_range).strip().lower()
         if time_range_str in ('closed', '已打烊', '休息', '今日休息'):
             # 明确配置为休息/打烊
-            return False
+            return False, '今日休息'
 
         if time_range_str in ('24h', '24小时', '全天', '00:00-24:00', '00:00-23:59'):
-            return True
+            return True, '营业中'
 
         try:
-            # 解析时间范围，如 "08:00-22:00"
+            # 解析时间范围，如 "08:00-22:00" 或跨天 "22:00-02:00"
             start_str, end_str = str(time_range).split('-')
             start_time = datetime.datetime.strptime(start_str.strip(), "%H:%M").time()
             end_time = datetime.datetime.strptime(end_str.strip(), "%H:%M").time()
@@ -121,65 +125,38 @@ class Store(models.Model):
 
             if start_time <= end_time:
                 # 正常不跨天营业时间
-                return start_time <= current_time <= end_time
+                in_hours = start_time <= current_time <= end_time
             else:
                 # 跨天营业时间处理（如：22:00 到次日 02:00）
-                return current_time >= start_time or current_time <= end_time
+                in_hours = current_time >= start_time or current_time <= end_time
+
+            return in_hours, ('营业中' if in_hours else '打烊中')
         except Exception:
             # 解析格式异常等容错处理
-            return False
+            return False, '打烊中'
+
+    @property
+    def is_in_business_hours(self):
+        """
+        判断当前是否在营业时间内 (根据 business_hours JSON 字段及北京时间动态计算)
+        支持配置格式：
+        {
+            "mon": "08:00-22:00",
+            "tue": "08:00-22:00",
+            "wed": "closed",
+            "thu": "08:00-22:00",
+            "fri": "08:00-23:00",
+            "sat": "09:00-23:00",
+            "sun": "09:00-22:00"
+        }
+        支持跨天配置（如 "22:00-02:00"）
+        """
+        return self._parse_business_hours_status()[0]
 
     @property
     def business_status_text(self):
         """返回今日营业状态提示文字：营业中 / 打烊中 / 今日休息（基于北京时间 UTC+8）"""
-        from django.utils import timezone
-        import datetime
-
-        if self.status != self.STATUS_OPEN:
-            return '已打烊'
-
-        if not self.business_hours:
-            return '营业中'
-
-        has_any_config = any(bool(str(v).strip()) for v in self.business_hours.values() if v is not None)
-        if not has_any_config:
-            return '营业中'
-
-        try:
-            import zoneinfo
-            beijing_tz = zoneinfo.ZoneInfo('Asia/Shanghai')
-            now = timezone.now().astimezone(beijing_tz)
-        except Exception:
-            now = timezone.localtime()
-
-        weekday_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
-        current_day = weekday_map[now.weekday()]
-
-        time_range = self.business_hours.get(current_day)
-        if time_range is None or str(time_range).strip() == '':
-            return '营业中'
-
-        time_range_str = str(time_range).strip().lower()
-        if time_range_str in ('closed', '已打烊', '休息', '今日休息'):
-            return '今日休息'
-
-        if time_range_str in ('24h', '24小时', '全天', '00:00-24:00', '00:00-23:59'):
-            return '营业中'
-
-        try:
-            start_str, end_str = str(time_range).split('-')
-            start_time = datetime.datetime.strptime(start_str.strip(), "%H:%M").time()
-            end_time = datetime.datetime.strptime(end_str.strip(), "%H:%M").time()
-            current_time = now.time()
-
-            if start_time <= end_time:
-                in_hours = start_time <= current_time <= end_time
-            else:
-                in_hours = current_time >= start_time or current_time <= end_time
-
-            return '营业中' if in_hours else '打烊中'
-        except Exception:
-            return '打烊中'
+        return self._parse_business_hours_status()[1]
 
     @property
     def can_provide_service(self):

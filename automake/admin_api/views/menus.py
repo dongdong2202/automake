@@ -1,3 +1,4 @@
+import logging
 from django.db import models
 from rest_framework.views import APIView
 from utils.permissions import IsSuperAdmin, IsAdmin
@@ -12,6 +13,8 @@ from ..serializers import (
     GlobalSkuTemplateSerializer, GlobalMenuSkuSerializer, StoreMenuSkuSerializer
 )
 from ..filters import StandardPagination
+
+logger = logging.getLogger(__name__)
 
 
 class GlobalMenuCategoryListView(APIView):
@@ -36,9 +39,11 @@ class GlobalMenuCategoryListView(APIView):
 
         serializer = GlobalMenuCategorySerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"[AdminMenuCatCreate] 参数校验失败: {serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         cat = serializer.save()
+        logger.info(f"[AdminMenuCatCreate] 管理员 {request.user.username} 创建分类: id={cat.id}, name={cat.name}")
         return ok(GlobalMenuCategorySerializer(cat).data, message='分类创建成功')
 
 
@@ -66,9 +71,11 @@ class GlobalMenuCategoryDetailView(APIView):
 
         serializer = GlobalMenuCategorySerializer(cat, data=request.data, partial=True)
         if not serializer.is_valid():
+            logger.warning(f"[AdminMenuCatUpdate] 更新分类参数校验失败: id={pk}, errors={serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         updated_cat = serializer.save()
+        logger.info(f"[AdminMenuCatUpdate] 管理员 {request.user.username} 更新分类: id={pk}, name={updated_cat.name}")
         return ok(GlobalMenuCategorySerializer(updated_cat).data, message='分类更新成功')
 
     def delete(self, request, pk):
@@ -82,7 +89,9 @@ class GlobalMenuCategoryDetailView(APIView):
         if cat.items.exists():
             return error('该分类下仍存在关联商品，禁止直接删除。请先删除或迁移商品', code=4002)
 
+        cat_name = cat.name
         cat.delete()
+        logger.info(f"[AdminMenuCatDelete] 管理员 {request.user.username} 删除分类: id={pk}, name={cat_name}")
         return ok(message='分类已删除')
 
 
@@ -114,9 +123,11 @@ class GlobalMenuItemListView(APIView):
 
         serializer = GlobalMenuItemSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"[AdminMenuItemCreate] 创建商品参数错误: {serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         item = serializer.save()
+        logger.info(f"[AdminMenuItemCreate] 管理员 {request.user.username} 创建全局商品: id={item.id}, name={item.name}")
         return ok(GlobalMenuItemSerializer(item).data, message='全局商品创建成功')
 
 
@@ -144,9 +155,11 @@ class GlobalMenuItemDetailView(APIView):
 
         serializer = GlobalMenuItemSerializer(item, data=request.data, partial=True)
         if not serializer.is_valid():
+            logger.warning(f"[AdminMenuItemUpdate] 更新商品参数校验失败: id={pk}, errors={serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         updated_item = serializer.save()
+        logger.info(f"[AdminMenuItemUpdate] 管理员 {request.user.username} 更新全局商品: id={pk}, name={updated_item.name}")
         return ok(GlobalMenuItemSerializer(updated_item).data, message='商品更新成功')
 
     def delete(self, request, pk):
@@ -161,7 +174,9 @@ class GlobalMenuItemDetailView(APIView):
         if item.local_items.filter(is_active=True).exists():
             return error('已有门店菜单上架该商品，请先将对应门店菜单下架后再删除', code=4002)
 
+        item_name = item.name
         item.delete()
+        logger.info(f"[AdminMenuItemDelete] 管理员 {request.user.username} 删除全局商品: id={pk}, name={item_name}")
         return ok(message='商品已删除')
 
 
@@ -386,9 +401,11 @@ class GlobalMenuSkuDetailView(APIView):
 
         serializer = GlobalMenuSkuSerializer(sku, data=request.data, partial=True)
         if not serializer.is_valid():
+            logger.warning(f"[AdminMenuSkuUpdate] 参数校验失败: id={pk}, errors={serializer.errors}")
             return error(str(serializer.errors), code=4001)
 
         updated_sku = serializer.save()
+        logger.info(f"[AdminMenuSkuUpdate] 管理员 {request.user.username} 更新全局规格: id={pk}, name={updated_sku.name}")
         return ok(GlobalMenuSkuSerializer(updated_sku).data, message='商品规格更新成功')
 
     def delete(self, request, pk):
@@ -399,7 +416,9 @@ class GlobalMenuSkuDetailView(APIView):
         if not sku:
             return error('商品规格不存在', code=4041)
 
+        sku_name = sku.name
         sku.delete()
+        logger.info(f"[AdminMenuSkuDelete] 管理员 {request.user.username} 删除全局规格: id={pk}, name={sku_name}")
         return ok(message='商品规格已移除')
 
 
@@ -604,6 +623,10 @@ class StoreMenuSkuDetailView(APIView):
             menu_sku.price_delta = price_delta
 
         menu_sku.save()
+        logger.info(
+            f"[AdminStoreSkuUpdate] 管理员 {user.username} 更新门店规格: id={pk}, "
+            f"is_active={menu_sku.is_active}, price_delta={menu_sku.price_delta}"
+        )
         return ok(StoreMenuSkuSerializer(menu_sku).data, message='门店规格配置更新成功')
 
 

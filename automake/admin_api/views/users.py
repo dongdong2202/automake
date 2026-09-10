@@ -1,3 +1,4 @@
+import logging
 from rest_framework.views import APIView
 from utils.permissions import IsSuperAdmin
 from utils.response import ok, error
@@ -5,6 +6,9 @@ from users.models import User
 from stores.models import Store
 from ..serializers import UserAdminSerializer
 from ..filters import StandardPagination
+
+logger = logging.getLogger(__name__)
+
 
 
 class UserAdminListView(APIView):
@@ -56,7 +60,10 @@ class UserAdminListView(APIView):
             stores = Store.objects.filter(id__in=store_ids)
             user.stores.set(stores)
 
+        logger.info("Admin created user: id=%s, username=%s, role=%s by superadmin=%s",
+                    user.id, user.username, user.role, request.user)
         return ok(UserAdminSerializer(user).data, message='管理员账号创建成功')
+
 
 
 class UserAdminDetailView(APIView):
@@ -99,6 +106,7 @@ class UserAdminDetailView(APIView):
             stores = Store.objects.filter(id__in=store_ids)
             user.stores.set(stores)
 
+        logger.info("Admin updated user: pk=%s by superadmin=%s", pk, request.user)
         return ok(UserAdminSerializer(user).data, message='管理员账号更新成功')
 
     def delete(self, request, pk):
@@ -111,4 +119,6 @@ class UserAdminDetailView(APIView):
 
         user.is_active = False
         user.save(update_fields=['is_active'])
+        logger.warning("Admin disabled user: pk=%s by superadmin=%s", pk, request.user)
         return ok(message='账号已禁用')
+

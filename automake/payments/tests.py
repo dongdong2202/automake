@@ -211,8 +211,8 @@ class PaymentAPITests(APITestCase):
             'amount': {'payer_total': 1800}
         }
 
-        # 调用状态查询接口 /api/orders/<order_id>/payment-status/
-        res = self.client.get(f'/api/orders/{self.order.order_no}/payment-status/')
+        # 调用状态查询接口（带 sync_wechat=1 主动向微信查单补偿）
+        res = self.client.get(f'/api/orders/{self.order.order_no}/payment-status/?sync_wechat=1')
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.data['data']['paid'])
         self.assertEqual(res.data['data']['trade_state'], 'SUCCESS')
@@ -220,6 +220,68 @@ class PaymentAPITests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, OrderMain.STATUS_PAID)
         mock_mqtt.assert_called_once()
+
+    @patch('utils.wechat.WechatPayV3.query_order')
+    @patch('mqtt.issue_make_command')
+    def test_client_polling_read_only_mode(self, mock_mqtt, mock_query):
+        """测试客户端高频轮询模式只读本地数据库状态，绝不触发微信查单与履约"""
+        PaymentRecord.objects.create(
+            order=self.order,
+            user=self.user,
+            out_trade_no=self.order.order_no,
+            amount=self.order.pay_amount,
+            status=PaymentRecord.STATUS_PENDING,
+            pay_method='wechat_native'
+        )
+        # 客户端默认轮询（不带 sync_wechat）
+        res = self.client.get(f'/api/orders/{self.order.order_no}/payment-status/')
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data['data']['paid'])
+        self.assertEqual(res.data['data']['trade_state'], 'NOTPAY')
+        mock_query.assert_not_called()
+        mock_mqtt.assert_not_called()
+
+    @patch('mqtt.issue_make_command')
+    def test_payment_callback_idempotency_and_no_duplicate_timeline(self, mock_mqtt):
+        """测试微信支付回调防重与履约时间线幂等性（多次通知仅下发一次、时间线各记一次）"""
+        from payments.services import process_payment_success
+        from orders.models import OrderStatusLog
+        PaymentRecord.objects.create(
+            order=self.order,
+            user=self.user,
+            out_trade_no=self.order.order_no,
+            amount=self.order.pay_amount,
+            status=PaymentRecord.STATUS_PENDING,
+            pay_method='wechat_native'
+        )
+
+        # 第一次回调通知到达
+        process_payment_success(
+            order_no=self.order.order_no,
+            transaction_id='wx_tx_123456',
+            pay_time='2026-09-10T14:32:52Z',
+            wx_amount=self.order.pay_amount
+        )
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderMain.STATUS_PAID)
+        self.assertEqual(mock_mqtt.call_count, 1)
+
+        # 第二次回调重试到达（模拟网络重试）
+        process_payment_success(
+            order_no=self.order.order_no,
+            transaction_id='wx_tx_123456',
+            pay_time='2026-09-10T14:32:52Z',
+            wx_amount=self.order.pay_amount
+        )
+
+        # 验证：MQTT 命令依然只发布了 1 次
+        self.assertEqual(mock_mqtt.call_count, 1)
+
+        # 验证：时间线中 pay_success 和 task_sent 各自只有 1 条记录
+        pay_success_logs = self.order.status_logs.filter(action=OrderStatusLog.ACTION_PAY_SUCCESS)
+        task_sent_logs = self.order.status_logs.filter(action=OrderStatusLog.ACTION_TASK_SENT)
+        self.assertEqual(pay_success_logs.count(), 1)
+        self.assertEqual(task_sent_logs.count(), 1)
 
     def test_payment_test_page_render(self):
         """测试真实支付测试控制台 HTML 页面渲染"""

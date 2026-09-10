@@ -10,7 +10,7 @@ from global_config.models import (
 )
 from menus.models import MenuItem, MenuSku
 from inventory.models import (
-    Material, InventoryRecord, StoreInventory, StoreInventoryRecord
+    Material, InventoryRecord, StoreInventory, StoreInventoryRecord, StoreInventoryBatch
 )
 from orders.models import OrderMain, OrderItem, ProductionTask
 from users.models import User, UserProfile
@@ -83,7 +83,8 @@ class DeviceAdminSerializer(serializers.ModelSerializer):
         """
         if not obj.store:
             return "打烊中"
-        return obj.store.business_status_text
+        text = obj.store.business_status_text
+        return "正在营业中" if text == "营业中" else text
 
     def get_business_status_text(self, obj):
         return self.get_business_status(obj)
@@ -249,6 +250,48 @@ class MaterialSerializer(serializers.ModelSerializer):
         res = calculate_default_expiration_date(obj)
         return str(res) if res else ''
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # 1. 参考价格：取最新入库采购批次的进价
+        latest_inbound = instance.records.filter(
+            record_type=InventoryRecord.RECORD_TYPE_IN,
+            price__isnull=False
+        ).order_by('-created_at').first()
+        if latest_inbound and latest_inbound.price is not None:
+            data['price'] = str(latest_inbound.price)
+            data['latest_price'] = str(latest_inbound.price)
+        else:
+            data['latest_price'] = str(instance.price or '0.00')
+
+        # 2. 有效期：取当前在库批次中最近即将到期的日期 (FEFO 最近到期日)
+        from django.utils import timezone
+        today = timezone.now().date()
+        nearest_batch = instance.records.filter(
+            record_type=InventoryRecord.RECORD_TYPE_IN,
+            remaining_quantity__gt=0,
+            expiration_date__isnull=False
+        ).order_by('expiration_date', 'created_at').first()
+
+        if nearest_batch and nearest_batch.expiration_date:
+            exp_date = nearest_batch.expiration_date
+            days_left = (exp_date - today).days
+            data['nearest_expiration_date'] = str(exp_date)
+            data['nearest_days_left'] = days_left
+            data['nearest_batch_no'] = nearest_batch.batch_no or ''
+            if days_left < 0:
+                data['nearest_expiration_status'] = 'expired'
+            elif days_left <= 30:
+                data['nearest_expiration_status'] = 'expiring_soon'
+            else:
+                data['nearest_expiration_status'] = 'normal'
+        else:
+            data['nearest_expiration_date'] = None
+            data['nearest_days_left'] = None
+            data['nearest_batch_no'] = ''
+            data['nearest_expiration_status'] = 'permanent'
+
+        return data
+
 
 class InventoryRecordSerializer(serializers.ModelSerializer):
     material_name = serializers.CharField(source='material.name', read_only=True)
@@ -256,6 +299,7 @@ class InventoryRecordSerializer(serializers.ModelSerializer):
     material_unit = serializers.CharField(source='material.unit', read_only=True)
     store_name = serializers.CharField(source='store.name', read_only=True)
     operator_username = serializers.CharField(source='operator.username', read_only=True)
+    source_batch_no = serializers.CharField(source='source_batch.batch_no', read_only=True, default='')
     days_until_expiration = serializers.SerializerMethodField()
     expiration_status = serializers.SerializerMethodField()
 
@@ -263,13 +307,13 @@ class InventoryRecordSerializer(serializers.ModelSerializer):
         model = InventoryRecord
         fields = [
             'id', 'material', 'material_name', 'material_code', 'material_unit',
-            'record_type', 'quantity', 'price', 'store', 'store_name',
+            'record_type', 'quantity', 'remaining_quantity', 'batch_no',
+            'source_batch', 'source_batch_no', 'price', 'store', 'store_name',
             'operator', 'operator_username', 'expiration_date',
             'days_until_expiration', 'expiration_status',
             'remarks', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
-
     def get_days_until_expiration(self, obj):
         if obj.expiration_date:
             from django.utils import timezone
@@ -316,6 +360,37 @@ class StoreInventorySerializer(serializers.ModelSerializer):
         ref_date = obj.material.created_at.date() if obj.material and obj.material.created_at else None
         return parse_shelf_life_duration_days(obj.material.shelf_life, reference_date=ref_date)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # 门店库存有效期显示当前在店有效批次中最近到期的日期 (Nearest Expiration Date)
+        from django.utils import timezone
+        today = timezone.now().date()
+        nearest_batch = instance.store.batches.filter(
+            material=instance.material,
+            quantity__gt=0,
+            expiration_date__isnull=False
+        ).order_by('expiration_date', 'created_at').first()
+
+        if nearest_batch and nearest_batch.expiration_date:
+            exp_date = nearest_batch.expiration_date
+            days_left = (exp_date - today).days
+            data['nearest_expiration_date'] = str(exp_date)
+            data['nearest_days_left'] = days_left
+            data['nearest_batch_no'] = nearest_batch.batch_no or ''
+            if days_left < 0:
+                data['nearest_expiration_status'] = 'expired'
+            elif days_left <= 30:
+                data['nearest_expiration_status'] = 'expiring_soon'
+            else:
+                data['nearest_expiration_status'] = 'normal'
+        else:
+            data['nearest_expiration_date'] = None
+            data['nearest_days_left'] = None
+            data['nearest_batch_no'] = ''
+            data['nearest_expiration_status'] = 'permanent'
+
+        return data
+
 
 class StoreInventoryRecordSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
@@ -333,11 +408,49 @@ class StoreInventoryRecordSerializer(serializers.ModelSerializer):
             'id', 'store', 'store_name', 'material', 'material_name',
             'material_code', 'material_unit', 'device', 'device_sn',
             'device_name', 'record_type', 'record_type_display',
-            'quantity', 'operator', 'operator_username', 'remarks',
+            'quantity', 'batch_no', 'cost_price', 'expiration_date',
+            'operator', 'operator_username', 'remarks',
             'created_at'
         ]
         read_only_fields = ['id', 'created_at']
 
+
+class StoreInventoryBatchSerializer(serializers.ModelSerializer):
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    material_unit = serializers.CharField(source='material.unit', read_only=True)
+    days_until_expiration = serializers.SerializerMethodField()
+    expiration_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StoreInventoryBatch
+        fields = [
+            'id', 'store', 'store_name', 'material', 'material_name',
+            'material_code', 'material_unit', 'batch_no', 'quantity',
+            'cost_price', 'expiration_date', 'days_until_expiration',
+            'expiration_status', 'source_inbound', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_days_until_expiration(self, obj):
+        if obj.expiration_date:
+            from django.utils import timezone
+            today = timezone.now().date()
+            return (obj.expiration_date - today).days
+        return None
+
+    def get_expiration_status(self, obj):
+        if not obj.expiration_date:
+            return 'permanent'
+        from django.utils import timezone
+        today = timezone.now().date()
+        days_left = (obj.expiration_date - today).days
+        if days_left < 0:
+            return 'expired'
+        elif days_left <= 30:
+            return 'expiring_soon'
+        return 'normal'
 
 # ============================================================
 # 菜单与规格配方 Serializers
@@ -665,13 +778,17 @@ class StoreMenuItemSerializer(serializers.ModelSerializer):
     global_base_price = serializers.IntegerField(source='global_item.base_price', read_only=True)
     category_name = serializers.CharField(source='global_item.category.name', read_only=True)
     store_name = serializers.CharField(source='store.name', read_only=True)
+    image_url = serializers.CharField(source='global_item.image_url', read_only=True)
+    detail_page = serializers.CharField(source='global_item.detail_page', read_only=True)
+    device_model_name = serializers.CharField(source='device_model.name', read_only=True)
     skus = StoreMenuSkuSerializer(many=True, read_only=True)
 
     class Meta:
         model = MenuItem
         fields = [
-            'id', 'store', 'store_name', 'device_model', 'global_item',
+            'id', 'store', 'store_name', 'device_model', 'device_model_name', 'global_item',
             'global_item_name', 'category_name', 'global_base_price',
+            'image_url', 'detail_page',
             'base_price', 'is_active', 'sort_order', 'skus', 'created_at', 'updated_at'
         ]
 

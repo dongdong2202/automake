@@ -9,6 +9,13 @@ export function getOrderDetailApi(orderNo: string): Promise<ApiResponse<OrderIte
   return http.get(`/admin/orders/${orderNo}/`)
 }
 
-export function refundOrderApi(orderNo: string, data?: { reason?: string }): Promise<ApiResponse<any>> {
+export interface RefundParams {
+  refund_type?: 'auto' | 'force'
+  reason?: string
+  offline?: boolean
+  funds_account?: string
+}
+
+export function refundOrderApi(orderNo: string, data?: RefundParams): Promise<ApiResponse<any>> {
   return http.post(`/admin/orders/${orderNo}/refund/`, data || {})
 }

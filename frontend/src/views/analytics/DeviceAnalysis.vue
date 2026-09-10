@@ -28,7 +28,7 @@
               设备健康评分排行 (满分 100)
             </span>
           </div>
-          <BaseChart :option="healthScoreChartOption" height="340px" />
+          <BaseChart :option="healthScoreChartOption" height="350px" />
         </div>
       </el-col>
 
@@ -40,13 +40,13 @@
               系统告警发生趋势 (按严重等级)
             </span>
           </div>
-          <BaseChart :option="alarmTrendChartOption" height="340px" />
+          <BaseChart :option="alarmTrendChartOption" height="350px" />
         </div>
       </el-col>
     </el-row>
 
     <!-- 设备详细状态表格 -->
-    <div class="chart-card">
+    <div class="chart-card" style="margin-top: 16px;">
       <div class="card-header">
         <span class="card-title">
           <el-icon><Cpu /></el-icon>
@@ -63,17 +63,20 @@
             <StatusBadge :status="row.status" :text="row.status_display" />
           </template>
         </el-table-column>
-        <el-table-column prop="health_score" label="健康评分" width="130" sortable>
+        <el-table-column prop="health_score" label="健康评分" width="160" sortable>
           <template #default="{ row }">
             <el-progress
               :percentage="row.health_score"
               :status="row.health_score >= 80 ? 'success' : row.health_score >= 50 ? 'warning' : 'exception'"
+              :stroke-width="10"
+              striped
+              striped-flow
             />
           </template>
         </el-table-column>
         <el-table-column prop="unresolved_alarms" label="待处理告警" width="120" sortable>
           <template #default="{ row }">
-            <el-tag :type="row.unresolved_alarms > 0 ? 'danger' : 'info'" size="small">
+            <el-tag :type="row.unresolved_alarms > 0 ? 'danger' : 'info'" size="small" effect="plain">
               {{ row.unresolved_alarms }} 条
             </el-tag>
           </template>
@@ -99,33 +102,86 @@ import BaseChart from '@/components/charts/BaseChart.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { useDateRange } from '@/composables/useDateRange'
 import { getDeviceUptimeApi, getDeviceAlarmTrendApi } from '@/api/analytics'
+import {
+  createLinearGradient,
+  CHART_COLORS,
+  MODERN_TOOLTIP,
+  MODERN_GRID,
+} from '@/utils/chartThemes'
 
 const { dateRange, shortcuts } = useDateRange()
 const uptimeList = ref<any[]>([])
 const alarmTrendList = ref<any[]>([])
 
-// 1. 健康评分排行 Option
+/**
+ * 1. 健康评分排行水平胶囊柱图 Option
+ * - 动态阶梯色彩映射：绿色 (健康良好) / 橙黄 (需关注) / 红色 (异常急需检修)
+ */
 const healthScoreChartOption = computed(() => {
   const names = uptimeList.value.map((i) => i.device_name || i.device_sn).reverse()
   const scores = uptimeList.value.map((i) => i.health_score).reverse()
 
   return {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '8%', bottom: '5%', top: '5%', containLabel: true },
-    xAxis: { type: 'value', max: 100, name: '评分' },
-    yAxis: { type: 'category', data: names },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+    },
+    grid: {
+      ...MODERN_GRID,
+      left: '4%',
+      right: '8%',
+      top: '4%',
+      bottom: '6%',
+    },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      name: '健康分',
+      axisLabel: { color: '#909399' },
+      splitLine: { lineStyle: { color: '#F2F6FC', type: 'dashed' } },
+    },
+    yAxis: {
+      type: 'category',
+      data: names,
+      axisLine: { lineStyle: { color: '#E4E7ED' } },
+      axisLabel: { color: '#606266', fontSize: 12 },
+    },
     series: [
       {
         name: '健康评分',
         type: 'bar',
+        barMaxWidth: 18,
         data: scores,
-        itemStyle: { color: '#67C23A', borderRadius: [0, 4, 4, 0] },
+        itemStyle: {
+          color: (params: any) => {
+            const val = params.value
+            if (val >= 80) {
+              return createLinearGradient('#67C23A', '#95D475', false)
+            } else if (val >= 60) {
+              return createLinearGradient('#E6A23C', '#F3D19E', false)
+            }
+            return createLinearGradient('#F56C6C', '#F89898', false)
+          },
+          borderRadius: [0, 6, 6, 0],
+        },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: '{c} 分',
+          color: '#909399',
+          fontSize: 11,
+        },
       },
     ],
   }
 })
 
-// 2. 告警趋势堆叠面积图 Option
+/**
+ * 2. 告警趋势堆叠面积图 Option
+ * - 区分普通提示 (Info)、一般警告 (Warning)、严重故障 (Critical)
+ * - 采用半透明渐变区域填充，方便掌握故障暴发与恢复波谷
+ */
 const alarmTrendChartOption = computed(() => {
   const dates = alarmTrendList.value.map((i) => i.date)
   const infos = alarmTrendList.value.map((i) => i.info)
@@ -133,35 +189,63 @@ const alarmTrendChartOption = computed(() => {
   const criticals = alarmTrendList.value.map((i) => i.critical)
 
   return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['普通提示', '一般警告', '严重故障'], bottom: 0 },
-    grid: { left: '3%', right: '4%', bottom: '10%', top: '8%', containLabel: true },
-    xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: '告警次数' },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'axis',
+    },
+    legend: {
+      data: ['普通提示', '一般警告', '严重故障'],
+      bottom: 0,
+      icon: 'circle',
+    },
+    grid: MODERN_GRID,
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: '#E4E7ED' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      name: '告警频次',
+      axisLabel: { color: '#909399' },
+      splitLine: { lineStyle: { color: '#F2F6FC', type: 'dashed' } },
+    },
     series: [
       {
         name: '普通提示',
         type: 'line',
-        stack: 'total',
-        areaStyle: {},
+        smooth: 0.35,
+        symbol: 'none',
+        areaStyle: {
+          color: createLinearGradient('rgba(144, 147, 153, 0.25)', 'rgba(144, 147, 153, 0.02)'),
+        },
         data: infos,
         itemStyle: { color: '#909399' },
       },
       {
         name: '一般警告',
         type: 'line',
-        stack: 'total',
-        areaStyle: {},
+        smooth: 0.35,
+        symbol: 'none',
+        areaStyle: {
+          color: createLinearGradient('rgba(230, 162, 60, 0.35)', 'rgba(230, 162, 60, 0.02)'),
+        },
         data: warnings,
         itemStyle: { color: '#E6A23C' },
       },
       {
         name: '严重故障',
         type: 'line',
-        stack: 'total',
-        areaStyle: {},
+        smooth: 0.35,
+        symbol: 'circle',
+        symbolSize: 6,
+        areaStyle: {
+          color: createLinearGradient('rgba(245, 108, 108, 0.4)', 'rgba(245, 108, 108, 0.03)'),
+        },
         data: criticals,
         itemStyle: { color: '#F56C6C' },
+        lineStyle: { width: 2.5 },
       },
     ],
   }
@@ -188,3 +272,10 @@ onMounted(() => {
   fetchData()
 })
 </script>
+
+<style scoped>
+.chart-card {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+}
+</style>

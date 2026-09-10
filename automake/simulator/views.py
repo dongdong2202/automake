@@ -342,35 +342,15 @@ def simulator_create_test_order_api(request):
         )
         order_item.skus.add(sku_local)
         
-        # 4. 创建对应的 ProductionTask 任务
-        payload = {
-            'type': 'make',
-            'order_no': order_no,
-            'order_token': order.order_token,
-            'quantity': 1,
-            'items': [
-                {'item_name': '测试拿铁', 'sku_name': '标准拿铁', 'quantity': 1}
-            ],
-            'materials': [
-                {'code': 'coffee_bean', 'quantity': 15.0},
-                {'code': 'fresh_milk', 'quantity': 150.0},
-                {'code': 'paperL', 'quantity': 1.0},
-                {'code': 'lid', 'quantity': 1.0}
-            ]
-        }
-        
-        task = ProductionTask.objects.create(
-            order=order,
-            device=device,
-            status=ProductionTask.TASK_PENDING,
-            command_payload=payload
-        )
+        # 4. 创建对应的 ProductionTask 任务（统一使用 create_production_task 生成标准化 Payload）
+        from orders.services import create_production_task
+        task = create_production_task(order)
         
         # 5. 调用 issue_make_command 下发指令，通过 MQTT 广播命令，并更改状态为 'sent'
         success = issue_make_command(
             order_no=order_no,
             device_sn=device_sn,
-            command_payload=payload
+            command_payload=task.command_payload
         )
         
         if not success:
@@ -439,25 +419,32 @@ def simulator_diagnostics_api(request):
             mat_name = ""
             mat_type = ""
             mat = Material.objects.filter(code=code).first()
+            is_consumable = (code in ['paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane']) or (mat and mat.material_type in (Material.TYPE_CONSUMABLE, Material.TYPE_CUP, 'cup', 'consumable'))
             if mat:
                 mat_name = mat.name
                 mat_type = mat.material_type
-                if mat.material_type == Material.TYPE_CONSUMABLE:
+                if is_consumable:
                     stock_obj = DeviceConsumableStock.objects.filter(device=device, code=mat).first()
                     db_qty = float(stock_obj.quantity) if stock_obj else 0.0
                 else:
                     stock_obj = DeviceMaterialStock.objects.filter(device=device, code=code).first()
                     db_qty = float(stock_obj.current_remaining_height) if stock_obj else 0.0
-                    
+            elif is_consumable:
+                stock_obj = DeviceConsumableStock.objects.filter(device=device, code__code=code).first()
+                db_qty = float(stock_obj.quantity) if stock_obj else 0.0
+
             # 从 Redis 查询
             redis_stock_key = f"automake:stock:{device_sn}:{code}"
             raw_redis_val = redis_conn.get(redis_stock_key)
-            redis_qty = float(raw_redis_val) / 100.0 if raw_redis_val is not None else 0.0
+            try:
+                redis_qty = float(raw_redis_val) if raw_redis_val is not None else 0.0
+            except (ValueError, TypeError):
+                redis_qty = 0.0
             
             stock_info.append({
                 'code': code,
-                'name': mat_name,
-                'type': '耗材' if mat_type == Material.TYPE_CONSUMABLE else '食材',
+                'name': mat_name or code,
+                'type': '耗材' if is_consumable else '食材',
                 'db_qty': db_qty,
                 'redis_qty': redis_qty
             })
@@ -477,3 +464,259 @@ def simulator_diagnostics_api(request):
     except Exception as e:
         logger.exception(f'获取状态诊断数据异常: {e}')
         return JsonResponse({'code': 500, 'message': f'获取状态诊断异常: {e}'}, status=500)
+
+
+def simulator_kiosk_view(request):
+    """
+    渲染上位机触控终端 (Kiosk) 模拟界面。
+    默认设备: sn001, 注册码: sn001, 关联门店: 北京1店 (100000)
+    """
+    context = {
+        'device_sn': 'sn001',
+        'key_code': 'sn001',
+        'store_id': 100000,
+        'store_name': '北京1店',
+    }
+    return render(request, 'simulator/kiosk.html', context)
+
+
+@csrf_exempt
+def simulator_seed_kiosk_menu_api(request):
+    """
+    一键初始化 0.2 元以内的模拟菜单及 sn001 上位机基础库存。
+    商品价格严格控制在 0.20 元以内（如 0.01元、0.10元、0.20元），以供微信支付小额真实测试。
+    """
+    try:
+        from decimal import Decimal
+        from stores.models import Store
+        from devices.models import Device, DeviceConsumableStock
+        from global_config.models import GlobalMenuCategory, GlobalMenuItem, GlobalSkuTemplate, GlobalMenuSku, GlobalSkuIngredient
+        from inventory.models import Material
+        from menus.models import MenuItem
+        from django_redis import get_redis_connection
+
+        device = Device.objects.filter(device_sn='sn001').first()
+        if not device:
+            return JsonResponse({'code': 404, 'message': '设备 sn001 不存在，请先录入设备'}, status=404)
+        store = device.store
+        if not store:
+            return JsonResponse({'code': 404, 'message': '设备 sn001 未绑定门店'}, status=404)
+
+        if not store.is_open:
+            store.status = Store.STATUS_OPEN
+            store.save(update_fields=['status'])
+
+        # 1. 确保基础物料库存在
+        mats_config = [
+            ('paperL', '纸大杯', Material.TYPE_CONSUMABLE, '个'),
+            ('paperM', '纸中杯', Material.TYPE_CONSUMABLE, '个'),
+            ('plasticL', '塑料大杯', Material.TYPE_CONSUMABLE, '个'),
+            ('plasticM', '塑料中杯', Material.TYPE_CONSUMABLE, '个'),
+            ('lid', '杯盖', Material.TYPE_CONSUMABLE, '个'),
+            ('membrane', '封口膜', Material.TYPE_CONSUMABLE, '张'),
+            ('coffee_bean', '咖啡豆', Material.TYPE_SOLID, 'g'),
+            ('fresh_milk', '鲜牛奶', Material.TYPE_THIN, 'ml'),
+            ('orange_juice', '鲜橙原汁', Material.TYPE_THIN, 'ml'),
+            ('water', '纯净水', Material.TYPE_THIN, 'ml'),
+        ]
+        materials = {}
+        for code, name, m_type, unit in mats_config:
+            mat = Material.objects.filter(code=code).first()
+            if not mat:
+                mat = Material.objects.filter(name=name).first()
+                if not mat:
+                    mat = Material.objects.create(code=code, name=name, material_type=m_type, unit=unit, quantity=9999)
+                else:
+                    if not mat.code:
+                        mat.code = code
+                        mat.save(update_fields=['code'])
+            materials[code] = mat
+
+        # 2. 确保 sn001 设备耗材库存充足
+        consumable_codes = ['paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane']
+        for code in consumable_codes:
+            mat = materials.get(code)
+            if mat:
+                cs, _ = DeviceConsumableStock.objects.get_or_create(
+                    device=device,
+                    code=mat,
+                    defaults={'quantity': 100}
+                )
+                if cs.quantity < 50:
+                    cs.quantity = 100
+                    cs.save(update_fields=['quantity'])
+
+        # 3. 确保 Redis 原料与耗材库存充足
+        redis_conn = get_redis_connection('default')
+        redis_stocks = {
+            'paperL': 100, 'paperM': 100, 'plasticL': 100, 'plasticM': 100,
+            'lid': 100, 'membrane': 100, 'water': 5000,
+            'coffee_bean': 1000, 'fresh_milk': 2000, 'orange_juice': 3000,
+        }
+        for code, val in redis_stocks.items():
+            redis_conn.set(f'automake:stock:sn001:{code}', val)
+
+        # 4. 规格模板（价格增量均为 0，确保单杯价格不超过 0.20 元）
+        tpl_cup_big, _ = GlobalSkuTemplate.objects.get_or_create(name='大杯', category='杯型', defaults={'default_price_delta': 0})
+        tpl_cup_small, _ = GlobalSkuTemplate.objects.get_or_create(name='小杯', category='杯型', defaults={'default_price_delta': 0})
+        tpl_hot, _ = GlobalSkuTemplate.objects.get_or_create(name='热', category='温度', defaults={'default_price_delta': 0})
+        tpl_cold, _ = GlobalSkuTemplate.objects.get_or_create(name='冷', category='温度', defaults={'default_price_delta': 0})
+        tpl_normal, _ = GlobalSkuTemplate.objects.get_or_create(name='常温', category='温度', defaults={'default_price_delta': 0})
+
+        cat_coffee = GlobalMenuCategory.objects.filter(name='咖啡', device_model=device.device_model).first() or GlobalMenuCategory.objects.filter(name='咖啡').first()
+        cat_juice = GlobalMenuCategory.objects.filter(name='果汁', device_model=device.device_model).first() or GlobalMenuCategory.objects.filter(name='果汁').first()
+
+        # 5. 创建 3 款价格 <= 0.20 元的模拟商品
+        # 商品 1: 浓缩咖啡 (1分钱, ¥0.01)
+        item_espresso, _ = GlobalMenuItem.objects.get_or_create(
+            category=cat_coffee,
+            name='浓缩咖啡(测试0.01元)',
+            defaults={
+                'base_price': 1,
+                'description': '上位机测试专享·浓缩意式咖啡 (0.01元)',
+                'main_ingredients': '精选咖啡豆 15g',
+                'price_description': '实付 0.01 元',
+                'is_active': True,
+                'sort_order': 1
+            }
+        )
+        item_espresso.base_price = 1
+        item_espresso.save()
+
+        # 商品 2: 经典拿铁 (1毛钱, ¥0.10)
+        item_latte, _ = GlobalMenuItem.objects.get_or_create(
+            category=cat_coffee,
+            name='经典拿铁(测试0.10元)',
+            defaults={
+                'base_price': 10,
+                'description': '上位机测试专享·新鲜奶泡拿铁 (0.10元)',
+                'main_ingredients': '精选咖啡豆 15g + 优质鲜奶 150ml',
+                'price_description': '实付 0.10 元',
+                'is_active': True,
+                'sort_order': 2
+            }
+        )
+        item_latte.base_price = 10
+        item_latte.save()
+
+        # 商品 3: 鲜榨橙汁 (2毛钱, ¥0.20)
+        item_juice, _ = GlobalMenuItem.objects.get_or_create(
+            category=cat_juice,
+            name='鲜榨橙汁(测试0.20元)',
+            defaults={
+                'base_price': 20,
+                'description': '上位机测试专享·VC鲜榨鲜橙汁 (0.20元)',
+                'main_ingredients': '鲜橙原汁 200ml',
+                'price_description': '实付 0.20 元',
+                'is_active': True,
+                'sort_order': 3
+            }
+        )
+        item_juice.base_price = 20
+        item_juice.save()
+
+        # 关联 SKU 与配料 (delta 均为 0)
+        for tpl in [tpl_cup_big, tpl_cup_small, tpl_hot, tpl_normal]:
+            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl, defaults={'price_delta': 0})
+            sku.price_delta = 0
+            sku.save()
+            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
+
+        for tpl in [tpl_cup_big, tpl_cup_small, tpl_hot, tpl_cold]:
+            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl, defaults={'price_delta': 0})
+            sku.price_delta = 0
+            sku.save()
+            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
+            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['fresh_milk'], defaults={'quantity': Decimal('150.00'), 'unit': 'ml'})
+
+        for tpl in [tpl_cup_big, tpl_cup_small, tpl_cold, tpl_normal]:
+            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl, defaults={'price_delta': 0})
+            sku.price_delta = 0
+            sku.save()
+            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['orange_juice'], defaults={'quantity': Decimal('200.00'), 'unit': 'ml'})
+
+        # 6. 同步至当前门店
+        MenuItem.sync_store_menu(store)
+
+        return JsonResponse({
+            'code': 0,
+            'message': '0.2元内模拟测试菜单及库存已成功初始化！',
+            'data': {
+                'items': [
+                    {'name': '浓缩咖啡(测试0.01元)', 'price_fen': 1, 'price_yuan': 0.01},
+                    {'name': '经典拿铁(测试0.10元)', 'price_fen': 10, 'price_yuan': 0.10},
+                    {'name': '鲜榨橙汁(测试0.20元)', 'price_fen': 20, 'price_yuan': 0.20},
+                ],
+                'stock_status': '所有物料与耗材已补齐 (100+)'
+            }
+        })
+    except Exception as e:
+        logger.exception(f'初始化上位机菜单异常: {e}')
+        return JsonResponse({'code': 500, 'message': f'初始化模拟菜单异常: {e}'}, status=500)
+
+
+@csrf_exempt
+def simulator_toggle_kiosk_stock_api(request):
+    """
+    一键调节上位机库存余量（供测试库存拦截与放行）。
+    支持清空纸杯/杯盖/原料（模拟售罄拦截），或一键补满（恢复放行）。
+    """
+    try:
+        data = {}
+        if request.body:
+            try:
+                data = json.loads(request.body.decode('utf-8'))
+            except Exception:
+                pass
+        device_sn = data.get('device_sn') or request.GET.get('device_sn') or 'sn001'
+        material_code = data.get('material_code') or request.GET.get('material_code') or 'paperL'
+        action = data.get('action') or request.GET.get('action') or ''
+        quantity = data.get('quantity') if 'quantity' in data else request.GET.get('quantity')
+
+        from devices.models import Device, DeviceConsumableStock
+        from inventory.models import Material
+        from django_redis import get_redis_connection
+
+        device = Device.objects.filter(device_sn=device_sn).first()
+        if not device:
+            return JsonResponse({'code': 404, 'message': f'设备 {device_sn} 不存在'}, status=404)
+
+        redis_conn = get_redis_connection('default')
+
+        if action == 'empty' or str(quantity) == '0':
+            # 清空指定物料 (默认 paperL 纸杯)
+            mat = Material.objects.filter(code=material_code).first()
+            if mat and mat.material_type in (Material.TYPE_CONSUMABLE, Material.TYPE_CUP):
+                cs = DeviceConsumableStock.objects.filter(device=device, code=mat).first()
+                if cs:
+                    cs.quantity = 0
+                    cs.save(update_fields=['quantity', 'updated_at'])
+            redis_conn.set(f'automake:stock:{device_sn}:{material_code}', 0)
+            msg = f'已成功清空物料 【{material_code}】（库存设为 0），现在下单将触发缺货拦截报错'
+        else:
+            # 补满全部物料 (100 / 1000)
+            consumable_codes = ['paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane']
+            for c in consumable_codes:
+                mat = Material.objects.filter(code=c).first()
+                if mat:
+                    cs, _ = DeviceConsumableStock.objects.get_or_create(
+                        device=device, code=mat, defaults={'quantity': 100}
+                    )
+                    cs.quantity = 100
+                    cs.save(update_fields=['quantity', 'updated_at'])
+                redis_conn.set(f'automake:stock:{device_sn}:{c}', 100)
+
+            ingredient_defaults = {
+                'coffee_bean': 1000,
+                'fresh_milk': 2000,
+                'orange_juice': 3000,
+                'water': 5000,
+            }
+            for c, val in ingredient_defaults.items():
+                redis_conn.set(f'automake:stock:{device_sn}:{c}', val)
+            msg = '已成功补满所有物料与耗材（纸杯、杯盖、咖啡豆、牛奶等均 >= 100），库存校验恢复放行'
+
+        return JsonResponse({'code': 0, 'message': msg})
+    except Exception as e:
+        logger.exception(f'库存调节异常: {e}')
+        return JsonResponse({'code': 500, 'message': f'库存调节异常: {e}'}, status=500)

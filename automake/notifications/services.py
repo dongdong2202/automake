@@ -245,13 +245,25 @@ def create_pickup_code(order, max_retry: int = 5) -> PickupCode:
 
     expires_at = timezone.now() + timedelta(minutes=PICKUP_CODE_EXPIRE_MINUTES)
 
-    # 带重试的唯一码生成（碰撞概率极低，保留重试兜底）
-    for attempt in range(max_retry):
-        code = generate_pickup_code()
-        if not PickupCode.objects.filter(code=code).exists():
+    # 规则：当日支付订单号 + 1 (自增序号如 0001, 0002...)
+    today = timezone.now().date()
+    from orders.models import OrderMain
+    paid_count_today = OrderMain.objects.filter(
+        paid_at__date=today,
+        status__in=[OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING, OrderMain.STATUS_DONE]
+    ).exclude(pk=order.pk).count()
+    seq = paid_count_today + 1
+    candidate_code = f"{seq:04d}"
+
+    # 遇到已有同号则顺延（防止历史测试数据冲突）
+    while PickupCode.objects.filter(code=candidate_code).exists():
+        seq += 1
+        candidate_code = f"{seq:04d}"
+        if len(candidate_code) > 8:
+            candidate_code = candidate_code[-8:]
             break
-    else:
-        raise ValueError(f'取餐码生成碰撞超过上限（{max_retry}次），请稍后重试')
+
+    code = candidate_code
 
     pickup = PickupCode.objects.create(
         order=order,

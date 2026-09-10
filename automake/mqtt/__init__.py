@@ -61,7 +61,6 @@ def _create_client() -> mqtt.Client:
     # 设置认证信息（若 EMQX 配置了用户名密码）
     if settings.MQTT_USERNAME:
         client.username_pw_set(settings.MQTT_USERNAME, settings.MQTT_PASSWORD)
-
     # 注册回调
     client.on_connect = _on_connect
     client.on_disconnect = _on_disconnect

@@ -2,11 +2,19 @@
 物料进销存与库房管理模型
 """
 
+from decimal import Decimal
+import uuid
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.utils import timezone
 
+
+def generate_batch_no():
+    """生成默认批次号: BAT-YYYYMMDD-<uuid4[:6]>"""
+    today_str = timezone.now().strftime('%Y%m%d')
+    uid = uuid.uuid4().hex[:6].upper()
+    return f"BAT-{today_str}-{uid}"
 
 class Material(models.Model):
     """
@@ -233,6 +241,26 @@ class InventoryRecord(models.Model):
         verbose_name="批次过期时间", 
         help_text="进货/入库时若留空，cup类默认3年，其他物料默认6个月"
     )
+    batch_no = models.CharField(
+        max_length=64, 
+        blank=True, 
+        db_index=True, 
+        verbose_name="批次编号"
+    )
+    remaining_quantity = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=Decimal('0.00'), 
+        verbose_name="总仓批次剩余数量"
+    )
+    source_batch = models.ForeignKey(
+        'self', 
+        null=True, 
+        blank=True, 
+        on_delete=models.SET_NULL, 
+        related_name='outbound_allocations', 
+        verbose_name="来源入库批次"
+    )
     remarks = models.TextField(blank=True, verbose_name="备注")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="操作时间")
 
@@ -276,13 +304,16 @@ class InventoryRecord(models.Model):
                 raise ValidationError({"store": "进货/入库操作无需指定出库目标门店。"})
             if self.price is None or self.price < 0:
                 raise ValidationError({"price": "入库操作必须填写有效的单价/价格信息。"})
-            if not self.expiration_date:
+            if not self.batch_no:
+                self.batch_no = generate_batch_no()
+            if not self.pk and (self.remaining_quantity is None or self.remaining_quantity == 0):
+                self.remaining_quantity = self.quantity
+            if not self.expiration_date and not getattr(self, '_explicit_no_expiration', False):
                 mat = getattr(self, 'material', None)
                 if not mat and self.material_id:
                     mat = Material.objects.filter(pk=self.material_id).first()
                 if mat:
                     self.expiration_date = calculate_default_expiration_date(mat)
-
     def save(self, *args, **kwargs):
         """
         保存时通过数据库事务原子地更新 Material 主表的 quantity 和 retrieve_count。
@@ -291,13 +322,25 @@ class InventoryRecord(models.Model):
         if self.quantity is not None and not isinstance(self.quantity, Decimal):
             self.quantity = Decimal(str(self.quantity))
             
-        if self.record_type == self.RECORD_TYPE_IN and not self.expiration_date:
-            mat = getattr(self, 'material', None)
-            if not mat and self.material_id:
-                mat = Material.objects.filter(pk=self.material_id).first()
-            if mat:
-                self.expiration_date = calculate_default_expiration_date(mat)
-
+        if self.record_type == self.RECORD_TYPE_IN:
+            if not self.batch_no:
+                self.batch_no = generate_batch_no()
+            if not self.pk and (self.remaining_quantity is None or self.remaining_quantity == 0):
+                self.remaining_quantity = self.quantity
+            if not self.expiration_date and not getattr(self, '_explicit_no_expiration', False):
+                mat = getattr(self, 'material', None)
+                if not mat and self.material_id:
+                    mat = Material.objects.filter(pk=self.material_id).first()
+                if mat:
+                    self.expiration_date = calculate_default_expiration_date(mat)
+        elif self.record_type == self.RECORD_TYPE_OUT:
+            if self.source_batch:
+                if not self.batch_no:
+                    self.batch_no = self.source_batch.batch_no
+                if self.price is None or self.price == Decimal('0.00'):
+                    self.price = self.source_batch.price
+                if not self.expiration_date:
+                    self.expiration_date = self.source_batch.expiration_date
         self.clean()
         
         with transaction.atomic():
@@ -353,15 +396,38 @@ class InventoryRecord(models.Model):
                 store_inv.quantity += self.quantity
                 store_inv.save()
 
+                if self.batch_no:
+                    store_batch, _ = StoreInventoryBatch.objects.get_or_create(
+                        store=self.store,
+                        material=material,
+                        batch_no=self.batch_no,
+                        defaults={
+                            'quantity': Decimal('0.00'),
+                            'cost_price': self.price or Decimal('0.00'),
+                            'expiration_date': self.expiration_date,
+                            'source_inbound': self.source_batch
+                        }
+                    )
+                    store_batch.quantity += self.quantity
+                    if self.price is not None:
+                        store_batch.cost_price = self.price
+                    if self.expiration_date is not None:
+                        store_batch.expiration_date = self.expiration_date
+                    if self.source_batch is not None:
+                        store_batch.source_inbound = self.source_batch
+                    store_batch.save()
+
                 StoreInventoryRecord.objects.create(
                     store=self.store,
                     material=material,
                     record_type=StoreInventoryRecord.TYPE_IN_FROM_WAREHOUSE,
                     quantity=self.quantity,
                     operator=self.operator,
+                    batch_no=self.batch_no or '',
+                    cost_price=self.price,
+                    expiration_date=self.expiration_date,
                     remarks=f"总仓分拨出库入店: {self.remarks or '常规分拨'}"
                 )
-
     def delete(self, *args, **kwargs):
         """
         删除记录时，回滚对 Material 主表 quantity 和 retrieve_count 的更新。
@@ -430,6 +496,66 @@ class StoreInventory(models.Model):
         return f"{self.store.name} - {self.material.name}: {self.quantity} {self.material.unit}"
 
 
+class StoreInventoryBatch(models.Model):
+    """
+    门店物料批次资产表
+    跟踪各门店在店物料的各个进货批次库存量、采购进价与过期时间
+    """
+    store = models.ForeignKey(
+        'stores.Store', 
+        on_delete=models.CASCADE, 
+        related_name='batches', 
+        verbose_name='所属门店'
+    )
+    material = models.ForeignKey(
+        Material, 
+        on_delete=models.CASCADE, 
+        related_name='store_batches', 
+        verbose_name='关联物料'
+    )
+    batch_no = models.CharField(
+        max_length=64, 
+        db_index=True, 
+        verbose_name='批次编号'
+    )
+    quantity = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=Decimal('0.00'), 
+        verbose_name='在店批次库存'
+    )
+    cost_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=Decimal('0.00'), 
+        verbose_name='批次采购进价'
+    )
+    expiration_date = models.DateField(
+        null=True, 
+        blank=True, 
+        db_index=True, 
+        verbose_name='批次过期时间'
+    )
+    source_inbound = models.ForeignKey(
+        InventoryRecord, 
+        null=True, 
+        blank=True, 
+        on_delete=models.SET_NULL, 
+        verbose_name='来源总仓入库记录'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='入店时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='最后变动时间')
+
+    class Meta:
+        db_table = 'store_inventory_batch'
+        unique_together = ('store', 'material', 'batch_no')
+        ordering = ['expiration_date', 'created_at']
+        verbose_name = '门店物料批次库存'
+        verbose_name_plural = '门店物料批次库存列表'
+
+    def __str__(self):
+        return f"[{self.store.name}] {self.material.name} ({self.batch_no}): {self.quantity} {self.material.unit}"
+
 class StoreInventoryRecord(models.Model):
     """
     门店物料出入库与调拨流水记录表
@@ -474,6 +600,24 @@ class StoreInventoryRecord(models.Model):
         max_digits=10, 
         decimal_places=2, 
         verbose_name='流转数量'
+    )
+    batch_no = models.CharField(
+        max_length=64, 
+        blank=True, 
+        default='', 
+        verbose_name='流转批次号'
+    )
+    cost_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True, 
+        verbose_name='批次成本单价'
+    )
+    expiration_date = models.DateField(
+        null=True, 
+        blank=True, 
+        verbose_name='批次过期时间'
     )
     operator = models.ForeignKey(
         settings.AUTH_USER_MODEL, 

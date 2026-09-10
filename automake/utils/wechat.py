@@ -231,12 +231,26 @@ class WechatPayV3:
             resp.raise_for_status()
             return resp.json() if resp.text else {}
         except requests.HTTPError as e:
-            error_body = e.response.text if e.response else ''
-            logger.error(f'微信支付请求失败 {path}: {e} | 响应: {error_body}')
-            raise ValueError(f'微信支付接口错误: {error_body}')
+            resp = getattr(e, 'response', None)
+            error_body = resp.text if resp is not None else ''
+            err_msg = error_body
+            if resp is not None:
+                try:
+                    err_json = resp.json()
+                    code = err_json.get('code', '')
+                    msg = err_json.get('message', '')
+                    if code and msg:
+                        err_msg = f"{msg} (微信错误码: {code})"
+                    elif msg:
+                        err_msg = msg
+                except Exception:
+                    pass
+            logger.error(f'微信支付请求失败 {path}: HTTP {resp.status_code if resp is not None else "Unknown"} - {e} | 响应: {error_body}')
+            raise ValueError(f'微信支付接口错误: {err_msg}')
         except requests.RequestException as e:
             logger.error(f'微信支付网络异常 {path}: {e}')
-            raise ValueError('无法连接微信支付服务器')
+            raise ValueError(f'无法连接微信支付服务器: {e}')
+
 
     def create_jsapi_order(self, out_trade_no: str, amount: int,
                            openid: str, description: str) -> dict:
@@ -443,7 +457,8 @@ class WechatPayV3:
             raise ValueError(f"付款码支付请求失败: {e}")
 
     def apply_refund(self, out_refund_no: str, transaction_id: str,
-                     refund_amount: int, total_amount: int, reason: str = '') -> dict:
+                     refund_amount: int, total_amount: int, reason: str = '',
+                     funds_account: str = None) -> dict:
         """
         申请退款
 
@@ -452,6 +467,7 @@ class WechatPayV3:
         :param refund_amount: 退款金额（分）
         :param total_amount: 原订单总金额（分）
         :param reason: 退款原因
+        :param funds_account: 出资账户（AVAILABLE: 可用余额/基本账户，OPERATION: 运营账户）
         :return: 微信退款响应数据
         """
         path = '/v3/refund/domestic/refunds'
@@ -466,4 +482,9 @@ class WechatPayV3:
                 'currency': 'CNY',
             },
         }
+        target_funds_account = funds_account or getattr(settings, 'WECHAT_PAY_REFUND_FUNDS_ACCOUNT', None)
+        if target_funds_account:
+            data['funds_account'] = target_funds_account
+
         return self._request('POST', path, data)
+

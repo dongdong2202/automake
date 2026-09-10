@@ -329,14 +329,6 @@
               </template>
             </el-table-column>
 
-            <!-- 默认加价 -->
-            <el-table-column label="模板默认加价" width="110" align="center">
-              <template #default="{ row }">
-                <span style="color: #909399;">
-                  +{{ formatCurrency(row.default_price_delta || 0) }}
-                </span>
-              </template>
-            </el-table-column>
 
             <!-- 商品专属加价 (可编辑) -->
             <el-table-column label="本商品加价 (元)" width="150" align="center">
@@ -352,17 +344,6 @@
               </template>
             </el-table-column>
 
-            <!-- 计算后叠加最新售价 (加当前最新值) -->
-            <el-table-column label="叠加后最新售价" width="130" align="center">
-              <template #default="{ row, $index }">
-                <div style="font-weight: bold; color: #E6A23C; font-size: 13px;">
-                  ¥{{ getAccumulatedPrice($index) }}
-                </div>
-                <div style="font-size: 10px; color: #909399;">
-                  (前值 + ¥{{ Number(row.priceDeltaYuan || 0).toFixed(2) }})
-                </div>
-              </template>
-            </el-table-column>
 
             <!-- 状态 -->
             <el-table-column label="启用" width="75" align="center">
@@ -381,18 +362,6 @@
             </el-table-column>
           </el-table>
 
-          <!-- 底部叠加汇总 -->
-          <div v-if="formData.skus.length > 0" class="sku-summary-bar">
-            <div class="summary-item">
-              基准售价: <strong>¥{{ Number(formData.priceYuan || 0).toFixed(2) }}</strong>
-            </div>
-            <div class="summary-item">
-              + 规格累计加价: <strong style="color: #E6A23C;">{{ getTotalDeltaPrice() }} 元</strong>
-            </div>
-            <div class="summary-item total">
-              叠加后最终总售价: <strong>¥{{ getTotalCombinedPrice() }}</strong>
-            </div>
-          </div>
         </el-card>
       </el-form>
 
@@ -674,36 +643,6 @@ function isTemplateAlreadySelected(currentRow: any, tplId: number) {
   return formData.skus.some((s: any) => s !== currentRow && s.template === tplId)
 }
 
-function getAccumulatedPrice(index: number): string {
-  let total = Number(formData.priceYuan || 0)
-  for (let i = 0; i <= index; i++) {
-    const sku = formData.skus[i]
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return total.toFixed(2)
-}
-
-function getTotalCombinedPrice(): string {
-  let total = Number(formData.priceYuan || 0)
-  for (const sku of formData.skus) {
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return total.toFixed(2)
-}
-
-function getTotalDeltaPrice(): string {
-  let total = 0
-  for (const sku of formData.skus) {
-    if (sku && sku.is_active !== false) {
-      total += Number(sku.priceDeltaYuan || 0)
-    }
-  }
-  return (total >= 0 ? '+' : '') + total.toFixed(2)
-}
 
 async function handleUploadImage(uploadFile: any, field: 'image_url' | 'detail_page') {
   const rawFile = uploadFile.raw
@@ -927,28 +866,5 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-.sku-summary-bar {
-  margin-top: 12px;
-  padding: 10px 16px;
-  background: #fdf6ec;
-  border-radius: 6px;
-  border: 1px solid #faecd8;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 24px;
-  font-size: 13px;
-  color: #606266;
-}
-.summary-item strong {
-  font-size: 14px;
-}
-.summary-item.total {
-  color: #303133;
-}
-.summary-item.total strong {
-  color: #E6A23C;
-  font-size: 16px;
 }
 </style>

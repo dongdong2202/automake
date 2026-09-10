@@ -49,11 +49,14 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderStatusLogSerializer(serializers.ModelSerializer):
-    """订单状态日志序列化器"""
+    """订单状态日志 / 履约流转时间线序列化器"""
 
     class Meta:
         model = OrderStatusLog
-        fields = ['from_status', 'to_status', 'operator', 'remark', 'created_at']
+        fields = [
+            'id', 'action', 'action_name', 'from_status', 'to_status',
+            'operator_type', 'operator', 'remark', 'payload', 'created_at'
+        ]
 
 
 class OrderDetailSerializer(serializers.ModelSerializer):

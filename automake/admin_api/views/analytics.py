@@ -1,4 +1,5 @@
 import datetime
+import logging
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, F, Q, Case, When, Value, IntegerField
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth, ExtractHour, ExtractWeekDay
@@ -11,6 +12,9 @@ from orders.models import OrderMain, OrderItem, ProductionTask
 from inventory.models import Material, InventoryRecord
 from users.models import User
 from notifications.models import NotifyEvent
+
+logger = logging.getLogger(__name__)
+
 
 
 def _parse_date_and_store_filters(request):

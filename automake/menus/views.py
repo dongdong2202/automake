@@ -5,6 +5,7 @@
 菜单数据在运行时通过门店的 MenuItem 关联至全局的 GlobalMenuItem、GlobalMenuCategory 和 GlobalMenuSku 动态组装返回。
 """
 
+import logging
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -13,6 +14,8 @@ from utils.response import ok, error
 from stores.models import Store
 from .models import MenuItem
 from devices.models import Device
+
+logger = logging.getLogger(__name__)
 
 class StoreMenuView(APIView):
     """
@@ -32,6 +35,7 @@ class StoreMenuView(APIView):
         ]
     )
     def get(self, request, device_sn):
+        logger.debug(f"[StoreMenu] 收到获取菜单请求: device_sn={device_sn}")
         device = None
         store = None
 
@@ -189,6 +193,7 @@ class DeviceSoldOutItemsView(APIView):
         if not target_device_sn:
             return error('缺少 device_sn 参数', code=400)
 
+        logger.debug(f"[SoldOut] 查询设备售罄饮品列表: device_sn={target_device_sn}")
         from .services import calculate_device_sold_out_items
         sold_out_data = calculate_device_sold_out_items(target_device_sn)
         return ok(sold_out_data)
@@ -213,6 +218,7 @@ class DeviceMenuCategoriesQueryView(APIView):
         if not device_sn:
             return error('缺少 device_sn 参数', code=400)
 
+        logger.debug(f"[MenuCategories] 查询设备分类: device_sn={device_sn}")
         try:
             device = Device.objects.get(device_sn=device_sn)
         except Device.DoesNotExist:

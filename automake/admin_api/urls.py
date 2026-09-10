@@ -43,10 +43,12 @@ urlpatterns = [
     path('stores/', stores.StoreListCreateView.as_view(), name='admin-store-list-create'),
     path('stores/inventory/', stores.StoreInventoryListView.as_view(), name='admin-store-inventory-all'),
     path('stores/records/', stores.StoreInventoryRecordListView.as_view(), name='admin-store-records-all'),
+    path('stores/batches/', stores.StoreBatchListView.as_view(), name='admin-store-batches-all'),
     path('stores/<int:pk>/', stores.StoreDetailView.as_view(), name='admin-store-detail'),
     path('stores/<int:store_id>/inventory/', stores.StoreInventoryListView.as_view(), name='admin-store-inventory-list'),
     path('stores/<int:store_id>/dispatch-to-device/', stores.StoreDispatchToDeviceView.as_view(), name='admin-store-dispatch-to-device'),
     path('stores/<int:store_id>/records/', stores.StoreInventoryRecordListView.as_view(), name='admin-store-records-list'),
+    path('stores/<int:store_id>/batches/', stores.StoreBatchListView.as_view(), name='admin-store-batches-list'),
 
     # 设备管理 CRUD & 料桶配置 & 海报 & 设备库存流水
     path('devices/', devices.DeviceListCreateView.as_view(), name='admin-device-list-create'),

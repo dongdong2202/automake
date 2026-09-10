@@ -80,4 +80,3 @@ class WechatLoginAPITests(APITestCase):
         self.assertEqual(profile.nickname, 'New Nick')
         self.assertEqual(profile.avatar_url, 'wxfile://temp/new_avatar.jpeg')
 
-

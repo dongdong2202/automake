@@ -1,5 +1,5 @@
 import http from './index'
-import type { ApiResponse, PaginatedData, StoreItem } from '@/types'
+import type { ApiResponse, PaginatedData, StoreItem, StoreInventoryBatchItem } from '@/types'
 
 export function getStoresApi(params?: any): Promise<ApiResponse<PaginatedData<StoreItem>>> {
   return http.get('/admin/stores/', { params })
@@ -37,4 +37,14 @@ export function getStoreInventoryRecordsApi(storeId?: number | string, params?: 
     return http.get(`/admin/stores/${storeId}/records/`, { params })
   }
   return http.get('/admin/stores/records/', { params })
+}
+
+export function getStoreBatchesApi(
+  storeId?: number | string,
+  params?: Record<string, unknown>
+): Promise<ApiResponse<PaginatedData<StoreInventoryBatchItem>>> {
+  if (storeId) {
+    return http.get(`/admin/stores/${storeId}/batches/`, { params })
+  }
+  return http.get('/admin/stores/batches/', { params })
 }

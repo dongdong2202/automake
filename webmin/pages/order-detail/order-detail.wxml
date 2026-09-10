@@ -122,6 +122,26 @@
     </view>
   </view>
 
+  <!-- 履约流转时间线卡片 -->
+  <view class="order-timeline-card card" wx:if="{{order.statusLogs && order.statusLogs.length > 0}}">
+    <view class="section-title" style="margin-bottom: 24rpx; font-size: 28rpx; font-weight: 700; color: #1e293b;">履约流转时间线</view>
+    <view class="timeline-container">
+      <view wx:for="{{order.statusLogs}}" wx:key="index" class="timeline-row flex-row">
+        <view class="timeline-axis flex-col flex-center">
+          <view class="axis-dot {{item.action === 'refund_failed' || item.to_status === 'failed' ? 'dot-danger' : (item.to_status === 'success' ? 'dot-success' : 'dot-primary')}}"></view>
+          <view class="axis-line" wx:if="{{index < order.statusLogs.length - 1}}"></view>
+        </view>
+        <view class="timeline-body flex-col">
+          <view class="timeline-head flex-between">
+            <text class="timeline-title {{item.action === 'refund_failed' || item.to_status === 'failed' ? 'text-danger' : ''}}">{{ item.title }}</text>
+            <text class="timeline-time">{{ item.timeFormatted }}</text>
+          </view>
+          <text class="timeline-desc" wx:if="{{item.remark}}">{{ item.remark }}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <!-- 底部固定操作按钮区 -->
   <view class="order-action-footer-wrap safe-bottom">
     <view class="order-action-footer flex-between">

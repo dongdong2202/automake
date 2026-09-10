@@ -30,8 +30,8 @@ class SimulatorIntegrationTests(TestCase):
     def test_device_register_endpoint(self):
         """测试设备注册 API (包含自动创建、更新与注册码校验)"""
         # 预先录入测试机器
-        Device.objects.create(device_sn='NEW-TEST-SN-999', status=Device.STATUS_ONLINE)
-        Device.objects.create(device_sn='NEW-TEST-SN-888', status=Device.STATUS_ONLINE)
+        Device.objects.create(device_sn='NEW-TEST-SN-999', key_code='TEST-KEY-001', store=self.store, status=Device.STATUS_ONLINE)
+        Device.objects.create(device_sn='NEW-TEST-SN-888', key_code='TEST-KEY-888', store=self.store, status=Device.STATUS_ONLINE)
 
         # Scenario 1: 注册一个已录入系统的机器，注册码有效
         payload_create = {
@@ -69,7 +69,7 @@ class SimulatorIntegrationTests(TestCase):
             data=json.dumps(payload_invalid_key),
             content_type='application/json',
         )
-        self.assertEqual(res_invalid.json()['code'], 6002)
+        self.assertEqual(res_invalid.json()['code'], 6003)
 
         # Scenario 3: 更新已存在的设备（SN 与 key_code 匹配）完整数据项
         payload_update = {

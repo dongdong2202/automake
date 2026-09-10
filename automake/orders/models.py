@@ -164,20 +164,46 @@ class OrderItem(models.Model):
 
 class OrderStatusLog(models.Model):
     """
-    订单状态变更日志
+    订单状态变更日志 / 履约流转时间线
 
     每次订单状态变化都在此记录一条，用于追溯订单完整生命周期。
     order_main 存当前状态，此表存历史轨迹，两者互补，不重复。
     """
+    # 动作/事件枚举
+    ACTION_CREATE = 'create'                  # 订单创建
+    ACTION_WAIT_PAY = 'wait_pay'              # 进入待支付
+    ACTION_PAY_SUCCESS = 'pay_success'        # 支付成功
+    ACTION_TASK_SENT = 'task_sent'            # 任务下发设备
+    ACTION_MAKING_START = 'making_start'      # 设备开始制作
+    ACTION_MAKING_DONE = 'making_done'        # 制作完成
+    ACTION_PICKUP_GEN = 'pickup_gen'          # 生成取餐码
+    ACTION_PICKUP_VERIFIED = 'pickup_verified'# 取餐核销完成
+    ACTION_REFUND_APPLIED = 'refund_applied'  # 发起退款 / 退款中
+    ACTION_REFUND_SUCCESS = 'refund_success'  # 退款成功
+    ACTION_REFUND_FAILED = 'refund_failed'    # 退款失败
+    ACTION_CANCELLED = 'cancelled'            # 订单取消
+    ACTION_FAILED = 'failed'                  # 制作异常 / 出库失败
+
+    # 操作方类型枚举
+    OP_USER = 'user'        # C端顾客
+    OP_DEVICE = 'device'    # 咖啡机上位机/硬件
+    OP_ADMIN = 'admin'      # 后台管理员
+    OP_SYSTEM = 'system'    # 系统内核/定时任务
+    OP_WECHAT = 'wechat'    # 微信支付网关/回调
+
     order = models.ForeignKey(
         OrderMain, on_delete=models.CASCADE,
         related_name='status_logs', verbose_name='订单'
     )
+    action = models.CharField(max_length=32, blank=True, default='', db_index=True, verbose_name='事件动作')
+    action_name = models.CharField(max_length=64, blank=True, default='', verbose_name='动作名称')
     from_status = models.CharField(max_length=20, blank=True, verbose_name='原状态')
     to_status = models.CharField(max_length=20, verbose_name='新状态')
+    operator_type = models.CharField(max_length=20, default=OP_SYSTEM, verbose_name='操作主体类型')
     operator = models.CharField(max_length=64, blank=True, verbose_name='操作方')  # 如：system、user、device
     remark = models.CharField(max_length=256, blank=True, verbose_name='备注')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='发生时间')
+    payload = models.JSONField(default=dict, blank=True, verbose_name='流转上下文快照')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='发生时间')
 
     class Meta:
         db_table = 'order_status_log'
@@ -186,7 +212,7 @@ class OrderStatusLog(models.Model):
         ordering = ['created_at']
 
     def __str__(self):
-        return f'{self.order.order_no}: {self.from_status} → {self.to_status}'
+        return f'{self.order.order_no}: {self.from_status} → {self.to_status} ({self.action_name or self.action or "update"})'
 
 
 class ProductionTask(models.Model):

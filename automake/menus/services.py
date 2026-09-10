@@ -12,12 +12,14 @@ from devices.models import Device, DeviceBarrelDict, DeviceMaterialStock
 from menus.models import MenuItem
 from global_config.models import GlobalMenuSku, GlobalSkuIngredient, GlobalSkuTemplateIngredient
 
+from utils.redis_keys import get_stock_key
+
 logger = logging.getLogger(__name__)
 
 
 def get_redis_stock_key(device_sn: str, mat_code: str) -> str:
-    """获取物料在 Redis 中的库存 key"""
-    return f"automake:stock:{device_sn}:{mat_code}"
+    """获取物料在 Redis 中的库存 key（已委托至 utils.redis_keys.get_stock_key）"""
+    return get_stock_key(device_sn, mat_code)
 
 
 def calculate_device_sold_out_items(device_sn: str, threshold: float = 500.0) -> dict:

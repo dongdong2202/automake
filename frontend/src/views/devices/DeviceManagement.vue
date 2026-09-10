@@ -105,6 +105,9 @@
               <span v-else style="color: #c0c4cc;">-</span>
             </template>
           </el-table-column>
+          <el-table-column prop="address" label="详细布设地址" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.address || '-' }}</template>
+          </el-table-column>
           <el-table-column prop="last_heartbeat_at" label="最后心跳" width="170" />
           <el-table-column label="操作" width="230" fixed="right">
             <template #default="{ row }">
@@ -201,13 +204,14 @@
           💡 说明：本页面展示当前门店/设备从全局菜谱继承的商品档案。支持在全局价格 ±20% 范围内微调各店售价，自由定制开启/停用可售规格（只能做减法，全局控制），修改即刻自动保存生效。
         </div>
 
-        <el-form :inline="true" size="default" style="margin-bottom: 14px;">
-          <el-form-item label="选择门店/设备归属">
+        <!-- 工具栏 -->
+        <div class="store-menu-toolbar">
+          <div class="toolbar-left">
             <el-select
               v-model="selectedMenuStore"
-              placeholder="全部门店"
-              clearable
-              style="width: 240px;"
+              placeholder="请选择门店/设备归属"
+              filterable
+              style="width: 250px;"
               @change="fetchStoreMenuItems"
             >
               <el-option
@@ -217,86 +221,150 @@
                 :value="s.id"
               />
             </el-select>
-          </el-form-item>
-          <el-form-item>
+            <el-input
+              v-model="storeMenuSearchKeyword"
+              placeholder="搜索商品名称/分类..."
+              clearable
+              prefix-icon="Search"
+              style="width: 220px;"
+            />
             <el-button type="primary" icon="Refresh" @click="fetchStoreMenuItems">
-              查询
+              刷新
             </el-button>
             <el-button type="warning" plain icon="RefreshRight" @click="handleSyncStoreMenu">
               一键同步全局菜单
             </el-button>
-          </el-form-item>
-        </el-form>
+          </div>
+          <div class="toolbar-right">
+            <el-tag type="info" effect="plain" class="count-tag">
+              共 <strong>{{ filteredStoreItemList.length }}</strong> 款门店商品
+            </el-tag>
+          </div>
+        </div>
 
-        <el-table v-loading="loadingStoreItems" :data="storeItemList" stripe style="width: 100%">
-          <el-table-column prop="id" label="门店商品ID" width="110" align="center" />
-          <el-table-column prop="global_item_name" label="商品名称" min-width="160">
+        <el-table
+          v-loading="loadingStoreItems"
+          :data="filteredStoreItemList"
+          stripe
+          class="custom-menu-table"
+          style="width: 100%"
+        >
+          <!-- 1. 商品基本信息 (主图 + 商品名 + 分类 + ID) -->
+          <el-table-column label="商品基本信息" min-width="280">
             <template #default="{ row }">
-              <span style="font-weight: 600;">{{ row.global_item_name }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="global_category_name" label="所属分类" width="140" />
-          <el-table-column label="基准全局售价(元)" width="150" align="right">
-            <template #default="{ row }">
-              <span style="color: #909399;">{{ formatCurrency(row.global_base_price) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="门店设备定价(元)" width="160">
-            <template #default="{ row }">
-              <el-input-number
-                v-model="row.editPriceYuan"
-                :min="0.01"
-                :step="0.5"
-                :precision="2"
-                size="small"
-                @blur="handleStoreItemPriceChange(row)"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column label="可售规格定制" min-width="220">
-            <template #default="{ row }">
-              <div v-if="row.skus && row.skus.length > 0" style="display: flex; flex-direction: column; gap: 4px;">
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                  <span style="font-size: 12px; color: #606266;">
-                    已启用 <strong>{{ getActiveSkuCount(row) }}</strong> / {{ row.skus.length }} 规格
-                  </span>
-                  <el-button type="primary" link size="small" @click="openDeviceSkuDialog(row)">
-                    规格定制 &gt;
-                  </el-button>
+              <div class="menu-product-cell">
+                <div class="product-avatar-wrapper">
+                  <el-image
+                    v-if="row.image_url"
+                    :src="row.image_url"
+                    :preview-src-list="row.detail_page ? [row.image_url, row.detail_page] : [row.image_url]"
+                    fit="cover"
+                    preview-teleported
+                    class="product-avatar"
+                  />
+                  <div v-else class="product-avatar-placeholder">
+                    <span>☕</span>
+                  </div>
+                  <el-tooltip v-if="row.detail_page" content="包含长图详情页，点击主图可联动大图预览" placement="top">
+                    <span class="detail-badge">长图</span>
+                  </el-tooltip>
                 </div>
-                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                  <el-tag
+                <div class="product-meta">
+                  <div class="product-name-row">
+                    <span class="product-name">{{ row.global_item_name }}</span>
+                    <el-tag size="small" type="primary" effect="light" class="category-tag">
+                      {{ row.category_name || '未分类' }}
+                    </el-tag>
+                  </div>
+                  <div class="product-sub-row">
+                    <span class="product-id">门店ID: #{{ row.id }}</span>
+                    <span v-if="row.device_model_name" class="model-badge">
+                      🖥 {{ row.device_model_name }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+
+          <!-- 2. 门店基准售价 -->
+          <el-table-column label="门店基准售价" width="130" align="right">
+            <template #default="{ row }">
+              <div class="store-price-cell">
+                <div class="store-price-main">
+                  <span class="store-currency-symbol">¥</span>
+                  <span class="store-price-value">{{ (fenToYuan(row.base_price || 0)).toFixed(2) }}</span>
+                </div>
+                <div class="store-price-sub">
+                  全局: ¥{{ (fenToYuan(row.global_base_price || 0)).toFixed(2) }}
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+
+          <!-- 3. 可售规格与分量加价 -->
+          <el-table-column label="可售规格定制 (点击规格可直接调整)" min-width="320">
+            <template #default="{ row }">
+              <div v-if="row.skus && row.skus.length > 0" class="sku-cell-wrapper">
+                <div class="sku-status-header">
+                  <span class="sku-count-info">
+                    已供售 <strong class="active-count">{{ getActiveSkuCount(row) }}</strong> / {{ row.skus.length }} 规格
+                  </span>
+                </div>
+                <div class="sku-pills-list">
+                  <div
                     v-for="sku in row.skus"
                     :key="sku.id"
-                    size="small"
-                    :type="!sku.global_sku_is_active ? 'info' : (sku.is_active ? 'success' : 'danger')"
-                    effect="plain"
-                    style="cursor: pointer;"
+                    class="store-sku-pill"
+                    :class="{
+                      'is-active': sku.is_active && sku.global_sku_is_active,
+                      'is-disabled': !sku.is_active,
+                      'is-global-off': !sku.global_sku_is_active
+                    }"
                     @click="openDeviceSkuDialog(row)"
                   >
-                    {{ sku.template_name }}
-                    <span v-if="!sku.global_sku_is_active" style="font-size: 10px; color: #909399;">(全局关)</span>
-                    <span v-else-if="!sku.is_active" style="font-size: 10px; color: #f56c6c;">(停用)</span>
-                  </el-tag>
+                    <span class="pill-name">{{ sku.template_name }}</span>
+                    <span v-if="sku.price_delta > 0" class="pill-delta">
+                      +¥{{ (fenToYuan(sku.price_delta)).toFixed(2) }}
+                    </span>
+                    <span v-if="!sku.global_sku_is_active" class="pill-badge pill-badge-off">全局关</span>
+                    <span v-else-if="!sku.is_active" class="pill-badge pill-badge-pause">已停用</span>
+                  </div>
                 </div>
               </div>
-              <div v-else style="display: flex; align-items: center; justify-content: space-between;">
-                <span style="color: #c0c4cc; font-size: 12px;">无规格</span>
-                <el-button type="info" link size="small" @click="openDeviceSkuDialog(row)">
-                  配置规格
-                </el-button>
+              <div v-else class="sku-empty-wrapper">
+                <span class="empty-text">暂无挂载规格</span>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="是否上架" width="120" align="center">
+
+          <!-- 4. 上架状态 (Switch with inline-prompt) -->
+          <el-table-column label="上架状态" width="110" align="center">
             <template #default="{ row }">
               <el-switch
                 v-model="row.is_active"
                 :loading="row.statusLoading"
                 active-text="上架"
                 inactive-text="下架"
+                inline-prompt
+                size="default"
                 @change="handleToggleStoreItemStatus(row)"
               />
+            </template>
+          </el-table-column>
+
+          <!-- 5. 操作 -->
+          <el-table-column label="操作" width="160" fixed="right" align="center">
+            <template #default="{ row }">
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                icon="Operation"
+                @click="openDeviceSkuDialog(row)"
+              >
+                规格与定价定制
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -548,132 +616,183 @@
     <!-- ============================================================ -->
     <el-dialog
       v-model="showDeviceDialog"
-      :title="isEditDevice ? '编辑设备档案配置' : '录入新设备档案'"
-      width="680px"
+      :title="isEditDevice ? '编辑设备档案' : '录入新设备'"
+      width="640px"
+      top="7vh"
+      destroy-on-close
+      class="device-form-dialog"
     >
-      <el-form :model="deviceFormData" label-width="130px">
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="序列号 (SN)" required>
-              <el-input v-model="deviceFormData.device_sn" :disabled="isEditDevice" placeholder="出厂唯一编码，如 SN001" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="设备名称" required>
-              <el-input v-model="deviceFormData.device_name" placeholder="如 朝阳大悦城1号咖啡机" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="门店注册码 (key_code)">
-              <el-input v-model="deviceFormData.key_code" placeholder="用于设备上线鉴权注册" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="设备状态">
-              <el-select v-model="deviceFormData.status" style="width: 100%;">
-                <el-option label="在线 (online)" value="online" />
-                <el-option label="离线 (offline)" value="offline" />
-                <el-option label="故障 (fault)" value="fault" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="分配所属门店">
-              <el-select v-model="deviceFormData.store" placeholder="选择分配的门店" filterable clearable style="width: 100%;">
-                <el-option
-                  v-for="store in storeOptions"
-                  :key="store.id"
-                  :label="`${store.name} (ID: ${store.id})`"
-                  :value="store.id"
+      <el-form :model="deviceFormData" label-position="top" class="device-modal-form">
+        <!-- 分区 1: 基础档案 -->
+        <div class="form-section-card">
+          <div class="section-card-header">
+            <span class="section-card-tag"></span>
+            <span class="section-card-title">基本档案</span>
+            <span class="section-card-tip">设备的硬件唯一标识与归属机型</span>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="设备序列号 (SN)" required>
+                <el-input
+                  v-model="deviceFormData.device_sn"
+                  :disabled="isEditDevice"
+                  placeholder="出厂唯一编码，如 SN001"
+                  clearable
                 />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="硬件设备型号">
-              <el-select v-model="deviceFormData.device_model" placeholder="选择硬件机型" clearable style="width: 100%;">
-                <el-option
-                  v-for="model in modelList"
-                  :key="model.id"
-                  :label="`${model.name} (${model.code})`"
-                  :value="model.id"
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="设备名称" required>
+                <el-input
+                  v-model="deviceFormData.device_name"
+                  placeholder="如 朝阳大悦城1号机"
+                  clearable
                 />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
+              </el-form-item>
+            </el-col>
+          </el-row>
 
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="固件版本">
-              <el-input v-model="deviceFormData.firmware_version" placeholder="如 1.0.0 或 2.1.4" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="静态资源版本">
-              <el-input v-model="deviceFormData.resource_version" placeholder="如 0 或 101" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="分配所属门店" class="mb-0">
+                <el-select
+                  v-model="deviceFormData.store"
+                  placeholder="请选择门店"
+                  filterable
+                  clearable
+                  style="width: 100%;"
+                >
+                  <el-option
+                    v-for="store in storeOptions"
+                    :key="store.id"
+                    :label="`${store.name} (ID: ${store.id})`"
+                    :value="store.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="硬件设备型号" class="mb-0">
+                <el-select
+                  v-model="deviceFormData.device_model"
+                  placeholder="请选择硬件机型"
+                  clearable
+                  style="width: 100%;"
+                >
+                  <el-option
+                    v-for="model in modelList"
+                    :key="model.id"
+                    :label="`${model.name} (${model.code})`"
+                    :value="model.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
 
-        <el-form-item label="MQTT Topic前缀">
-          <el-input v-model="deviceFormData.mqtt_topic_prefix" placeholder="留空默认: automake/device/{SN}" />
-        </el-form-item>
+        <!-- 分区 2: 点位与布设地址 -->
+        <div class="form-section-card">
+          <div class="section-card-header">
+            <span class="section-card-tag"></span>
+            <span class="section-card-title">布设位置</span>
+            <span class="section-card-tip">点位所在的行政省市、经纬度及具体安装位置</span>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="所在省份">
+                <el-input v-model="deviceFormData.province" placeholder="如 北京市、广东省" clearable />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="所在城市">
+                <el-input v-model="deviceFormData.city" placeholder="如 北京市、深圳市" clearable />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="经度 (lng)">
+                <el-input-number
+                  v-model="deviceFormData.lng"
+                  :precision="6"
+                  :step="0.0001"
+                  controls-position="right"
+                  placeholder="如 116.4074"
+                  style="width: 100%;"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="纬度 (lat)">
+                <el-input-number
+                  v-model="deviceFormData.lat"
+                  :precision="6"
+                  :step="0.0001"
+                  controls-position="right"
+                  placeholder="如 39.9042"
+                  style="width: 100%;"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="详细布设地址" class="mb-0">
+            <el-input
+              v-model="deviceFormData.address"
+              placeholder="如 朝阳区朝阳北路101号大悦城B1层中庭咖啡角"
+              clearable
+            />
+          </el-form-item>
+        </div>
 
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="所在省份">
-              <el-input v-model="deviceFormData.province" placeholder="如 北京市、广东省" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="所在城市">
-              <el-input v-model="deviceFormData.city" placeholder="如 北京市、深圳市" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="经度 (lng)">
-              <el-input-number v-model="deviceFormData.lng" :precision="6" :step="0.0001" placeholder="如 116.4074" style="width: 100%;" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="纬度 (lat)">
-              <el-input-number v-model="deviceFormData.lat" :precision="6" :step="0.0001" placeholder="如 39.9042" style="width: 100%;" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-form-item label="GPS 经纬度坐标">
-          <el-input v-model="deviceFormData.gps_coordinate" placeholder="格式如：116.4074, 39.9042" />
-        </el-form-item>
-
-        <el-form-item label="设备详细布设地址">
-          <el-input v-model="deviceFormData.address" placeholder="如 北京市朝阳区朝阳北路101号B1层中庭" />
-        </el-form-item>
-
-        <el-form-item label="扩展配置 (JSON)">
-          <el-input
-            v-model="deviceFormData.extra_config_raw"
-            type="textarea"
-            :rows="3"
-            placeholder="例如: { &quot;cup_dispenser&quot;: 2, &quot;ice_module&quot;: true }"
-          />
-        </el-form-item>
+        <!-- 分区 3: 运行与版本 -->
+        <div class="form-section-card">
+          <div class="section-card-header">
+            <span class="section-card-tag"></span>
+            <span class="section-card-title">运行与版本</span>
+            <span class="section-card-tip">运行状态、鉴权注册码及软固件版本</span>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="设备状态">
+                <el-select v-model="deviceFormData.status" style="width: 100%;">
+                  <el-option label="在线 (online)" value="online" />
+                  <el-option label="离线 (offline)" value="offline" />
+                  <el-option label="故障 (fault)" value="fault" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="门店注册码 (key_code)">
+                <el-input v-model="deviceFormData.key_code" placeholder="用于设备上线鉴权注册" clearable />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="固件版本" class="mb-0">
+                <el-input v-model="deviceFormData.firmware_version" placeholder="如 1.0.0 或 2.1.4" clearable />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="静态资源版本" class="mb-0">
+                <el-input
+                  v-model="deviceFormData.resource_version"
+                  placeholder="如 0 或 101"
+                  clearable
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
       </el-form>
       <template #footer>
-        <el-button @click="showDeviceDialog = false">取消</el-button>
-        <el-button type="primary" :loading="submitDeviceLoading" @click="handleSubmitDevice">
-          确认保存
-        </el-button>
+        <div class="dialog-footer-actions">
+          <el-button @click="showDeviceDialog = false">取消</el-button>
+          <el-button type="primary" :loading="submitDeviceLoading" @click="handleSubmitDevice">
+            确认保存
+          </el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -960,89 +1079,83 @@
     <!-- ============================================================ -->
     <el-dialog
       v-model="showDeviceSkuDialog"
-      :title="`【${currentStoreItem?.global_item_name || '商品'}】设备可售规格定制`"
-      width="820px"
+      :title="`【${currentStoreItem?.global_item_name || '商品'}】设备规格与定价定制`"
+      width="860px"
     >
-      <div class="guide-tip" style="margin-bottom: 14px;">
-        💡 <strong>减法控制原则</strong>：当前设备可在全局启用的规格中自由选择<strong>启用或停用</strong>。若某规格在全局菜单中已被停用，则设备端无法单独开启（受全局控制，只能做减法）。
+      <!-- 顶部基准价格设置卡片 -->
+      <div style="background: #f8f9fb; border: 1px solid #ebeef5; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 4px;">
+              {{ currentStoreItem?.global_item_name }}
+              <el-tag size="small" type="info" style="margin-left: 8px;">{{ currentStoreItem?.category_name }}</el-tag>
+            </div>
+            <div style="font-size: 12px; color: #909399;">
+              全局基准售价：<span style="color: #606266; font-weight: 500;">¥{{ (fenToYuan(currentStoreItem?.global_base_price || 0)).toFixed(2) }}</span>
+              <span style="margin-left: 12px;">上下20%浮动范围：<span style="color: #E6A23C; font-weight: 500;">¥{{ minBasePriceYuan.toFixed(2) }} ~ ¥{{ maxBasePriceYuan.toFixed(2) }}</span></span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 13px; font-weight: 600; color: #606266;">本店基准售价 (元)：</span>
+            <el-input-number
+              v-model="editStoreItemBasePriceYuan"
+              :min="minBasePriceYuan"
+              :max="maxBasePriceYuan"
+              :step="0.5"
+              :precision="2"
+              size="default"
+              style="width: 140px;"
+              @change="handleSaveStoreItemBasePrice"
+            />
+          </div>
+        </div>
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <div style="font-size: 13px; color: #606266;">
-          所属商品：<strong style="color: #303133;">{{ currentStoreItem?.global_item_name }}</strong>
-          （基准定价：<span style="color: #E6A23C; font-weight: bold;">{{ formatCurrency(currentStoreItem?.base_price) }}</span>）
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="font-size: 13px; font-weight: 600; color: #303133;">
+          📋 规格分量加价定制 (继承全局分量价格，允许上下 20% 范围修改)
         </div>
-        <div>
-          <el-button size="small" icon="Refresh" @click="fetchCurrentStoreItemSkus">
-            刷新规格
-          </el-button>
-        </div>
+        <el-button size="small" icon="Refresh" @click="fetchCurrentStoreItemSkus">
+          刷新规格
+        </el-button>
       </div>
 
       <el-table v-loading="loadingDeviceSkus" :data="currentStoreItemSkus" size="small" stripe border style="width: 100%;">
-        <el-table-column prop="global_sku_id" label="SKU ID" width="80" align="center">
+        <el-table-column label="规格名称" min-width="150">
           <template #default="{ row }">
-            <el-tag type="info" size="small" effect="plain">#{{ row.global_sku_id }}</el-tag>
+            <span style="font-weight: 600; color: #303133;">{{ row.template_name }}</span>
+            <el-tag size="small" type="info" style="margin-left: 6px;">{{ row.template_category || '-' }}</el-tag>
           </template>
         </el-table-column>
 
-        <el-table-column prop="template_name" label="规格名称" width="120">
+        <el-table-column label="分量加价 (元)" width="180" align="center">
           <template #default="{ row }">
-            <span style="font-weight: 600; color: #409EFF;">{{ row.template_name }}</span>
+            <el-input-number
+              v-model="row.editPriceDeltaYuan"
+              :min="row.minDeltaYuan"
+              :max="row.maxDeltaYuan"
+              :step="0.5"
+              :precision="2"
+              :loading="row.priceLoading"
+              size="small"
+              style="width: 100%;"
+              @change="handleDeviceSkuPriceDeltaChange(row)"
+            />
           </template>
         </el-table-column>
 
-        <el-table-column prop="template_category" label="规格分类" width="90" align="center">
+        <el-table-column label="允许加价范围 (±20%)" width="190" align="center">
           <template #default="{ row }">
-            <el-tag size="small" type="info">{{ row.template_category || '-' }}</el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="规格加价" width="100" align="right">
-          <template #default="{ row }">
-            <span :style="{ color: row.price_delta > 0 ? '#E6A23C' : '#67C23A', fontWeight: '500' }">
-              {{ row.price_delta > 0 ? `+${formatCurrency(row.price_delta)}` : '¥0.00' }}
-            </span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="设备总售价" width="110" align="right">
-          <template #default="{ row }">
-            <span style="font-weight: bold; color: #E6A23C;">
-              {{ formatCurrency(row.final_price || ((currentStoreItem?.base_price || 0) + (row.price_delta || 0))) }}
-            </span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="生效配料用量" min-width="180">
-          <template #default="{ row }">
-            <div v-if="row.effective_ingredients && row.effective_ingredients.length > 0" style="display: flex; flex-wrap: wrap; gap: 4px;">
-              <el-tag
-                v-for="(ing, idx) in row.effective_ingredients"
-                :key="idx"
-                size="small"
-                type="info"
-                effect="plain"
-              >
-                {{ ing.material }}: {{ ing.quantity }}{{ ing.unit }}
-              </el-tag>
+            <div style="font-size: 12px; color: #606266; font-weight: 500;">
+              {{ row.minDeltaYuan >= 0 ? '+' : '' }}{{ (row.minDeltaYuan || 0).toFixed(2) }} ~ {{ row.maxDeltaYuan >= 0 ? '+' : '' }}{{ (row.maxDeltaYuan || 0).toFixed(2) }} 元
             </div>
-            <span v-else style="color: #c0c4cc; font-size: 11px;">无额外消耗</span>
+            <div style="font-size: 10px; color: #909399;">
+              (全局默认: +{{ (row.globalDeltaYuan || 0).toFixed(2) }} 元)
+            </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="全局状态" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.global_sku_is_active" size="small" type="success" effect="dark">
-              全局启用
-            </el-tag>
-            <el-tag v-else size="small" type="info" effect="plain">
-              全局已停用
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="本设备状态" width="130" align="center">
+        <el-table-column label="本设备状态" width="120" align="center">
           <template #default="{ row }">
             <el-tooltip
               v-if="!row.global_sku_is_active"
@@ -1152,14 +1265,14 @@ const deviceFormData = reactive({
   device_model: undefined as number | undefined | null,
   province: '',
   city: '',
+  address: '',
+  firmware_version: '',
+  resource_version: 0 as string | number,
   lat: null as number | null,
   lng: null as number | null,
-  firmware_version: '',
-  resource_version: 0,
   mqtt_topic_prefix: '',
   gps_coordinate: '',
-  address: '',
-  extra_config_raw: '',
+  extra_config: {} as Record<string, any>,
 })
 
 // -------------------------------------------------------------
@@ -1184,10 +1297,32 @@ const modelFormData = reactive({
 const loadingStoreItems = ref(false)
 const selectedMenuStore = ref<number | ''>('')
 const storeItemList = ref<StoreMenuItem[]>([])
+const storeMenuSearchKeyword = ref('')
+const filteredStoreItemList = computed(() => {
+  if (!storeMenuSearchKeyword.value.trim()) return storeItemList.value
+  const kw = storeMenuSearchKeyword.value.trim().toLowerCase()
+  return storeItemList.value.filter((item: StoreMenuItem) => {
+    const nameMatch = (item.global_item_name || '').toLowerCase().includes(kw)
+    const catMatch = (item.category_name || '').toLowerCase().includes(kw)
+    const idMatch = String(item.id).includes(kw)
+    return nameMatch || catMatch || idMatch
+  })
+})
 const showDeviceSkuDialog = ref(false)
 const currentStoreItem = ref<StoreMenuItem | null>(null)
-const currentStoreItemSkus = ref<StoreMenuSku[]>([])
+const currentStoreItemSkus = ref<any[]>([])
 const loadingDeviceSkus = ref(false)
+const editStoreItemBasePriceYuan = ref<number>(0)
+
+const minBasePriceYuan = computed(() => {
+  if (!currentStoreItem.value?.global_base_price) return 0.01
+  return Number((fenToYuan(currentStoreItem.value.global_base_price) * 0.8).toFixed(2))
+})
+
+const maxBasePriceYuan = computed(() => {
+  if (!currentStoreItem.value?.global_base_price) return 999
+  return Number((fenToYuan(currentStoreItem.value.global_base_price) * 1.2).toFixed(2))
+})
 
 // -------------------------------------------------------------
 // 4. 设备海报屏保相关数据
@@ -1306,6 +1441,9 @@ async function fetchStores() {
     const res = await getStoresApi({ page_size: 200 })
     if (res.data) {
       storeOptions.value = res.data.results || []
+      if (!selectedMenuStore.value && storeOptions.value.length > 0) {
+        selectedMenuStore.value = authStore.selectedStoreId || storeOptions.value[0].id
+      }
     }
   } catch (e) {
     //
@@ -1361,6 +1499,9 @@ async function fetchStoreMenuItems() {
   loadingStoreItems.value = true
   try {
     const storeId = selectedMenuStore.value || authStore.selectedStoreId || (storeOptions.value[0]?.id)
+    if (!selectedMenuStore.value && storeId) {
+      selectedMenuStore.value = storeId
+    }
     const params: any = { page_size: 200 }
     if (storeId) {
       params.store_id = storeId
@@ -1414,14 +1555,14 @@ function openCreateDeviceDialog() {
     device_model: modelList.value[0]?.id || undefined,
     province: '',
     city: '',
-    lat: null,
-    lng: null,
+    address: '',
     firmware_version: '',
     resource_version: 0,
+    lat: null,
+    lng: null,
     mqtt_topic_prefix: '',
     gps_coordinate: '',
-    address: '',
-    extra_config_raw: '',
+    extra_config: {},
   })
   showDeviceDialog.value = true
 }
@@ -1429,6 +1570,22 @@ function openCreateDeviceDialog() {
 function openEditDeviceDialog(row: DeviceItem) {
   isEditDevice.value = true
   currentDeviceSn.value = row.device_sn
+
+  let latVal: number | null = row.lat !== undefined && row.lat !== null ? Number(row.lat) : null
+  let lngVal: number | null = row.lng !== undefined && row.lng !== null ? Number(row.lng) : null
+  if ((latVal === null || lngVal === null) && row.gps_coordinate && row.gps_coordinate.includes(',')) {
+    const parts = row.gps_coordinate.split(',').map(p => parseFloat(p.trim()))
+    if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+      if (parts[0] > 60) {
+        lngVal = parts[0]
+        latVal = parts[1]
+      } else {
+        latVal = parts[0]
+        lngVal = parts[1]
+      }
+    }
+  }
+
   Object.assign(deviceFormData, {
     device_sn: row.device_sn,
     device_name: row.device_name,
@@ -1438,51 +1595,51 @@ function openEditDeviceDialog(row: DeviceItem) {
     device_model: row.device_model,
     province: row.province || '',
     city: row.city || '',
-    lat: row.lat !== undefined && row.lat !== null ? Number(row.lat) : null,
-    lng: row.lng !== undefined && row.lng !== null ? Number(row.lng) : null,
+    address: row.address || '',
     firmware_version: row.firmware_version || '',
     resource_version: row.resource_version || 0,
+    lat: latVal,
+    lng: lngVal,
     mqtt_topic_prefix: row.mqtt_topic_prefix || '',
     gps_coordinate: row.gps_coordinate || '',
-    address: row.address || '',
-    extra_config_raw: row.extra_config ? JSON.stringify(row.extra_config, null, 2) : '',
+    extra_config: row.extra_config || {},
   })
   showDeviceDialog.value = true
 }
 
 async function handleSubmitDevice() {
-  if (!deviceFormData.device_sn || !deviceFormData.device_name) {
+  if (!deviceFormData.device_sn?.trim() || !deviceFormData.device_name?.trim()) {
     ElMessage.warning('设备序列号和设备名称为必填项')
     return
   }
 
-  let extraConfigObj = null
-  if (deviceFormData.extra_config_raw && deviceFormData.extra_config_raw.trim()) {
-    try {
-      extraConfigObj = JSON.parse(deviceFormData.extra_config_raw)
-    } catch (err) {
-      ElMessage.error('扩展配置 JSON 格式错误，请检查')
-      return
-    }
-  }
+  const latNum = deviceFormData.lat !== null && deviceFormData.lat !== undefined && !isNaN(Number(deviceFormData.lat))
+    ? Number(deviceFormData.lat)
+    : null
+  const lngNum = deviceFormData.lng !== null && deviceFormData.lng !== undefined && !isNaN(Number(deviceFormData.lng))
+    ? Number(deviceFormData.lng)
+    : null
+  const gpsCoord = (lngNum !== null && latNum !== null)
+    ? `${lngNum},${latNum}`
+    : (deviceFormData.gps_coordinate || '')
 
   const payload: any = {
-    device_sn: deviceFormData.device_sn,
-    device_name: deviceFormData.device_name,
-    key_code: deviceFormData.key_code || '',
+    device_sn: deviceFormData.device_sn.trim(),
+    device_name: deviceFormData.device_name.trim(),
+    key_code: deviceFormData.key_code ? deviceFormData.key_code.trim() : '',
     status: deviceFormData.status,
     store: deviceFormData.store || null,
     device_model: deviceFormData.device_model || null,
-    province: deviceFormData.province || '',
-    city: deviceFormData.city || '',
-    lat: deviceFormData.lat !== null && deviceFormData.lat !== undefined ? deviceFormData.lat : null,
-    lng: deviceFormData.lng !== null && deviceFormData.lng !== undefined ? deviceFormData.lng : null,
-    firmware_version: deviceFormData.firmware_version || '',
+    province: deviceFormData.province ? deviceFormData.province.trim() : '',
+    city: deviceFormData.city ? deviceFormData.city.trim() : '',
+    address: deviceFormData.address ? deviceFormData.address.trim() : '',
+    firmware_version: deviceFormData.firmware_version ? deviceFormData.firmware_version.trim() : '',
     resource_version: Number(deviceFormData.resource_version) || 0,
+    lat: latNum,
+    lng: lngNum,
     mqtt_topic_prefix: deviceFormData.mqtt_topic_prefix || '',
-    gps_coordinate: deviceFormData.gps_coordinate || '',
-    address: deviceFormData.address || '',
-    extra_config: extraConfigObj || {},
+    gps_coordinate: gpsCoord,
+    extra_config: deviceFormData.extra_config || {},
   }
 
   submitDeviceLoading.value = true
@@ -1578,6 +1735,7 @@ function getActiveSkuCount(row: any): number {
 
 async function openDeviceSkuDialog(row: any) {
   currentStoreItem.value = row
+  editStoreItemBasePriceYuan.value = fenToYuan(row.base_price)
   showDeviceSkuDialog.value = true
   await fetchCurrentStoreItemSkus()
 }
@@ -1588,10 +1746,24 @@ async function fetchCurrentStoreItemSkus() {
   try {
     const res = await getStoreItemSkusApi(currentStoreItem.value.id)
     if (res.data) {
-      currentStoreItemSkus.value = (res.data || []).map((s: any) => ({
-        ...s,
-        statusLoading: false,
-      }))
+      currentStoreItemSkus.value = (res.data || []).map((s: any) => {
+        const globalDeltaFen = s.global_price_delta || 0
+        const globalFinalFen = (currentStoreItem.value?.global_base_price || 0) + globalDeltaFen
+        const minFinalFen = Math.floor(globalFinalFen * 0.8)
+        const maxFinalFen = Math.floor(globalFinalFen * 1.2)
+        const localBaseFen = currentStoreItem.value?.base_price || 0
+        const minDeltaFen = minFinalFen - localBaseFen
+        const maxDeltaFen = maxFinalFen - localBaseFen
+        return {
+          ...s,
+          globalDeltaYuan: Number((globalDeltaFen / 100).toFixed(2)),
+          minDeltaYuan: Number((minDeltaFen / 100).toFixed(2)),
+          maxDeltaYuan: Number((maxDeltaFen / 100).toFixed(2)),
+          editPriceDeltaYuan: Number(((s.price_delta || 0) / 100).toFixed(2)),
+          statusLoading: false,
+          priceLoading: false,
+        }
+      })
       currentStoreItem.value.skus = res.data
     }
   } finally {
@@ -1599,11 +1771,53 @@ async function fetchCurrentStoreItemSkus() {
   }
 }
 
+async function handleSaveStoreItemBasePrice() {
+  if (!currentStoreItem.value) return
+  const newBaseFen = yuanToFen(editStoreItemBasePriceYuan.value)
+  try {
+    await updateStoreMenuItemApi(currentStoreItem.value.id, {
+      base_price: newBaseFen,
+    })
+    currentStoreItem.value.base_price = newBaseFen
+    ElMessage.success(`基准价格已更新为 ¥${editStoreItemBasePriceYuan.value.toFixed(2)}`)
+    // 联动更新每个 SKU 的允许加价范围
+    if (currentStoreItemSkus.value) {
+      currentStoreItemSkus.value.forEach((sku: any) => {
+        const globalFinalFen = (currentStoreItem.value?.global_base_price || 0) + (sku.global_price_delta || 0)
+        const minFinalFen = Math.floor(globalFinalFen * 0.8)
+        const maxFinalFen = Math.floor(globalFinalFen * 1.2)
+        sku.minDeltaYuan = Number(((minFinalFen - newBaseFen) / 100).toFixed(2))
+        sku.maxDeltaYuan = Number(((maxFinalFen - newBaseFen) / 100).toFixed(2))
+      })
+    }
+    fetchStoreMenuItems()
+  } catch (e) {
+    editStoreItemBasePriceYuan.value = fenToYuan(currentStoreItem.value.base_price)
+  }
+}
+
+async function handleDeviceSkuPriceDeltaChange(sku: any) {
+  if (!currentStoreItem.value) return
+  sku.priceLoading = true
+  try {
+    const deltaFen = yuanToFen(sku.editPriceDeltaYuan)
+    await updateStoreMenuSkuApi(sku.id, { price_delta: deltaFen })
+    sku.price_delta = deltaFen
+    sku.final_price = (currentStoreItem.value.base_price || 0) + deltaFen
+    ElMessage.success(`规格 [${sku.template_name}] 分量加价已更新为 ¥${sku.editPriceDeltaYuan.toFixed(2)}`)
+    fetchStoreMenuItems()
+  } catch (e) {
+    sku.editPriceDeltaYuan = Number(((sku.price_delta || 0) / 100).toFixed(2))
+  } finally {
+    sku.priceLoading = false
+  }
+}
+
 async function handleToggleDeviceSkuStatus(sku: any, val: boolean) {
   sku.statusLoading = true
   try {
     await updateStoreMenuSkuApi(sku.id, { is_active: val })
-    ElMessage.success(`规格 [${sku.template_name}] 已${val ? '启用' : '停用'}`)
+    ElMessage.success(`规格 [${sku.template_name}] 已${val ? '供售' : '停售'}`)
     fetchStoreMenuItems()
   } catch (e: any) {
     sku.is_active = !val
@@ -1611,7 +1825,6 @@ async function handleToggleDeviceSkuStatus(sku: any, val: boolean) {
     sku.statusLoading = false
   }
 }
-
 
 async function handleToggleStoreItemStatus(row: any) {
   row.statusLoading = true
@@ -1627,22 +1840,10 @@ async function handleToggleStoreItemStatus(row: any) {
   }
 }
 
-async function handleStoreItemPriceChange(row: any) {
-  try {
-    const priceFen = yuanToFen(row.editPriceYuan)
-    await updateStoreMenuItemApi(row.id, {
-      base_price: priceFen,
-    })
-    ElMessage.success(`商品 [${row.global_item_name}] 售价已更新为 ¥${row.editPriceYuan.toFixed(2)}`)
-  } catch (e) {
-    fetchStoreMenuItems()
-  }
-}
-
 async function handleSyncStoreMenu() {
-  const currentStoreId = authStore.selectedStoreId || authStore.user?.stores[0]?.id
+  const currentStoreId = selectedMenuStore.value || authStore.selectedStoreId || (storeOptions.value[0]?.id)
   if (!currentStoreId) {
-    ElMessage.warning('请先在顶部选择要同步的门店')
+    ElMessage.warning('请先在下拉框选择要同步的门店')
     return
   }
 
@@ -1920,5 +2121,263 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* 录入/编辑设备对话框样式 - 舒展简洁 */
+.device-modal-form .form-section-card {
+  background: #fbfcfe;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 14px 18px 8px 18px;
+  margin-bottom: 14px;
+}
+.device-modal-form .form-section-card:last-child {
+  margin-bottom: 0;
+}
+.section-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.section-card-tag {
+  width: 3px;
+  height: 14px;
+  background: #409eff;
+  border-radius: 2px;
+}
+.section-card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1f2937;
+}
+.section-card-tip {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-left: 4px;
+}
+.device-modal-form :deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+.device-modal-form :deep(.el-form-item.mb-0) {
+  margin-bottom: 4px;
+}
+.device-modal-form :deep(.el-form-item__label) {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4b5563;
+  padding-bottom: 4px !important;
+  line-height: 1.2;
+}
+.dialog-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* 门店菜单定制美化 */
+.store-menu-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.store-menu-toolbar .toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.store-menu-toolbar .toolbar-right .count-tag {
+  font-size: 13px;
+  padding: 4px 10px;
+}
+.menu-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0;
+}
+.menu-product-cell .product-avatar-wrapper {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+}
+.menu-product-cell .product-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.menu-product-cell .product-avatar-placeholder {
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+  background-color: #f1f5f9;
+  border: 1px dashed #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.menu-product-cell .detail-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.menu-product-cell .product-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+}
+.menu-product-cell .product-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.menu-product-cell .product-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1e293b;
+  line-height: 1.3;
+}
+.menu-product-cell .category-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  height: 20px;
+  line-height: 18px;
+  border-radius: 4px;
+}
+.menu-product-cell .product-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.menu-product-cell .product-id {
+  color: #94a3b8;
+  font-family: monospace;
+}
+.menu-product-cell .model-badge {
+  color: #64748b;
+  background-color: #f8fafc;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  font-size: 11px;
+}
+
+/* 价格单元格 */
+.store-price-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.store-price-main {
+  display: inline-flex;
+  align-items: baseline;
+  color: #0f172a;
+  font-weight: 600;
+}
+.store-currency-symbol {
+  font-size: 12px;
+  margin-right: 2px;
+  color: #64748b;
+}
+.store-price-value {
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.store-price-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* 规格胶囊列表 */
+.sku-cell-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sku-status-header {
+  font-size: 12px;
+  color: #64748b;
+}
+.sku-status-header .active-count {
+  color: #10b981;
+  font-weight: 600;
+}
+.sku-pills-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.store-sku-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  background-color: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.store-sku-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(16, 185, 129, 0.2);
+}
+.store-sku-pill.is-disabled {
+  background-color: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #9ca3af;
+  text-decoration: line-through;
+}
+.store-sku-pill.is-global-off {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+.store-sku-pill .pill-delta {
+  font-weight: 600;
+  color: #ea580c;
+  font-size: 11px;
+  background-color: #fff7ed;
+  border-radius: 8px;
+  padding: 0 4px;
+}
+.store-sku-pill .pill-badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 14px;
+}
+.store-sku-pill .pill-badge-pause {
+  background-color: #fee2e2;
+  color: #ef4444;
+}
+.store-sku-pill .pill-badge-off {
+  background-color: #f3f4f6;
+  color: #6b7280;
+}
+.sku-empty-wrapper .empty-text {
+  font-size: 12px;
+  color: #cbd5e1;
+  font-style: italic;
 }
 </style>

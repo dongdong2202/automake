@@ -1,6 +1,20 @@
+"""
+运营驾驶舱概览数据统计模块 (Dashboard Analytics View)
+======================================================
+核心功能：
+1. 汇总当日关键业务 KPI（实收营业额、订单量、客单均价、设备在线率、未处理告警、新增用户）；
+2. 昨日同期对比与增长率计算（日环比分析）；
+3. 设备多维状态统计（在线、离线、故障）；
+4. 近 7 天营业额与订单量时序趋势（按日 TruncDate 单次聚合，杜绝 N+1 循环查询）；
+5. 热销商品 TOP 10 榜单与物料库存低水位预警列表；
+6. 实时最新成交订单流水（select_related / prefetch_related 预加载优化）。
+"""
+
 import datetime
+import logging
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg
+from django.db.models.functions import TruncDate
 from rest_framework.views import APIView
 from utils.permissions import IsAdmin
 from utils.response import ok, error
@@ -11,11 +25,13 @@ from inventory.models import Material
 from users.models import User
 from notifications.models import NotifyEvent
 
+logger = logging.getLogger(__name__)
+
 
 class DashboardStatsView(APIView):
     """
     GET /api/admin/dashboard/stats
-    运营驾驶舱实时概览统计数据
+    运营驾驶舱实时概览统计数据接口
     """
     permission_classes = [IsAdmin]
 
@@ -24,7 +40,10 @@ class DashboardStatsView(APIView):
         today = timezone.localdate()
         yesterday = today - datetime.timedelta(days=1)
 
-        # 门店过滤
+        # ---------------------------------------------------------
+        # 1. 数据权限隔离过滤：
+        #    超级管理员可查看全网大盘；普通门店管理员严格限制仅查看归属门店
+        # ---------------------------------------------------------
         store_ids = None
         if not user.is_super_admin:
             store_ids = list(user.stores.values_list('id', flat=True))
@@ -38,44 +57,75 @@ class DashboardStatsView(APIView):
             devices_qs = devices_qs.filter(store_id__in=store_ids)
             alarms_qs = alarms_qs.filter(device__store_id__in=store_ids)
 
+        # 具备有效营收贡献的有效订单状态集（已支付待出货、制作中、制作完成）
         paid_statuses = [OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING, OrderMain.STATUS_DONE]
 
-        # 今日 vs 昨日 营收与订单
+        # ---------------------------------------------------------
+        # 2. 今日 vs 昨日 核心收银 KPI 对比（合并 Count + Sum 单次聚合，减少 DB 开销）
+        # ---------------------------------------------------------
         today_paid_orders = orders_qs.filter(created_at__date=today, status__in=paid_statuses)
         yesterday_paid_orders = orders_qs.filter(created_at__date=yesterday, status__in=paid_statuses)
 
-        today_revenue = (today_paid_orders.aggregate(total=Sum('pay_amount'))['total'] or 0) / 100.0
-        yesterday_revenue = (yesterday_paid_orders.aggregate(total=Sum('pay_amount'))['total'] or 0) / 100.0
-        today_order_count = today_paid_orders.count()
-        yesterday_order_count = yesterday_paid_orders.count()
+        today_agg = today_paid_orders.aggregate(total=Sum('pay_amount'), count=Count('id'))
+        yesterday_agg = yesterday_paid_orders.aggregate(total=Sum('pay_amount'), count=Count('id'))
 
+        today_revenue = (today_agg['total'] or 0) / 100.0
+        yesterday_revenue = (yesterday_agg['total'] or 0) / 100.0
+        today_order_count = today_agg['count'] or 0
+        yesterday_order_count = yesterday_agg['count'] or 0
+
+        # 平均客单价 (AOV = 净销售额 / 有效订单数)
         avg_order_value = round(today_revenue / today_order_count, 2) if today_order_count > 0 else 0.0
 
-        # 设备状态分布
+        # ---------------------------------------------------------
+        # 3. 设备状态分布与在线率计算
+        # ---------------------------------------------------------
         online_count = devices_qs.filter(status='online').count()
         offline_count = devices_qs.filter(status='offline').count()
         fault_count = devices_qs.filter(status='fault').count()
         total_devices = devices_qs.count()
 
-        # 未处理告警数
+        # 未处理设备硬件与物料告警数
         unhandled_alarms = alarms_qs.filter(is_handled=False).count()
 
-        # 今日新增用户
+        # 今日微信小程序新增注册客户数
         today_new_users = User.objects.filter(created_at__date=today).count()
 
-        # 近7天趋势数据
+        # ---------------------------------------------------------
+        # 4. 近 7 天时序趋势数据（性能优化：使用 TruncDate 单次分组聚合替代 14 次单日循环查询）
+        # ---------------------------------------------------------
+        seven_days_ago = today - datetime.timedelta(days=6)
+        trend_records = orders_qs.filter(
+            created_at__date__gte=seven_days_ago,
+            created_at__date__lte=today,
+            status__in=paid_statuses
+        ).annotate(day=TruncDate('created_at')).values('day').annotate(
+            day_orders=Count('id'),
+            day_revenue=Sum('pay_amount')
+        )
+
+        trend_map = {
+            r['day'].strftime('%m-%d') if hasattr(r['day'], 'strftime') else str(r['day']): {
+                'orders': r['day_orders'],
+                'revenue': (r['day_revenue'] or 0) / 100.0
+            }
+            for r in trend_records
+        }
+
         trend_labels = []
         trend_orders = []
         trend_revenue = []
         for i in range(6, -1, -1):
             d = today - datetime.timedelta(days=i)
-            trend_labels.append(d.strftime('%m-%d'))
-            day_orders = orders_qs.filter(created_at__date=d, status__in=paid_statuses)
-            trend_orders.append(day_orders.count())
-            day_rev = (day_orders.aggregate(total=Sum('pay_amount'))['total'] or 0) / 100.0
-            trend_revenue.append(day_rev)
+            d_str = d.strftime('%m-%d')
+            trend_labels.append(d_str)
+            item = trend_map.get(d_str, {'orders': 0, 'revenue': 0.0})
+            trend_orders.append(item['orders'])
+            trend_revenue.append(item['revenue'])
 
-        # 热门商品 TOP 10
+        # ---------------------------------------------------------
+        # 5. 畅销爆品榜 TOP 10 (按累计销售杯量排序)
+        # ---------------------------------------------------------
         top_items_qs = OrderItem.objects.filter(
             order__in=orders_qs.filter(status__in=paid_statuses)
         ).values('item_name').annotate(
@@ -92,7 +142,9 @@ class DashboardStatsView(APIView):
             for item in top_items_qs
         ]
 
-        # 物料预警前 5 项
+        # ---------------------------------------------------------
+        # 6. 物料安全库存预警前 5 项 (按库存绝对余量由低至高)
+        # ---------------------------------------------------------
         materials_qs = Material.objects.all().order_by('quantity')[:5]
         material_warnings = [
             {
@@ -106,8 +158,10 @@ class DashboardStatsView(APIView):
             for m in materials_qs
         ]
 
-        # 最近 10 条实时订单
-        recent_orders = orders_qs.order_by('-created_at')[:10]
+        # ---------------------------------------------------------
+        # 7. 实时成交订单流水（预加载 store、device 与 items，消除模板渲染中的 N+1 查询）
+        # ---------------------------------------------------------
+        recent_orders = orders_qs.select_related('store', 'device').prefetch_related('items').order_by('-created_at')[:10]
         recent_orders_data = [
             {
                 'order_no': o.order_no,
@@ -122,6 +176,9 @@ class DashboardStatsView(APIView):
             for o in recent_orders
         ]
 
+        # ---------------------------------------------------------
+        # 8. 组装并返回标准化响应数据结构
+        # ---------------------------------------------------------
         return ok({
             'kpis': {
                 'today_revenue': today_revenue,

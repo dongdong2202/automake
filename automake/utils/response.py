@@ -25,15 +25,17 @@ def ok(data=None, message='ok') -> Response:
     })
 
 
-def error(message='请求失败', code=1, status=400) -> Response:
+def error(message='请求失败', code=1, status=400, data=None) -> Response:
     """
     错误响应
     :param message: 错误描述
     :param code: 业务错误码（非 0）
     :param status: HTTP 状态码
+    :param data: 附加错误详情数据
     """
     return Response({
         'code': code,
         'message': message,
-        'data': None,
+        'data': data,
     }, status=status)
+

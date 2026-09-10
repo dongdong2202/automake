@@ -72,10 +72,17 @@ Page({
       else if (data.status === 'making') stepIdx = 2
       else if (data.status === 'success') stepIdx = 3
 
+      const statusLogs = (data.status_logs || []).map(log => ({
+        ...log,
+        timeFormatted: formatDateTime(log.created_at),
+        title: log.action_name || (log.from_status ? `${log.from_status} → ${log.to_status}` : '状态更新')
+      }))
+
       this.setData({
         order: {
           ...data,
           items,
+          statusLogs,
           payAmountYuan: fenToYuan(data.pay_amount || data.total_amount),
           totalAmountYuan: fenToYuan(data.total_amount),
           discountAmountYuan: fenToYuan(data.discount_amount || 0),

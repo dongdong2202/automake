@@ -1,8 +1,11 @@
+import logging
 from rest_framework.views import APIView
 from utils.permissions import IsAdmin, IsSuperAdmin
 from utils.response import ok, error
 from global_config.models import DeviceModel
 from ..serializers import DeviceModelSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceModelListView(APIView):
@@ -26,7 +29,10 @@ class DeviceModelListView(APIView):
             return error(str(serializer.errors), code=4001)
 
         model = serializer.save()
+        logger.info("Admin created DeviceModel: id=%s, code=%s, name=%s by user=%s",
+                    model.id, model.code, model.name, request.user)
         return ok(DeviceModelSerializer(model).data, message='设备型号创建成功')
+
 
 
 class DeviceModelDetailView(APIView):
@@ -56,6 +62,7 @@ class DeviceModelDetailView(APIView):
             return error(str(serializer.errors), code=4001)
 
         updated_model = serializer.save()
+        logger.info("Admin updated DeviceModel: pk=%s by user=%s", pk, request.user)
         return ok(DeviceModelSerializer(updated_model).data, message='设备型号更新成功')
 
     def delete(self, request, pk):
@@ -73,4 +80,6 @@ class DeviceModelDetailView(APIView):
             return error('已有菜单品类分类关联该型号，禁止直接删除。请先删除或转移分类', code=4003)
 
         model.delete()
+        logger.warning("Admin deleted DeviceModel: pk=%s by user=%s", pk, request.user)
         return ok(message='设备型号已删除')
+

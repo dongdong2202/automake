@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能咖啡上位机终端 · sn001 (Kiosk Terminal)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QRCode.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #0b1120;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* Touch friendly scrollbars */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(51, 65, 85, 0.8);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(71, 85, 105, 1);
+        }
+        .active-tab {
+            border-bottom: 3px solid #10b981;
+            color: #10b981;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col antialiased select-none">
+
+    <!-- 全局 Toast 提示容器 -->
+    <div id="toastContainer" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 flex flex-col gap-2 pointer-events-none max-w-lg w-full px-4"></div>
+
+    <!-- 顶部状态导航条 -->
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-6 py-3 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <!-- 终端标识与门店 -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 font-bold text-xl">
+                    ☕
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="font-extrabold text-lg tracking-tight text-white">上位机触控终端</h1>
+                        <span class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-slate-800 text-emerald-400 border border-emerald-500/30">SN: sn001</span>
+                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">北京1店 (100000)</span>
+                    </div>
+                    <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                        <span id="deviceOnlineIndicator" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span id="deviceStatusText">设备在线</span>
+                        <span class="text-slate-600">|</span>
+                        <span id="registerStatusBadge" class="text-amber-400 font-medium">● 状态: 检测中...</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- 控制台快捷操作 -->
+            <div class="flex items-center flex-wrap gap-2">
+                <!-- 注册按钮 -->
+                <button onclick="registerDevice()" id="btnRegister" class="px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path></svg>
+                    <span>终端注册 (sn001)</span>
+                </button>
+
+                <!-- 注入0.2元模拟菜单 -->
+                <button onclick="seedKioskMenu()" id="btnSeedMenu" class="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    <span>🌱 注入 0.2元真实测试菜单</span>
+                </button>
+
+                <!-- 库存调节：清空纸杯拦截测试 -->
+                <button onclick="toggleStock('empty', 'paperL')" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                    <span>⚠️ 清空纸杯 (测试缺货拦截)</span>
+                </button>
+
+                <!-- 库存调节：补满库存放行测试 -->
+                <button onclick="toggleStock('refill')" class="px-3 py-1.5 bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                    <span>✅ 补满所有物料</span>
+                </button>
+
+                <!-- 刷新状态 -->
+                <button onclick="refreshAll()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 实时物料与耗材 HUD 条 (MySQL 耗材 + Redis 物理料桶) -->
+    <div class="bg-slate-950 border-b border-slate-800/80 px-6 py-2">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between text-xs gap-3">
+            <div class="flex items-center gap-2 text-slate-400 font-medium">
+                <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                <span>实时物理监控余量 (MySQL 耗材 / Redis 料桶):</span>
+            </div>
+            <div id="stockPillsList" class="flex flex-wrap items-center gap-1.5">
+                <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">加载中...</span>
+            </div>
+            <span class="text-slate-500 text-[11px] hidden md:inline">
+                💡 真实支付模式已开启（无模拟支付），单价 ≤ 0.20 元
+            </span>
+        </div>
+    </div>
+
+    <!-- 主体触控布局：左侧菜单，右侧结算与出餐台 -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- 左侧菜单选购区 (占 7 列) -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            <!-- 分类筛选器 -->
+            <div class="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-800">
+                <button onclick="filterCategory('all')" id="catBtn-all" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm transition">
+                    全部商品
+                </button>
+                <button onclick="filterCategory('咖啡')" id="catBtn-咖啡" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5">
+                    <span>☕️ 现磨咖啡</span>
+                </button>
+                <button onclick="filterCategory('果汁')" id="catBtn-果汁" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5">
+                    <span>🍊 鲜榨果汁</span>
+                </button>
+                <span class="ml-auto text-[11px] text-emerald-400/90 font-medium">
+                    ⚡ 真实测试价格：0.01 ~ 0.20 元
+                </span>
+            </div>
+
+            <!-- 商品卡片网格 -->
+            <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div class="col-span-full py-16 text-center text-slate-500">
+                    <svg class="w-8 h-8 mx-auto animate-spin mb-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                    正在获取门店菜单数据...
+                </div>
+            </div>
+        </section>
+
+        <!-- 右侧结算、自动库存校验明细与订单看板 (占 5 列) -->
+        <aside class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 购物车与自动库存校验面板 -->
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col">
+                <div class="flex items-center justify-between pb-2.5 border-b border-slate-800">
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg">🛒</span>
+                        <h2 class="font-bold text-sm text-white">点餐清单 & 自动库存校验</h2>
+                    </div>
+                    <button onclick="clearCart()" class="text-xs text-slate-400 hover:text-rose-400 transition">清空</button>
+                </div>
+
+                <!-- 购物车条目列表 -->
+                <div id="cartItemsList" class="my-3 space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <div class="py-8 text-center text-slate-500 text-xs">
+                        购物车为空<br><span class="text-[11px] text-slate-600 mt-1 block">请从左侧点选饮品加购</span>
+                    </div>
+                </div>
+
+                <!-- 【核心重点】：实时库存校验与物料计算明细表 (自动触发) -->
+                <div id="materialCheckContainer" class="hidden mb-3 border border-slate-800 bg-slate-950/80 rounded-xl p-3">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-800/80 text-[11px]">
+                        <span class="font-bold text-slate-200 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            物料自动校验与可用余量明细
+                        </span>
+                        <span id="materialCheckSummaryBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                            核算中...
+                        </span>
+                    </div>
+
+                    <!-- 物料比对表格 -->
+                    <div class="mt-2 overflow-x-auto">
+                        <table class="w-full text-left text-[11px]">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-slate-800 text-[10px]">
+                                    <th class="py-1">物料名称</th>
+                                    <th class="py-1">介质</th>
+                                    <th class="py-1">本单所需</th>
+                                    <th class="py-1">物理库存</th>
+                                    <th class="py-1">在途占用</th>
+                                    <th class="py-1">有效可用</th>
+                                    <th class="py-1 text-right">状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="materialCheckTableBody" class="divide-y divide-slate-800/60 font-mono">
+                                <!-- 动态插入物料校验行 -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 校验说明条 -->
+                    <div id="materialCheckNotice" class="mt-2 text-[10px] text-slate-400 leading-tight">
+                        自动公式: 有效可用 = 物理监控库存 - 待出杯在途占用
+                    </div>
+                </div>
+
+                <!-- 合计与操作按钮 -->
+                <div class="pt-2.5 border-t border-slate-800 space-y-2.5">
+                    <div class="flex items-baseline justify-between">
+                        <span class="text-slate-400 text-xs font-medium">应付实付 (真实微信扣款)</span>
+                        <div class="text-right">
+                            <span class="text-xs text-rose-400 font-bold">￥</span>
+                            <span id="cartTotalPrice" class="text-2xl font-extrabold text-rose-400 font-mono">0.00</span>
+                        </div>
+                    </div>
+
+                    <!-- 下单出餐按钮 (自动校验未通过时自动禁用) -->
+                    <button onclick="createOrderAndPay()" id="btnCheckout" disabled class="w-full py-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm transition flex items-center justify-center gap-1.5 cursor-not-allowed">
+                        <span>请先添加商品</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 最新订单与出餐/取餐状态卡片 -->
+            <div id="latestOrderCard" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col hidden">
+                <div class="flex items-center justify-between pb-2.5 border-b border-slate-800">
+                    <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                        最新订单与出餐凭证
+                    </span>
+                    <span id="latestOrderStatusBadge" class="px-2 py-0.5 rounded text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">已支付 (待制作 / 未出杯)</span>
+                </div>
+
+                <!-- 大号取餐码看板 (规则: 当日支付订单号 + 1) -->
+                <div class="my-3 p-3.5 rounded-xl bg-gradient-to-b from-slate-800 to-slate-900 border border-emerald-500/40 text-center shadow-inner">
+                    <div class="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">取餐码 (当日支付订单 + 1 规则)</div>
+                    <div id="displayPickupCode" class="text-3xl font-extrabold text-emerald-400 font-mono tracking-widest my-1">
+                        ----
+                    </div>
+                    <div class="text-[10px] text-emerald-300/80 font-medium">凭取餐码到出餐口扫码或输入取杯</div>
+                </div>
+
+                <!-- 订单详细信息列表 -->
+                <div class="space-y-1.5 text-xs">
+                    <div class="flex justify-between py-0.5 border-b border-slate-800/60">
+                        <span class="text-slate-400">商户订单号:</span>
+                        <span id="displayLatestOrderNo" class="font-mono text-slate-200 font-medium select-all">--</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-slate-800/60">
+                        <span class="text-slate-400">微信流水号:</span>
+                        <span id="displayLatestTxId" class="font-mono text-slate-300 select-all text-[11px]">--</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-slate-800/60">
+                        <span class="text-slate-400">支付金额:</span>
+                        <span id="displayLatestPaidAmount" class="font-mono text-rose-400 font-bold">--</span>
+                    </div>
+                    <div class="py-1">
+                        <span class="text-slate-400 text-[11px]">制作凭证 (OrderToken UUID):</span>
+                        <div id="displayOrderToken" class="font-mono text-[10px] text-slate-300 break-all bg-slate-950 p-1 rounded border border-slate-800 mt-0.5 select-all">--</div>
+                    </div>
+                </div>
+
+                <!-- 【未制作自动退款 (退款放库)】操作入口 (无倒计时触发) -->
+                <div class="mt-3 pt-3 border-t border-slate-800">
+                    <div class="mb-2 text-[11px] text-slate-400">
+                        未制作出餐保障：若已支付未出杯，可随时点击申请退款，资金原路返还并自动放库。
+                    </div>
+                    <button onclick="refundCurrentOrder()" id="btnAutoRefund" class="w-full py-2.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5">
+                        <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"></path></svg>
+                        <span>⚡ 未制作自动退款 (退款放库)</span>
+                    </button>
+
+                    <!-- 退款放库明细报告容器 -->
+                    <div id="refundStockReport" class="hidden mt-3 p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-[11px]">
+                        <div class="font-bold text-amber-300 flex items-center gap-1 mb-1">
+                            <span>📦 退款放库物料明细报告</span>
+                        </div>
+                        <ul id="refundStockList" class="space-y-1 text-slate-300 font-mono text-[10px]">
+                            <!-- 动态插入归还物料 -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- 规格选择弹窗 (Specification Modal) -->
+    <div id="specModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h3 id="specItemName" class="text-base font-bold text-white">饮品名称</h3>
+                    <p id="specItemDesc" class="text-xs text-slate-400 mt-0.5">原料说明</p>
+                </div>
+                <button onclick="closeSpecModal()" class="text-slate-400 hover:text-white p-1">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <!-- 杯型选项 -->
+            <div id="specCupSection" class="space-y-1.5">
+                <label class="text-xs font-semibold text-slate-300 block">杯型规格</label>
+                <div id="specCupOptions" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- 温度选项 -->
+            <div id="specTempSection" class="space-y-1.5">
+                <label class="text-xs font-semibold text-slate-300 block">饮品温度</label>
+                <div id="specTempOptions" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- 价格与确认加购 -->
+            <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400">单价: </span>
+                    <span class="text-xs text-rose-400 font-bold">￥</span>
+                    <span id="specCurrentPrice" class="text-xl font-extrabold text-rose-400 font-mono">0.00</span>
+                </div>
+                <button onclick="confirmAddToCart()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow transition">
+                    确认加入购物车
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 微信真实支付弹窗 (仅真实支付：Native 扫码 & 付款码被扫) -->
+    <div id="payModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl flex flex-col">
+            <!-- 头部信息 -->
+            <div class="flex justify-between items-start pb-3 border-b border-slate-800">
+                <div>
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        <svg class="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8.5 2C4.36 2 1 4.91 1 8.5c0 2.02 1.04 3.82 2.68 5.01L3 17l3.85-1.28c.52.14 1.07.28 1.65.28.17 0 .34 0 .5-.02C9.8 17.21 11.75 18 14 18c4.14 0 7.5-2.91 7.5-6.5S18.14 5 14 5c-.34 0-.67.02-1 .06C11.83 3.2 10.27 2 8.5 2z"/>
+                        </svg>
+                        微信真实收银台
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1 font-mono">订单号: <span id="payModalOrderNo" class="text-slate-200"></span></p>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs text-slate-400 block">实付金额</span>
+                    <span class="text-xl font-extrabold text-rose-400 font-mono">￥<span id="payModalAmount">0.00</span></span>
+                </div>
+            </div>
+
+            <!-- 选项卡切换: Native 扫码 VS 付款码 -->
+            <div class="flex border-b border-slate-800 my-3">
+                <button onclick="switchPayTab('native')" id="payTabNative" class="flex-1 py-2.5 text-center text-xs active-tab flex items-center justify-center gap-1.5 font-bold">
+                    <span>🟢 方式一：微信扫码 (主扫)</span>
+                </button>
+                <button onclick="switchPayTab('codepay')" id="payTabCodepay" class="flex-1 py-2.5 text-center text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5 font-bold">
+                    <span>⚡ 方式二：付款码 (被扫)</span>
+                </button>
+            </div>
+
+            <!-- Tab 1: Native 扫码区域 -->
+            <div id="paySectionNative" class="flex flex-col items-center py-2">
+                <div id="qrLoading" class="py-8 text-slate-400 text-xs flex flex-col items-center gap-2">
+                    <svg class="w-8 h-8 animate-spin text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                    <span>正在向微信支付网关申请 Native 真实二维码...</span>
+                </div>
+                <div id="qrBox" class="hidden p-3 bg-white rounded-xl shadow-lg">
+                    <div id="qrcode"></div>
+                </div>
+                <div id="qrCountdownBox" class="hidden my-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-mono text-emerald-400 flex items-center gap-1.5">
+                    <span>⏳ 支付倒计时:</span>
+                    <span id="qrCountdownText" class="font-bold text-amber-300">90s</span>
+                </div>
+                <p id="qrPrompt" class="hidden text-xs text-slate-300 mt-1 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>请使用微信 App「扫一扫」完成付款，每 2 秒自动同步</span>
+                </p>
+                <div class="text-[11px] text-slate-500 mt-2 text-center">
+                    注：这是接入微信官方 APIv3 的真实支付二维码（金额仅 0.01~0.20 元），付款后可随时在看板原路退款。
+                </div>
+            </div>
+
+            <!-- Tab 2: 付款码被扫区域 -->
+            <div id="paySectionCodepay" class="hidden py-2 space-y-3">
+                <div class="p-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-300">
+                    <p class="text-[11px] text-slate-400">
+                        📱 请打开手机微信 <span class="text-emerald-400 font-bold">「收付款」</span>，将条形码下方的 18 位数字输入下方或使用扫码枪扫描：
+                    </p>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">微信付款码 (18位纯数字，以 10/11/12/13/14/15 开头)</label>
+                    <input type="text" id="authCodeInput" maxlength="18" placeholder="例如: 134567890123456789"
+                           class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-base font-mono tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500">
+                    <p class="text-[10px] text-slate-500 mt-1">支持外接扫码枪扫描输入，输入完成按回车即可立即发起扣款</p>
+                </div>
+                <button onclick="submitCodePay()" id="btnSubmitCodePay" class="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span>立即扣款支付 (真实扣款)</span>
+                </button>
+                <div id="codePayStatusAlert" class="hidden p-2.5 rounded-xl text-xs"></div>
+            </div>
+
+            <!-- 底部按钮 -->
+            <div class="pt-3 border-t border-slate-800 flex justify-end">
+                <button onclick="closePayModal()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition">
+                    关闭窗口
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部说明栏 -->
+    <footer class="bg-slate-950 border-t border-slate-900 px-6 py-2 text-center text-slate-500 text-xs">
+        <span>智能咖啡上位机终端 · 真实微信支付全链路 · 自动库存校验 · 未制作退款放库 · 取餐码规则: 当日支付订单+1</span>
+    </footer>
+
+    <!-- JavaScript 交互脚本 -->
+    <script>
+        // 常量配置
+        const DEVICE_SN = 'sn001';
+        const KEY_CODE = 'sn001';
+        const STORE_ID = 100000;
+
+        // 全局状态
+        let deviceToken = localStorage.getItem('device_token_sn001') || '';
+        let isRegistered = false;
+        let menuItems = [];
+        let currentCategory = 'all';
+        let cart = []; // [{ item, skus: [skuObj], quantity, unit_price, subtotal }]
+        let activeSelectedItem = null;
+        let selectedCupSku = null;
+        let selectedTempSku = null;
+
+        let currentActiveOrderNo = '';
+        let currentOrderAmountFen = 0;
+        let pollTimer = null;
+        let qrCountdownTimer = null;
+        let qrcodeInstance = null;
+        let precheckDebounceTimer = null;
+        let isPrecheckPassing = false;
+
+        // 页面启动
+        window.addEventListener('DOMContentLoaded', async () => {
+            await checkDeviceStatus();
+            await loadMenu();
+            await refreshDiagnostics();
+
+            document.getElementById('authCodeInput').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') submitCodePay();
+            });
+        });
+
+        // ==========================================
+        // 1. 全局 Toast 提示系统
+        // ==========================================
+        function showToast(msg, type = 'info', duration = 3500) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+
+            const styles = {
+                success: 'bg-emerald-950/95 text-emerald-200 border-emerald-500/50 shadow-emerald-900/30',
+                error: 'bg-rose-950/95 text-rose-200 border-rose-500/50 shadow-rose-900/30',
+                info: 'bg-slate-900/95 text-indigo-200 border-indigo-500/40 shadow-indigo-900/20',
+                warn: 'bg-amber-950/95 text-amber-200 border-amber-500/50 shadow-amber-900/30',
+            };
+            const icons = {
+                success: '✅',
+                error: '❌',
+                info: 'ℹ️',
+                warn: '⚠️',
+            };
+
+            toast.className = `flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border shadow-xl backdrop-blur text-xs font-semibold transform transition-all duration-300 pointer-events-auto ${styles[type] || styles.info}`;
+            toast.innerHTML = `
+                <span class="text-base">${icons[type] || 'ℹ️'}</span>
+                <span class="flex-1 leading-snug">${msg}</span>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // ==========================================
+        // 2. 上位机注册与状态检测
+        // ==========================================
+        async function registerDevice() {
+            showToast(`正在注册设备 SN=${DEVICE_SN}, Key=${KEY_CODE}...`, 'info');
+            try {
+                const res = await fetch('/api/device/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_sn: DEVICE_SN,
+                        key_code: KEY_CODE
+                    })
+                });
+                const data = await res.json();
+                if (data.code === 200 || data.code === 0) {
+                    const token = data.data?.access_token || '';
+                    if (token) {
+                        deviceToken = token;
+                        localStorage.setItem('device_token_sn001', token);
+                    }
+                    isRegistered = true;
+                    updateRegisterUI(true);
+                    showToast(`上位机 sn001 注册认证成功，已上线就绪！`, 'success');
+                } else {
+                    showToast(`注册失败: ${data.message || '未知错误'}`, 'error');
+                }
+            } catch (e) {
+                showToast(`注册网络异常: ${e}`, 'error');
+            }
+        }
+
+        async function checkDeviceStatus() {
+            try {
+                const res = await fetch(`/simulator/api/diagnostics/?sn=${DEVICE_SN}`);
+                const data = await res.json();
+                if (data.code === 0 && data.data) {
+                    const dev = data.data;
+                    if (dev.device_exists && dev.device_status === 'online') {
+                        isRegistered = true;
+                        updateRegisterUI(true);
+                    } else {
+                        updateRegisterUI(false);
+                    }
+                }
+            } catch (e) {
+                console.error('Check status error:', e);
+            }
+        }
+
+        function updateRegisterUI(online) {
+            const badge = document.getElementById('registerStatusBadge');
+            const dot = document.getElementById('deviceOnlineIndicator');
+            const statusText = document.getElementById('deviceStatusText');
+            if (online) {
+                badge.className = 'text-emerald-400 font-semibold';
+                badge.innerText = '● 已注册在线';
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+                statusText.innerText = '设备在线';
+            } else {
+                badge.className = 'text-amber-400 font-medium';
+                badge.innerText = '○ 未注册';
+                dot.className = 'w-2 h-2 rounded-full bg-amber-500';
+                statusText.innerText = '待注册';
+            }
+        }
+
+        // ==========================================
+        // 3. 菜单初始化与库存调节测试
+        // ==========================================
+        async function seedKioskMenu() {
+            showToast('正在初始化 ≤ 0.20 元模拟菜单与物料基础库存...', 'info');
+            try {
+                const res = await fetch('/simulator/api/kiosk/seed_menu/', { method: 'POST' });
+                const data = await res.json();
+                if (data.code === 0) {
+                    showToast('🌱 0.20元测试饮品已注入（浓缩咖啡0.01元、拿铁0.10元、橙汁0.20元）！', 'success');
+                    await loadMenu();
+                    await refreshDiagnostics();
+                    triggerAutoPrecheck();
+                } else {
+                    showToast(`初始化菜单失败: ${data.message}`, 'error');
+                }
+            } catch (e) {
+                showToast(`请求异常: ${e}`, 'error');
+            }
+        }
+
+        async function toggleStock(action, matCode = 'paperL') {
+            const label = action === 'empty' ? '清空纸杯 (测试缺货拦截)' : '补满全部物料 (放行测试)';
+            showToast(`正在执行库存调节: ${label}...`, 'info');
+            try {
+                const res = await fetch('/simulator/api/kiosk/toggle_stock/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_sn: DEVICE_SN,
+                        action: action,
+                        material_code: matCode
+                    })
+                });
+                const data = await res.json();
+                if (data.code === 0) {
+                    if (action === 'empty') {
+                        showToast(`⚠️ 已清空纸杯库存 (0)！购物车自动校验将触发缺货拦截。`, 'warn', 4500);
+                    } else {
+                        showToast(`✅ 已补满所有物料与耗材！库存校验已恢复放行。`, 'success', 4500);
+                    }
+                    await refreshDiagnostics();
+                    triggerAutoPrecheck();
+                } else {
+                    showToast(`调节库存失败: ${data.message}`, 'error');
+                }
+            } catch (e) {
+                showToast(`调节库存异常: ${e}`, 'error');
+            }
+        }
+
+        async function refreshAll() {
+            await checkDeviceStatus();
+            await loadMenu();
+            await refreshDiagnostics();
+            triggerAutoPrecheck();
+            showToast('已刷新全部终端状态与监控数据', 'info', 1500);
+        }
+
+        // ==========================================
+        // 4. 实时库存 HUD 指标刷新
+        // ==========================================
+        async function refreshDiagnostics() {
+            try {
+                const res = await fetch(`/simulator/api/diagnostics/?sn=${DEVICE_SN}`);
+                const data = await res.json();
+                if (data.code === 0 && data.data && data.data.stocks) {
+                    renderStockHUD(data.data.stocks);
+                }
+            } catch (e) {
+                console.error('Diagnostics error:', e);
+            }
+        }
+
+        function renderStockHUD(stocks) {
+            const container = document.getElementById('stockPillsList');
+            container.innerHTML = '';
+
+            stocks.forEach(stk => {
+                const isConsumable = stk.type === '耗材';
+                const currentVal = isConsumable ? stk.db_qty : stk.redis_qty;
+                const isZero = currentVal <= 0;
+                const pill = document.createElement('span');
+                const displayName = stk.name || stk.code;
+                const medium = isConsumable ? 'MySQL' : 'Redis';
+                let unit = isConsumable ? '个' : 'g/ml';
+                if (stk.code === 'coffee_bean') unit = 'g';
+                else if (['fresh_milk', 'orange_juice', 'water'].includes(stk.code)) unit = 'ml';
+                else if (stk.code === 'membrane') unit = '张';
+
+                if (isZero) {
+                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-500/50 flex items-center gap-1 animate-pulse';
+                    pill.innerHTML = `<span class="w-1 h-1 rounded-full bg-rose-500"></span>${displayName} (${medium}): 缺料 (0${unit})`;
+                } else {
+                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-900 text-slate-300 border border-slate-700 flex items-center gap-1';
+                    pill.innerHTML = `<span class="w-1 h-1 rounded-full bg-emerald-400"></span>${displayName} <span class="text-[9px] text-slate-500">(${medium})</span>: <span class="text-emerald-300 font-bold">${Math.round(currentVal)}${unit}</span>`;
+                }
+                container.appendChild(pill);
+            });
+        }
+
+        // ==========================================
+        // 5. 菜单数据加载与渲染
+        // ==========================================
+        async function loadMenu() {
+            try {
+                const res = await fetch(`/api/menu/store/${DEVICE_SN}`);
+                const data = await res.json();
+                if (data.code === 0 && data.data && data.data.categories) {
+                    menuItems = [];
+                    data.data.categories.forEach(cat => {
+                        (cat.items || []).forEach(item => {
+                            item.category_name = cat.name;
+                            menuItems.push(item);
+                        });
+                    });
+                    renderMenu();
+                }
+            } catch (e) {
+                console.error('Menu load error:', e);
+            }
+        }
+
+        function filterCategory(cat) {
+            currentCategory = cat;
+            ['all', '咖啡', '果汁'].forEach(c => {
+                const btn = document.getElementById(`catBtn-${c}`);
+                if (!btn) return;
+                if (c === cat) {
+                    btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm transition';
+                } else {
+                    btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5';
+                }
+            });
+            renderMenu();
+        }
+
+        function renderMenu() {
+            const grid = document.getElementById('productGrid');
+            grid.innerHTML = '';
+
+            const filtered = menuItems.filter(item => {
+                if (currentCategory === 'all') return true;
+                return (item.category_name || '').includes(currentCategory);
+            });
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full py-10 text-center text-slate-500 text-xs">
+                        暂无商品，请点击右上角「🌱 注入 0.2元真实测试菜单」
+                    </div>
+                `;
+                return;
+            }
+
+            filtered.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'bg-slate-900/90 border border-slate-800 hover:border-emerald-500/50 rounded-2xl p-3.5 shadow-lg transition-all duration-200 flex flex-col justify-between group';
+
+                const priceYuan = (item.base_price / 100).toFixed(2);
+                const isCoffee = (item.category_name || '').includes('咖啡');
+                const drinkIcon = isCoffee ? '☕️' : '🍊';
+
+                card.innerHTML = `
+                    <div>
+                        <div class="h-20 bg-slate-800/80 rounded-xl flex items-center justify-center text-3xl mb-2.5 group-hover:scale-105 transition-transform duration-300">
+                            ${drinkIcon}
+                        </div>
+                        <div class="flex items-start justify-between gap-1">
+                            <h4 class="font-bold text-xs text-white leading-snug">${item.name}</h4>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-semibold shrink-0">
+                                ${item.category_name || '特饮'}
+                            </span>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">${item.main_ingredients || item.description || '特选品质配方'}</p>
+                    </div>
+
+                    <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs text-rose-400 font-bold">￥</span>
+                            <span class="text-base font-extrabold text-rose-400 font-mono">${priceYuan}</span>
+                        </div>
+                        <button onclick="openSpecModal(${item.id})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1">
+                            <span>选规格</span>
+                            <span class="text-[10px]">+</span>
+                        </button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // ==========================================
+        // 6. 规格选择弹窗
+        // ==========================================
+        function openSpecModal(itemId) {
+            const item = menuItems.find(i => i.id === itemId);
+            if (!item) return;
+            activeSelectedItem = item;
+
+            document.getElementById('specItemName').innerText = item.name;
+            document.getElementById('specItemDesc').innerText = item.main_ingredients || item.description || '特选配方';
+
+            const cupSkus = (item.skus || []).filter(s => s.category === '杯型');
+            const tempSkus = (item.skus || []).filter(s => s.category === '温度');
+
+            renderSpecGroup('specCupOptions', cupSkus, 'cup');
+            renderSpecGroup('specTempOptions', tempSkus, 'temp');
+
+            selectedCupSku = cupSkus.length > 0 ? cupSkus[0] : null;
+            selectedTempSku = tempSkus.length > 0 ? tempSkus[0] : null;
+
+            updateSpecPrice();
+            document.getElementById('specModal').classList.remove('hidden');
+        }
+
+        function closeSpecModal() {
+            document.getElementById('specModal').classList.add('hidden');
+            activeSelectedItem = null;
+        }
+
+        function renderSpecGroup(containerId, skuList, type) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (skuList.length === 0) {
+                container.innerHTML = `<span class="text-xs text-slate-500">常规标准</span>`;
+                return;
+            }
+
+            skuList.forEach((sku, idx) => {
+                const btn = document.createElement('button');
+                btn.id = `skuBtn-${type}-${sku.id}`;
+                btn.className = (idx === 0)
+                    ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 transition'
+                    : 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition';
+                btn.innerText = sku.name;
+                btn.onclick = () => selectSku(type, sku, skuList);
+                container.appendChild(btn);
+            });
+        }
+
+        function selectSku(type, sku, list) {
+            if (type === 'cup') selectedCupSku = sku;
+            if (type === 'temp') selectedTempSku = sku;
+
+            list.forEach(s => {
+                const b = document.getElementById(`skuBtn-${type}-${s.id}`);
+                if (!b) return;
+                if (s.id === sku.id) {
+                    b.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 transition';
+                } else {
+                    b.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition';
+                }
+            });
+
+            updateSpecPrice();
+        }
+
+        function updateSpecPrice() {
+            if (!activeSelectedItem) return;
+            let totalFen = activeSelectedItem.base_price;
+            if (selectedCupSku) totalFen += (selectedCupSku.price_delta || 0);
+            if (selectedTempSku) totalFen += (selectedTempSku.price_delta || 0);
+            document.getElementById('specCurrentPrice').innerText = (totalFen / 100).toFixed(2);
+        }
+
+        function confirmAddToCart() {
+            if (!activeSelectedItem) return;
+
+            const selectedSkus = [];
+            if (selectedCupSku) selectedSkus.push(selectedCupSku);
+            if (selectedTempSku) selectedSkus.push(selectedTempSku);
+
+            let unitPrice = activeSelectedItem.base_price;
+            selectedSkus.forEach(s => unitPrice += (s.price_delta || 0));
+
+            const skuIds = selectedSkus.map(s => s.id).sort();
+            const existing = cart.find(c => {
+                if (c.item.id !== activeSelectedItem.id) return false;
+                const cSkuIds = c.skus.map(s => s.id).sort();
+                return JSON.stringify(skuIds) === JSON.stringify(cSkuIds);
+            });
+
+            if (existing) {
+                existing.quantity += 1;
+                existing.subtotal = existing.quantity * existing.unit_price;
+            } else {
+                cart.push({
+                    item: activeSelectedItem,
+                    skus: selectedSkus,
+                    quantity: 1,
+                    unit_price: unitPrice,
+                    subtotal: unitPrice
+                });
+            }
+
+            closeSpecModal();
+            renderCart();
+            showToast(`已加购: ${activeSelectedItem.name}`, 'info', 1500);
+            triggerAutoPrecheck();
+        }
+
+        // ==========================================
+        // 7. 购物车渲染与自动库存校验 (核心功能)
+        // ==========================================
+        function renderCart() {
+            const container = document.getElementById('cartItemsList');
+            container.innerHTML = '';
+
+            if (cart.length === 0) {
+                container.innerHTML = `
+                    <div class="py-8 text-center text-slate-500 text-xs">
+                        购物车为空<br><span class="text-[11px] text-slate-600 mt-1 block">请从左侧选择饮品加购</span>
+                    </div>
+                `;
+                document.getElementById('cartTotalPrice').innerText = '0.00';
+                document.getElementById('materialCheckContainer').classList.add('hidden');
+                updateCheckoutButton(false, '请先添加商品');
+                return;
+            }
+
+            let grandTotalFen = 0;
+
+            cart.forEach((cItem, idx) => {
+                grandTotalFen += cItem.subtotal;
+                const specNames = cItem.skus.map(s => s.name).join(' / ') || '常规';
+                const row = document.createElement('div');
+                row.className = 'p-2.5 bg-slate-950/70 border border-slate-800 rounded-xl flex items-center justify-between text-xs';
+
+                row.innerHTML = `
+                    <div class="flex-1 pr-2">
+                        <div class="font-bold text-slate-200 text-xs">${cItem.item.name}</div>
+                        <div class="text-[10px] text-slate-400">${specNames}</div>
+                        <div class="text-rose-400 font-mono font-bold mt-0.5">￥${(cItem.unit_price / 100).toFixed(2)}</div>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="changeCartQty(${idx}, -1)" class="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs">-</button>
+                        <span class="font-mono font-bold text-xs w-4 text-center text-white">${cItem.quantity}</span>
+                        <button onclick="changeCartQty(${idx}, 1)" class="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs">+</button>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+
+            document.getElementById('cartTotalPrice').innerText = (grandTotalFen / 100).toFixed(2);
+        }
+
+        function changeCartQty(index, delta) {
+            if (!cart[index]) return;
+            cart[index].quantity += delta;
+            if (cart[index].quantity <= 0) {
+                cart.splice(index, 1);
+            } else {
+                cart[index].subtotal = cart[index].quantity * cart[index].unit_price;
+            }
+            renderCart();
+            triggerAutoPrecheck();
+        }
+
+        function clearCart() {
+            cart = [];
+            renderCart();
+            triggerAutoPrecheck();
+        }
+
+        // 防抖自动触发库存校验（购物车变动时自动调用）
+        function triggerAutoPrecheck() {
+            if (precheckDebounceTimer) clearTimeout(precheckDebounceTimer);
+            if (cart.length === 0) {
+                isPrecheckPassing = false;
+                document.getElementById('materialCheckContainer').classList.add('hidden');
+                updateCheckoutButton(false, '请先添加商品');
+                return;
+            }
+
+            // 展示 loading 状态
+            const container = document.getElementById('materialCheckContainer');
+            const summaryBadge = document.getElementById('materialCheckSummaryBadge');
+            container.classList.remove('hidden');
+            summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/40 animate-pulse';
+            summaryBadge.innerText = '⚡ 实时核算中...';
+
+            precheckDebounceTimer = setTimeout(async () => {
+                await executeAutoPrecheck();
+            }, 250);
+        }
+
+        // 执行自动预校验并渲染物料明细表
+        async function executeAutoPrecheck() {
+            if (cart.length === 0) return;
+
+            const payloadItems = cart.map(c => ({
+                item: c.item.id,
+                sku: c.skus.map(s => s.id),
+                quantity: c.quantity
+            }));
+
+            try {
+                const res = await fetch('/api/order/precheck', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        store_id: STORE_ID,
+                        device_sn: DEVICE_SN,
+                        items: payloadItems
+                    })
+                });
+                const data = await res.json();
+                renderMaterialCheckTable(data);
+            } catch (e) {
+                console.error('Auto precheck failed:', e);
+            }
+        }
+
+        // 渲染物料校验表格
+        function renderMaterialCheckTable(respData) {
+            const container = document.getElementById('materialCheckContainer');
+            const tbody = document.getElementById('materialCheckTableBody');
+            const summaryBadge = document.getElementById('materialCheckSummaryBadge');
+            const notice = document.getElementById('materialCheckNotice');
+
+            container.classList.remove('hidden');
+            tbody.innerHTML = '';
+
+            const isOk = (respData.code === 0 || respData.code === 200);
+            const checks = respData.data?.material_checks || [];
+
+            if (checks.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="py-2 text-center text-slate-500 text-[10px]">未检测到所需配方物料</td></tr>`;
+            } else {
+                checks.forEach(m => {
+                    const row = document.createElement('tr');
+                    const isSufficient = m.is_sufficient;
+                    const diff = m.required - m.effective_available;
+
+                    const storageBadge = m.storage === 'MySQL'
+                        ? `<span class="px-1.5 py-0.5 rounded text-[9px] bg-sky-950 text-sky-400 border border-sky-800">MySQL</span>`
+                        : `<span class="px-1.5 py-0.5 rounded text-[9px] bg-purple-950 text-purple-400 border border-purple-800">Redis</span>`;
+
+                    const statusBadge = isSufficient
+                        ? `<span class="text-emerald-400 font-bold">🟢 充足</span>`
+                        : `<span class="text-rose-400 font-bold">🔴 缺 ${diff.toFixed(1)}${m.unit}</span>`;
+
+                    const rowBg = isSufficient ? '' : 'bg-rose-950/30 text-rose-200';
+
+                    row.className = `border-b border-slate-800/40 text-[10px] ${rowBg}`;
+                    row.innerHTML = `
+                        <td class="py-1.5 font-sans font-semibold text-slate-200">${m.name}</td>
+                        <td class="py-1.5">${storageBadge}</td>
+                        <td class="py-1.5 text-slate-300">${m.required} ${m.unit}</td>
+                        <td class="py-1.5 text-slate-400">${m.stock_raw}</td>
+                        <td class="py-1.5 text-amber-400/80">${m.in_flight}</td>
+                        <td class="py-1.5 font-bold ${isSufficient ? 'text-emerald-400' : 'text-rose-400'}">${m.effective_available}</td>
+                        <td class="py-1.5 text-right">${statusBadge}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            if (isOk) {
+                isPrecheckPassing = true;
+                summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold';
+                summaryBadge.innerText = '✅ 全部物料充足 · 允许出餐';
+                notice.className = 'mt-2 text-[10px] text-emerald-400 font-medium';
+                notice.innerText = '✅ 库存与在途占用比对完全满足，系统允许下单支付。';
+                updateCheckoutButton(true, `去结算出餐 · 真实支付 (￥${document.getElementById('cartTotalPrice').innerText})`);
+            } else {
+                isPrecheckPassing = false;
+                summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-500/40 font-bold animate-pulse';
+                summaryBadge.innerText = '❌ 存在物料不足 · 拦截出餐';
+                notice.className = 'mt-2 text-[10px] text-rose-400 font-medium';
+                notice.innerText = `❌ 下单拦截：${respData.message || '部分物料或耗材余量不足'}`;
+                updateCheckoutButton(false, '❌ 存在缺料项，无法下单');
+            }
+        }
+
+        function updateCheckoutButton(enabled, text) {
+            const btn = document.getElementById('btnCheckout');
+            btn.disabled = !enabled;
+            if (enabled) {
+                btn.className = 'w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-1.5 cursor-pointer';
+                btn.innerHTML = `<span>${text}</span><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>`;
+            } else {
+                btn.className = 'w-full py-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm transition flex items-center justify-center gap-1.5 cursor-not-allowed';
+                btn.innerHTML = `<span>${text}</span>`;
+            }
+        }
+
+        // ==========================================
+        // 8. 订单创建与唤起真实支付 (POST /api/order/create)
+        // ==========================================
+        async function createOrderAndPay() {
+            if (!isPrecheckPassing || cart.length === 0) {
+                showToast('库存校验未通过或购物车为空，请检查物料！', 'error');
+                return;
+            }
+
+            showToast('物料核验通过，正在创建真实商户订单...', 'info');
+
+            const payloadItems = cart.map(c => ({
+                item: c.item.id,
+                sku: c.skus.map(s => s.id),
+                quantity: c.quantity
+            }));
+
+            try {
+                const res = await fetch('/api/order/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        store_id: STORE_ID,
+                        device_sn: DEVICE_SN,
+                        items: payloadItems,
+                        remark: '上位机终端真实下单测试'
+                    })
+                });
+                const data = await res.json();
+
+                if (data.code === 0 || data.code === 200) {
+                    const orderData = data.data;
+                    currentActiveOrderNo = orderData.order_no;
+                    currentOrderAmountFen = orderData.pay_amount;
+
+                    showToast(`订单已创建: ${currentActiveOrderNo} (金额: ￥${(currentOrderAmountFen / 100).toFixed(2)})`, 'success');
+                    openPayModal(currentActiveOrderNo, currentOrderAmountFen);
+                } else {
+                    showToast(`创建订单失败: ${data.message}`, 'error');
+                }
+            } catch (e) {
+                showToast(`创建订单异常: ${e}`, 'error');
+            }
+        }
+
+        // ==========================================
+        // 9. 真实微信支付流程 (Native QR / 付款码)
+        // ==========================================
+        function openPayModal(orderNo, amountFen) {
+            document.getElementById('payModalOrderNo').innerText = orderNo;
+            document.getElementById('payModalAmount').innerText = (amountFen / 100).toFixed(2);
+            document.getElementById('payModal').classList.remove('hidden');
+
+            switchPayTab('native');
+            generateNativeQR(orderNo);
+        }
+
+        function closePayModal() {
+            document.getElementById('payModal').classList.add('hidden');
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            if (qrCountdownTimer) {
+                clearInterval(qrCountdownTimer);
+                qrCountdownTimer = null;
+            }
+        }
+
+        function switchPayTab(tab) {
+            const tabNative = document.getElementById('payTabNative');
+            const tabCodepay = document.getElementById('payTabCodepay');
+            const secNative = document.getElementById('paySectionNative');
+            const secCodepay = document.getElementById('paySectionCodepay');
+
+            if (tab === 'native') {
+                tabNative.className = 'flex-1 py-2.5 text-center text-xs active-tab flex items-center justify-center gap-1.5';
+                tabCodepay.className = 'flex-1 py-2.5 text-center text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5';
+                secNative.classList.remove('hidden');
+                secCodepay.classList.add('hidden');
+                if (currentActiveOrderNo) {
+                    startPaymentPolling(currentActiveOrderNo);
+                }
+            } else {
+                tabCodepay.className = 'flex-1 py-2.5 text-center text-xs active-tab flex items-center justify-center gap-1.5';
+                tabNative.className = 'flex-1 py-2.5 text-center text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5';
+                secCodepay.classList.remove('hidden');
+                secNative.classList.add('hidden');
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                if (qrCountdownTimer) {
+                    clearInterval(qrCountdownTimer);
+                    qrCountdownTimer = null;
+                }
+                document.getElementById('authCodeInput').focus();
+            }
+        }
+
+        // 方式一：真实 Native 扫码支付
+        async function generateNativeQR(orderNo) {
+            const qrLoading = document.getElementById('qrLoading');
+            const qrBox = document.getElementById('qrBox');
+            const qrPrompt = document.getElementById('qrPrompt');
+            const countdownBox = document.getElementById('qrCountdownBox');
+
+            qrLoading.classList.remove('hidden');
+            qrBox.classList.add('hidden');
+            qrPrompt.classList.add('hidden');
+            if (countdownBox) countdownBox.classList.add('hidden');
+
+            try {
+                const res = await fetch('/api/pay/wechat/native', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order_no: orderNo })
+                });
+                const data = await res.json();
+                if (data.code === 0 || data.code === 200) {
+                    const codeUrl = data.data.code_url;
+
+                    const qrcodeContainer = document.getElementById('qrcode');
+                    qrcodeContainer.innerHTML = '';
+                    qrcodeInstance = new QRCode(qrcodeContainer, {
+                        text: codeUrl,
+                        width: 170,
+                        height: 170,
+                        colorDark: '#000000',
+                        colorLight: '#ffffff',
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+
+                    qrLoading.classList.add('hidden');
+                    qrBox.classList.remove('hidden');
+                    qrPrompt.classList.remove('hidden');
+
+                    startNativeQRCountdown(orderNo);
+                    startPaymentPolling(orderNo);
+                } else {
+                    qrLoading.innerHTML = `<span class="text-rose-400">请求 Native 码失败: ${data.message}</span>`;
+                }
+            } catch (e) {
+                qrLoading.innerHTML = `<span class="text-rose-400">网络异常: ${e}</span>`;
+            }
+        }
+
+        function startNativeQRCountdown(orderNo) {
+            if (qrCountdownTimer) clearInterval(qrCountdownTimer);
+            let remaining = 90;
+            const box = document.getElementById('qrCountdownBox');
+            if (box) {
+                box.className = 'my-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-mono text-emerald-400 flex items-center gap-1.5';
+                box.innerHTML = `<span>⏳ 支付倒计时:</span><span id="qrCountdownText" class="font-bold text-amber-300">${remaining}s</span>`;
+                box.classList.remove('hidden');
+            }
+
+            qrCountdownTimer = setInterval(() => {
+                remaining--;
+                const curText = document.getElementById('qrCountdownText');
+                if (curText && remaining > 0) {
+                    curText.innerText = `${remaining}s`;
+                } else {
+                    clearInterval(qrCountdownTimer);
+                    qrCountdownTimer = null;
+                    if (pollTimer) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                    }
+                    const qBox = document.getElementById('qrBox');
+                    const qPrompt = document.getElementById('qrPrompt');
+                    if (qBox) qBox.classList.add('hidden');
+                    if (qPrompt) qPrompt.classList.add('hidden');
+                    if (box) {
+                        box.className = 'my-2 px-3 py-1.5 rounded-xl bg-rose-950/90 border border-rose-700 text-xs font-mono text-rose-300 flex items-center gap-1.5';
+                        box.innerHTML = '⚠️ 支付已超时 (90s)，二维码已失效，请重新下单';
+                    }
+                    showToast('二维码已超时失效，请重新下单', 'warn');
+                }
+            }, 1000);
+        }
+
+        // 方式二：真实微信付款码被扫扣款
+        async function submitCodePay() {
+            if (!currentActiveOrderNo) {
+                showToast('当前无有效订单！', 'warn');
+                return;
+            }
+            const authCode = document.getElementById('authCodeInput').value.trim();
+            if (!authCode || authCode.length < 16) {
+                showToast('请输入 18 位有效微信付款码！', 'error');
+                return;
+            }
+
+            const alertBox = document.getElementById('codePayStatusAlert');
+            alertBox.className = 'p-2.5 rounded-xl text-xs bg-blue-950/80 text-blue-200 border border-blue-500/40 block';
+            alertBox.innerHTML = '正在与微信支付网关通讯扣款...';
+
+            try {
+                const res = await fetch('/api/internal/payments/wechat/codepay/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        order_no: currentActiveOrderNo,
+                        auth_code: authCode,
+                        device_sn: DEVICE_SN
+                    })
+                });
+                const data = await res.json();
+                const resData = data.data || {};
+
+                if (data.code === 0 && resData.status === 'success') {
+                    alertBox.className = 'p-2.5 rounded-xl text-xs bg-emerald-950/90 text-emerald-200 border border-emerald-500/60 font-bold block';
+                    alertBox.innerHTML = `✅ 扣款成功！微信交易号: ${resData.transaction_id}`;
+                    showToast('付款码扣款成功！订单已确认支付。', 'success');
+
+                    setTimeout(() => {
+                        handlePaymentSuccessConfirmed(currentActiveOrderNo, resData);
+                    }, 500);
+                } else if (resData.status === 'userpaying') {
+                    alertBox.className = 'p-2.5 rounded-xl text-xs bg-amber-950/90 text-amber-200 border border-amber-500/60 block';
+                    alertBox.innerHTML = '⏳ 用户手机端输入密码中... 系统正在自动轮询';
+                    startPaymentPolling(currentActiveOrderNo);
+                } else {
+                    alertBox.className = 'p-2.5 rounded-xl text-xs bg-rose-950/90 text-rose-200 border border-rose-500/60 block font-semibold';
+                    const errMsg = (data && data.message) || resData.message || '请重试';
+                    alertBox.innerHTML = `❌ 扣款失败: ${errMsg}`;
+                    showToast(`扣款失败: ${errMsg}`, 'error', 6000);
+                }
+            } catch (e) {
+                showToast(`付款码请求异常: ${e}`, 'error');
+            }
+        }
+
+        // 真实支付状态轮询 (每 2 秒)
+        function startPaymentPolling(orderNo) {
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/pay/status/${orderNo}`);
+                    const data = await res.json();
+                    if (data.code === 0 && data.data && data.data.paid) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        showToast(`🎉 订单已确认真实支付成功！`, 'success');
+                        handlePaymentSuccessConfirmed(orderNo, data.data);
+                    }
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 2000);
+        }
+
+        // ==========================================
+        // 10. 支付成功确认 & 取餐码看板呈现
+        // ==========================================
+        async function handlePaymentSuccessConfirmed(orderNo, cachedStatusData = null) {
+            closePayModal();
+            clearCart();
+
+            let statusData = cachedStatusData;
+            if (!statusData || !statusData.pickup_code) {
+                try {
+                    const res = await fetch(`/api/pay/status/${orderNo}`);
+                    const d = await res.json();
+                    if (d.code === 0 && d.data) statusData = d.data;
+                } catch (e) {
+                    console.error('Fetch status error:', e);
+                }
+            }
+
+            const pickupCode = statusData?.pickup_code || '0001';
+            const orderToken = statusData?.order_token || 'uuid-token-dispense';
+            const transactionId = statusData?.transaction_id || '微信支付网关流水';
+
+            document.getElementById('displayPickupCode').innerText = pickupCode;
+            document.getElementById('displayLatestOrderNo').innerText = orderNo;
+            document.getElementById('displayLatestTxId').innerText = transactionId;
+            document.getElementById('displayLatestPaidAmount').innerText = `￥${(currentOrderAmountFen / 100).toFixed(2)}`;
+            document.getElementById('displayOrderToken').innerText = orderToken;
+
+            const badge = document.getElementById('latestOrderStatusBadge');
+            badge.innerText = '已支付 (待制作 / 未出杯)';
+            badge.className = 'px-2 py-0.5 rounded text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+
+            // 重置退款放库报告
+            document.getElementById('refundStockReport').classList.add('hidden');
+            document.getElementById('btnAutoRefund').disabled = false;
+            document.getElementById('btnAutoRefund').className = 'w-full py-2.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer';
+            document.getElementById('btnAutoRefund').innerHTML = `
+                <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"></path></svg>
+                <span>⚡ 未制作自动退款 (退款放库)</span>
+            `;
+
+            document.getElementById('latestOrderCard').classList.remove('hidden');
+
+            await refreshDiagnostics();
+            showToast(`🎉 支付成功！【取餐码: ${pickupCode}】已生成！`, 'success', 5000);
+        }
+
+        // ==========================================
+        // 11. 【未制作自动退款放库】 (无倒计时触发)
+        // ==========================================
+        async function refundCurrentOrder() {
+            if (!currentActiveOrderNo) {
+                showToast('没有可退款的订单！', 'warn');
+                return;
+            }
+            if (!confirm(`确认要对订单 ${currentActiveOrderNo} 发起【未制作自动退款与放库】吗？\n\n资金将原路返回微信账户，且所占用的纸杯、杯盖、封口膜及食材将全数归还入库。`)) {
+                return;
+            }
+
+            showToast(`正在向微信发起原路退款并执行物料全数放库...`, 'info');
+            const btnRefund = document.getElementById('btnAutoRefund');
+            btnRefund.disabled = true;
+            btnRefund.innerText = '正在执行退款放库...';
+
+            try {
+                const res = await fetch('/api/pay/refund', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        order_no: currentActiveOrderNo,
+                        reason: '已支付未制作，触控屏申请退款放库'
+                    })
+                });
+                const data = await res.json();
+
+                if (data.code === 1 || data.code === 0 || data.code === 200) {
+                    showToast(`✅ 退款放库处理成功！金额已原路退回微信，耗材与食材已释放入库。`, 'success', 5000);
+
+                    // 更新状态看板
+                    const badge = document.getElementById('latestOrderStatusBadge');
+                    badge.innerText = '已原路退款 · 物料已全数放库 (REFUNDED)';
+                    badge.className = 'px-2 py-0.5 rounded text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40';
+
+                    btnRefund.className = 'w-full py-2.5 bg-slate-800 text-slate-500 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-not-allowed';
+                    btnRefund.innerHTML = `<span>✅ 已完成退款放库</span>`;
+
+                    // 渲染退款放库明细报告
+                    const reportBox = document.getElementById('refundStockReport');
+                    const stockList = document.getElementById('refundStockList');
+                    stockList.innerHTML = '';
+
+                    const mats = data.data?.restored_materials || [];
+                    if (mats.length > 0) {
+                        mats.forEach(m => {
+                            const li = document.createElement('li');
+                            const icon = m.type === '耗材' ? '📦' : '☕';
+                            li.innerHTML = `${icon} <span class="font-bold text-slate-200">${m.name}</span>: 释放 +${m.quantity}${m.unit} <span class="text-slate-500">(${m.target})</span>`;
+                            stockList.appendChild(li);
+                        });
+                    } else {
+                        stockList.innerHTML = `<li class="text-slate-400">已撤销生产任务并解除在途占用</li>`;
+                    }
+                    reportBox.classList.remove('hidden');
+
+                    // 实时刷新顶部 HUD 监控条，让用户立即看到物理余量加回！
+                    await refreshDiagnostics();
+                } else {
+                    btnRefund.disabled = false;
+                    btnRefund.innerText = '⚡ 未制作自动退款 (退款放库)';
+                    showToast(`退款失败: ${data.message}`, 'error');
+                }
+            } catch (e) {
+                btnRefund.disabled = false;
+                btnRefund.innerText = '⚡ 未制作自动退款 (退款放库)';
+                showToast(`退款网络请求异常: ${e}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>

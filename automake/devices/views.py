@@ -85,7 +85,15 @@ def receive_device_status(device_sn: str, payload: dict):
                 order=order,
                 new_status=OrderMain.STATUS_MAKING,
                 operator=f'device:{device_sn}',
-                remark=payload.get('message', '磨豆机已启动'),
+                operator_type=OrderStatusLog.OP_DEVICE,
+                action=OrderStatusLog.ACTION_MAKING_START,
+                action_name='设备开始制作',
+                remark=payload.get('message', '磨豆机已启动，开始制作'),
+                payload={
+                    'device_sn': device_sn,
+                    'message': payload.get('message', ''),
+                    'event_data': payload
+                }
             )
             ProductionTask.objects.filter(order=order).update(status=ProductionTask.TASK_MAKING)
             logger.info(f'已同步更新生产任务状态为: making，order_no={order_no}')
@@ -101,12 +109,20 @@ def receive_device_status(device_sn: str, payload: dict):
                 # 通知失败不影响主流程
                 logger.warning(f'订单状态通知异常（making）: {notify_exc}')
         
-        elif new_status == 'done': # 出货完成
+        elif new_status == 'done': # 出货完成
             update_order_status(
                 order=order,
                 new_status=OrderMain.STATUS_DONE,
                 operator=f'device:{device_sn}',
-                remark=payload.get('message', '出货成功'),
+                operator_type=OrderStatusLog.OP_DEVICE,
+                action=OrderStatusLog.ACTION_MAKING_DONE,
+                action_name='制作完成（出杯成功）',
+                remark=payload.get('message', '出货成功，已完成'),
+                payload={
+                    'device_sn': device_sn,
+                    'message': payload.get('message', ''),
+                    'event_data': payload
+                }
             )
             ProductionTask.objects.filter(order=order).update(
                 status=ProductionTask.TASK_DONE,
@@ -347,14 +363,37 @@ class DeviceRegisterView(APIView):
         logger.info(f"[DEVICE_REPORT] Register payload from {device_sn}: {request.data}")
         
         # 2. 校验设备是否已预先录入系统
-        device = Device.objects.filter(device_sn=device_sn, key_code=key_code).first()
+        device = Device.objects.filter(device_sn=device_sn).first()
         if not device:
             logger.warning(f"设备注册失败：设备序列号 {device_sn} 未在系统中预先录入")
             return error('设备未在系统预先录入，无法注册', code=6004)
         
+        if device.key_code and device.key_code != key_code:
+            logger.warning(f"设备注册失败：注册码不匹配")
+            return error('设备注册码不匹配', code=6003)
+
         if device.status != 'online':
             logger.warning(f"设备注册失败：请联系管理员先上线在注册")
             return error('请联系管理员先上线在注册', code=6004)
+
+        # 更新设备上报的基础信息
+        update_fields = []
+        if request.data.get('device_name'):
+            device.device_name = request.data.get('device_name')
+            update_fields.append('device_name')
+        if request.data.get('device_version'):
+            device.firmware_version = request.data.get('device_version')
+            update_fields.append('firmware_version')
+        device_addr = request.data.get('device_address') or request.data.get('address')
+        if device_addr:
+            device.address = device_addr
+            update_fields.append('address')
+            if not isinstance(device.extra_config, dict):
+                device.extra_config = {}
+            device.extra_config['device_address'] = device_addr
+            update_fields.append('extra_config')
+        if update_fields:
+            device.save(update_fields=update_fields)
 
         # 6. 记录状态变更日志
         DeviceStatusLog.objects.create(
@@ -383,7 +422,6 @@ class DeviceRegisterView(APIView):
         mqtt_broker = 'tinylab.store'
         mqtt_port = 443
         mqtt_username = f"device_{device_sn}"
-        mqtt_password = device.key_code or f"mqtt_pwd_{device_sn}"
 
         return Response({
             "code": 200,
@@ -397,7 +435,7 @@ class DeviceRegisterView(APIView):
                 "mqtt_broker": mqtt_broker,
                 "mqtt_username": mqtt_username,
                 "port": mqtt_port,
-                "mqtt_password": mqtt_password,
+                "mqtt_password": device.key_code,
                 "mqtt_topics": {
                     "command": f's2c/shop/{device_sn}/state/command',
                     "status": f'c2s/shop/{device_sn}/state/command',
@@ -742,6 +780,82 @@ class DeviceSoftConfQueryView(APIView):
         }, message='查询成功')
 
 
+def get_device_conf1_data(device_sn: str) -> dict:
+    """
+    根据设备序列号获取最新配置1数据 (conf1)
+    """
+    from devices.models import DeviceConf1
+    conf = DeviceConf1.objects.filter(device_sn=device_sn).order_by('-created_at', '-id').first()
+    if not conf:
+        return {
+            'device_sn': device_sn,
+            'config': {},
+            'version': '',
+            'created_at': None,
+            'updated_at': None
+        }
+    return {
+        'device_sn': conf.device_sn,
+        'config': conf.config or {},
+        'version': conf.version or '',
+        'created_at': conf.created_at.strftime('%Y-%m-%d %H:%M:%S') if conf.created_at else None,
+        'updated_at': conf.updated_at.strftime('%Y-%m-%d %H:%M:%S') if conf.updated_at else None,
+    }
+
+
+def get_device_poster_config_data(device: Device, request=None) -> dict:
+    """
+    根据设备获取适用的最新海报配置 (conf3 / device poster)
+    返回图片相对路径（不带域名）及版本号
+    """
+    from django.db.models import Q
+    query = Q(is_active=True)
+    if device:
+        q_device = Q(devices=device)
+        q_store = Q(devices__isnull=True, stores=device.store) if device.store_id else Q(pk__in=[])
+        q_global = Q(devices__isnull=True, stores__isnull=True)
+        query &= (q_device | q_store | q_global)
+
+    poster = DevicePoster.objects.filter(query).distinct().order_by('-version', 'sort_order', '-created_at').first()
+
+    horizontal_list = []
+    vertical_list = []
+    banner_list = []
+    version = 0
+
+    if poster:
+        def _get_url(img_field):
+            if not img_field:
+                return None
+            try:
+                url = img_field.url if hasattr(img_field, 'url') else str(img_field).strip()
+                return url if url else None
+            except Exception:
+                return None
+
+        h_url = _get_url(poster.horizontal_image)
+        if h_url:
+            horizontal_list.append(h_url)
+        v_url = _get_url(poster.vertical_image)
+        if v_url:
+            vertical_list.append(v_url)
+        b_url = _get_url(poster.banner_image)
+        if b_url:
+            banner_list.append(b_url)
+        version = poster.version if poster.version is not None else 0
+
+    return {
+        "poster": {
+            "horizontal": horizontal_list,
+            "vertical": vertical_list,
+            "banner": banner_list,
+        },
+        "properties": {
+            "version": version
+        }
+    }
+
+
 class DeviceMenuMaterialQueryView(APIView):
     """
     设备菜单和物料静态定义查询接口
@@ -766,10 +880,10 @@ class DeviceMenuMaterialQueryView(APIView):
         except Device.DoesNotExist:
             return error('设备不存在', code=404)
 
-        # 1. 组装菜单及其配方信息
+        # 组装菜单及其配方信息
         from menus.models import MenuItem
         menus_list = []
-        
+
         if device.store and device.device_model:
             items = (
                 MenuItem.objects
@@ -792,7 +906,7 @@ class DeviceMenuMaterialQueryView(APIView):
                 )
                 .order_by('global_item__category__sort_order', 'global_item__category__id', 'sort_order', 'id')
             )
-            
+
             for item in items:
                 skus_list = []
                 for local_sku in item.skus.filter(is_active=True, global_sku__is_active=True):
@@ -804,14 +918,14 @@ class DeviceMenuMaterialQueryView(APIView):
                             "quantity": float(ing.quantity),
                             "unit": ing.unit if ing.unit else ing.material.unit
                         })
-                    
+
                     skus_list.append({
                         "id": local_sku.id,
                         "name": local_sku.global_sku.name,
                         "price_delta": local_sku.price_delta,
                         "ingredients": ingredients_list
                     })
-                
+
                 menus_list.append({
                     "id": item.id,
                     "name": item.global_item.name,
@@ -824,29 +938,7 @@ class DeviceMenuMaterialQueryView(APIView):
                     "skus": skus_list
                 })
 
-        # 2. 收集当前设备所售商品配方中使用到的所有物料静态定义
-        # materials_list = []
-        # used_material_names = set()
-        # for menu in menus_list:
-        #     for sku in menu["skus"]:
-        #         for ing in sku["ingredients"]:
-        #             if ing.get("material_name"):
-        #                 used_material_names.add(ing["material_name"])
-
-        # from inventory.models import Material
-        # db_materials = Material.objects.filter(name__in=used_material_names).order_by('code')
-        # for m in db_materials:
-        #     materials_list.append({
-        #         "name": m.name,
-        #         "code": m.code,
-        #         "type": m.material_type,  # e.g., 'ingredient' or 'consumable'
-        #         "unit": m.unit
-        #     })
-
-        return ok({
-            "menus": menus_list
-            
-        }, message='查询成功')
+        return ok({"menus": menus_list}, message='查询成功')
 
 
 class DevicePosterQueryView(APIView):
@@ -864,46 +956,12 @@ class DevicePosterQueryView(APIView):
     )
     def get(self, request):
         device = getattr(request, 'device', None) or request.auth
-        
-        from django.db.models import Q
-        query = Q(is_active=True)
-        if device:
-            q_device = Q(devices=device)
-            q_store = Q(devices__isnull=True, stores=device.store) if device.store_id else Q(pk__in=[])
-            q_global = Q(devices__isnull=True, stores__isnull=True)
-            query &= (q_device | q_store | q_global)
-
-        # 获取适用于当前设备的海报中，版本号最大的一组海报配置
-        poster = DevicePoster.objects.filter(query).distinct().order_by('-version', 'sort_order', '-created_at').first()
-
-        horizontal_list = []
-        vertical_list = []
-        banner_list = []
-        version = 0
-
-        if poster:
-            if poster.horizontal_image:
-                horizontal_list.append(request.build_absolute_uri(poster.horizontal_image.url))
-            if poster.vertical_image:
-                vertical_list.append(request.build_absolute_uri(poster.vertical_image.url))
-            if poster.banner_image:
-                banner_list.append(request.build_absolute_uri(poster.banner_image.url))
-            version = poster.version if poster.version is not None else 0
-
-        return Response({
-            "poster": {
-                "horizontal": horizontal_list,
-                "vertical": vertical_list,
-                "banner": banner_list,
-            },
-            "properties": {
-                "version": version
-            }
-        })
+        data = get_device_poster_config_data(device, request=request)
+        return Response(data)
 
 
 class DeviceOrderPendingCheckView(APIView):
-    """
+    """ 
     检查订单是否处于等待制作状态接口
     输入：设备编号 (device_sn)、订单号 (order_no)
     返回：
@@ -915,6 +973,7 @@ class DeviceOrderPendingCheckView(APIView):
     }
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     @extend_schema(
         summary="检查订单是否处于等待制作状态",
@@ -1039,4 +1098,447 @@ class DeviceOrderPendingCheckView(APIView):
 
         else:
             return build_resp(False, f"订单当前状态为: {order.get_status_display()}")
+
+
+class DeviceGuideCheckRequestSerializer(serializers.Serializer):
+    device_sn = serializers.CharField(required=True, max_length=128, help_text="设备编号 (如: sn005)")
+    phone = serializers.CharField(required=True, max_length=32, help_text="工作人员/引导员手机号 (如: 13800138000)")
+
+
+class DeviceGuideCheckResponseSerializer(serializers.Serializer):
+    code = serializers.IntegerField(default=0, help_text="状态码 (0: 成功/是引导员, 1: 失败/不是引导员)")
+    message = serializers.CharField(default="是引导员", help_text="提示信息")
+    data = serializers.DictField(default=dict, help_text="响应数据")
+
+
+class DeviceGuideCheckView(APIView):
+    """
+    判断手机号是否为当前设备的引导员
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    @extend_schema(
+        summary="判断手机号是否为当前设备引导员 (GET)",
+        description="输入设备编号 (device_sn) 与手机号 (phone)，判断是否为当前设备的引导员。",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备编号 (如: sn005)', required=True, type=str),
+            OpenApiParameter(name='phone', description='工作人员/引导员手机号 (如: 13800138000)', required=True, type=str),
+        ],
+        responses={200: DeviceGuideCheckResponseSerializer}
+    )
+    def get(self, request):
+        return self._handle_check(request)
+
+    @extend_schema(
+        summary="判断手机号是否为当前设备引导员 (POST)",
+        description="传入 JSON 请求体中的 device_sn 与 phone，判断是否为当前设备的引导员。",
+        request=DeviceGuideCheckRequestSerializer,
+        responses={200: DeviceGuideCheckResponseSerializer}
+    )
+    def post(self, request):
+        return self._handle_check(request)
+
+    def _handle_check(self, request):
+        from users.models import User
+
+        data = request.data if isinstance(request.data, dict) else {}
+        params = request.query_params
+
+        device_sn = str(params.get('device_sn') or data.get('device_sn') or '').strip()
+        phone = str(params.get('phone') or data.get('phone') or '').strip()
+
+        if not device_sn or not phone:
+            return Response({
+                "code": 1,
+                "message": "缺少 device_sn 或 phone 参数",
+                "data": {}
+            })
+
+        # 1. 查找设备
+        device = Device.objects.filter(device_sn=device_sn).first()
+        if not device:
+            return Response({
+                "code": 0,
+                "message": "不是引导员",
+                "data": {}
+            })
+
+        # 2. 查找用户
+        user = User.objects.filter(phone=phone).first()
+        if not user:
+            return Response({
+                "code": 0,
+                "message": "不是引导员",
+                "data": {}
+            })
+
+        # 3. 校验引导员身份（超级管理员/引导员/关联当前设备门店的工作人员）
+        is_guide = False
+        if user.is_super_admin:
+            is_guide = True
+        elif user.role in (User.GUIDE, User.ADMIN, User.COORDINATOR, User.MATERIAL_ADMIN):
+            if not device.store_id or user.stores.filter(id=device.store_id).exists():
+                is_guide = True
+
+        if is_guide:
+            return Response({
+                "code": 1,
+                "message": "是引导员",
+                "data": {}
+            })
+        else:
+            return Response({
+                "code": 0,
+                "message": "不是引导员",
+                "data": {}
+            })
+
+
+class DeviceBatchRefundRequestSerializer(serializers.Serializer):
+    device_sn = serializers.CharField(required=True, max_length=128, help_text="设备编号")
+    refund_stock = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text="退款退库存单号列表"
+    )
+    refund_no_stock = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text="退款不退库存单号列表"
+    )
+    reason = serializers.CharField(
+        required=False,
+        default="设备退款",
+        max_length=256,
+        help_text="退款原因"
+    )
+
+
+class DeviceBatchRefundResponseDataSerializer(serializers.Serializer):
+    success = serializers.BooleanField(help_text="是否全部成功")
+    success_orders = serializers.ListField(
+        child=serializers.CharField(),
+        default=list,
+        help_text="成功退款的订单号列表"
+    )
+
+
+class DeviceBatchRefundResponseSerializer(serializers.Serializer):
+    code = serializers.IntegerField(default=1, help_text="状态码 (1: 全部成功, 0: 失败或部分成功)")
+    message = serializers.CharField(default="ok", help_text="提示信息")
+    data = DeviceBatchRefundResponseDataSerializer(help_text="返回数据")
+
+
+class DeviceBatchRefundView(APIView):
+    """
+    设备订单退款接口 (支持退库存与不退库存)
+
+    POST /api/device/order/batch_refund
+    POST /api/device/order/refund
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    @extend_schema(
+        summary="设备退款接口",
+        description="输入设备编号 (device_sn)、退款退库存单号列表 (refund_stock)、退款不退库存单号列表 (refund_no_stock) 及 reason，返回是否成功及成功订单号列表。",
+        request=DeviceBatchRefundRequestSerializer,
+        responses={200: DeviceBatchRefundResponseSerializer}
+    )
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        params = request.query_params
+
+        device_sn = (
+            data.get('device_sn') or params.get('device_sn') or
+            data.get('sn') or params.get('sn') or
+            data.get('device_no') or params.get('device_no') or ''
+        )
+        if isinstance(device_sn, str):
+            device_sn = device_sn.strip()
+
+        if not device_sn:
+            return Response({
+                'code': 0,
+                'message': '缺少设备编号 (device_sn)',
+                'data': {'success': False, 'success_orders': []}
+            }, status=400)
+
+        refund_stock = (
+            data.get('refund_stock') or
+            data.get('with_stock') or
+            data.get('stock_orders') or
+            data.get('refund_restore_stock_order_nos') or
+            data.get('refund_and_restore_stock_order_nos') or
+            []
+        )
+
+        refund_no_stock = (
+            data.get('refund_no_stock') or
+            data.get('without_stock') or
+            data.get('no_stock_orders') or
+            data.get('refund_no_restore_stock_order_nos') or
+            data.get('refund_without_stock_orders') or
+            []
+        )
+
+        reason = str(data.get('reason') or params.get('reason') or '设备退款').strip()
+
+        from payments.services import batch_refund_device_orders
+
+        try:
+            result = batch_refund_device_orders(
+                device_sn=device_sn,
+                refund_stock=refund_stock,
+                refund_no_stock=refund_no_stock,
+                reason=reason
+            )
+            is_success = result.get('success', False)
+            msg = 'ok' if is_success else ('部分退款成功' if result.get('success_orders') else '退款处理失败')
+            return Response({
+                'code': 1 if is_success else 0,
+                'message': msg,
+                'data': result
+            })
+        except ValueError as e:
+            return Response({
+                'code': 0,
+                'message': str(e),
+                'data': {'success': False, 'success_orders': []}
+            }, status=400)
+        except Exception as e:
+            logger.exception(f"批量退款异常: {e}")
+            return Response({
+                'code': 0,
+                'message': f"退款处理异常: {e}",
+                'data': {'success': False, 'success_orders': []}
+            }, status=500)
+
+
+class DeviceConf1QuerySerializer(serializers.Serializer):
+    device_sn = serializers.CharField(required=True, max_length=128, help_text="设备编号 (如: sn005)")
+    config = serializers.DictField(required=False, default=dict, help_text="配置内容 (可选，POST 创建/更新时传入)")
+    version = serializers.CharField(required=False, default="1.0.0", max_length=64, help_text="版本号 (可选)")
+
+
+class DeviceConf1DataSerializer(serializers.Serializer):
+    device_sn = serializers.CharField(help_text="设备编号")
+    config = serializers.DictField(help_text="配置内容 (JSON)")
+    version = serializers.CharField(help_text="版本号")
+    created_at = serializers.CharField(allow_null=True, help_text="创建时间")
+    updated_at = serializers.CharField(allow_null=True, help_text="更新时间")
+
+
+class DeviceConf1ResponseSerializer(serializers.Serializer):
+    code = serializers.IntegerField(default=0, help_text="状态码 (0: 成功)")
+    message = serializers.CharField(default="ok", help_text="提示信息")
+    data = DeviceConf1DataSerializer(help_text="最新配置数据")
+
+
+class DeviceConf1View(APIView):
+    """
+    设备配置 (conf1) 接口
+
+    GET /api/device/conf1?device_sn=sn005
+    GET /api/device/conf1/<str:device_sn>
+    POST /api/device/conf1
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    @extend_schema(
+        summary="获取设备最新配置 (conf1)",
+        description="根据设备编号 (device_sn)，返回该设备最新一条配置内容 (JSON)、版本号及时间。",
+        parameters=[
+            OpenApiParameter('device_sn', str, description='设备编号 (如: sn005)', required=True),
+        ],
+        responses={200: DeviceConf1ResponseSerializer}
+    )
+    def get(self, request, device_sn=None):
+        sn = device_sn or request.query_params.get('device_sn') or request.query_params.get('sn') or ''
+        if isinstance(sn, str):
+            sn = sn.strip()
+
+        if not sn:
+            return error('缺少设备编号 (device_sn)', code=6001)
+
+        from devices.models import DeviceConf1
+        conf = DeviceConf1.objects.filter(device_sn=sn).order_by('-created_at', '-id').first()
+        if not conf:
+            return ok({
+                'device_sn': sn,
+                'config': {},
+                'version': '',
+                'created_at': None,
+                'updated_at': None
+            }, message='暂无配置')
+
+        return ok({
+            'device_sn': conf.device_sn,
+            'config': conf.config or {},
+            'version': conf.version or '',
+            'created_at': conf.created_at.strftime('%Y-%m-%d %H:%M:%S') if conf.created_at else None,
+            'updated_at': conf.updated_at.strftime('%Y-%m-%d %H:%M:%S') if conf.updated_at else None
+        }, message='ok')
+
+    @extend_schema(
+        summary="查询或上报设备配置 (conf1)",
+        description="POST 查询或保存设备配置。若包含 config 字段则创建一条新配置记录；若仅包含 device_sn 则返回最新配置。",
+        request=DeviceConf1QuerySerializer,
+        responses={200: DeviceConf1ResponseSerializer}
+    )
+    def post(self, request, device_sn=None):
+        data = request.data if isinstance(request.data, dict) else {}
+        params = request.query_params
+
+        sn = device_sn or data.get('device_sn') or params.get('device_sn') or data.get('sn') or params.get('sn') or ''
+        if isinstance(sn, str):
+            sn = sn.strip()
+
+        if not sn:
+            return error('缺少设备编号 (device_sn)', code=6001)
+
+        from devices.models import DeviceConf1
+
+        # 若请求体中传入了具体的 config 配置，则保存一条新配置
+        if 'config' in data or 'content' in data:
+            new_config = data.get('config') if 'config' in data else data.get('content')
+            version = str(data.get('version') or '1.0.0').strip()
+            conf = DeviceConf1.objects.create(
+                device_sn=sn,
+                config=new_config if isinstance(new_config, dict) else {},
+                version=version
+            )
+            return ok({
+                'device_sn': conf.device_sn,
+                'config': conf.config or {},
+                'version': conf.version or '',
+                'created_at': conf.created_at.strftime('%Y-%m-%d %H:%M:%S') if conf.created_at else None,
+                'updated_at': conf.updated_at.strftime('%Y-%m-%d %H:%M:%S') if conf.updated_at else None
+            }, message='配置保存成功')
+
+        # 否则返回该设备的最新配置
+        conf = DeviceConf1.objects.filter(device_sn=sn).order_by('-created_at', '-id').first()
+        if not conf:
+            return ok({
+                'device_sn': sn,
+                'config': {},
+                'version': '',
+                'created_at': None,
+                'updated_at': None
+            }, message='暂无配置')
+
+        return ok({
+            'device_sn': conf.device_sn,
+            'config': conf.config or {},
+            'version': conf.version or '',
+            'created_at': conf.created_at.strftime('%Y-%m-%d %H:%M:%S') if conf.created_at else None,
+            'updated_at': conf.updated_at.strftime('%Y-%m-%d %H:%M:%S') if conf.updated_at else None
+        }, message='ok')
+
+
+class DeviceUnifiedConfigRequestSerializer(serializers.Serializer):
+    device_sn = serializers.CharField(
+        required=True,
+        max_length=128,
+        help_text="设备编号/序列号 (如: sn005)"
+    )
+    data = serializers.ChoiceField(
+        choices=['conf1', 'conf2', 'conf3'],
+        required=True,
+        help_text="配置类型标识：conf1 (配置1) / conf2 (菜单配置) / conf3 (海报配置)"
+    )
+
+
+class DeviceUnifiedConfigResponseSerializer(serializers.Serializer):
+    code = serializers.IntegerField(default=0, help_text="状态码 (0: 成功)")
+    message = serializers.CharField(default="ok", help_text="提示信息")
+    data = serializers.DictField(default=dict, help_text="根据 data 参数返回的配置内容")
+
+
+class DeviceUnifiedConfigView(APIView):
+    """
+    设备统一配置分发接口
+
+    支持根据设备编号 (device_sn) 与配置类型 (data) 返回对应配置：
+    - data=conf1: 返回设备配置1 (JSON内容与版本号)
+    - data=conf2: 返回设备菜单及SKU配方配置
+    - data=conf3: 返回设备海报配置 (横屏/竖屏/Banner及版本号)
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    @extend_schema(
+        summary="统一设备配置查询 (GET)",
+        description="输入设备编号 (device_sn) 与配置类型 (data)：\n"
+                    "- `data=conf1`: 返回设备配置1 (JSON与版本号)\n"
+                    "- `data=conf2`: 返回设备菜单及SKU配方配置\n"
+                    "- `data=conf3`: 返回设备海报配置 (横屏/竖屏/Banner及版本号)",
+        parameters=[
+            OpenApiParameter(name='device_sn', description='设备编号 (如: sn005)', required=True, type=str),
+            OpenApiParameter(name='data', description='配置类型: conf1 / conf2 / conf3', required=True, type=str),
+        ],
+        responses={200: DeviceUnifiedConfigResponseSerializer}
+    )
+    def get(self, request):
+        return self._handle_query(request)
+
+    @extend_schema(
+        summary="统一设备配置查询 (POST)",
+        description="传入 JSON 请求体中的 device_sn 与 data：\n"
+                    "- `data=conf1`: 返回设备配置1 (JSON与版本号)\n"
+                    "- `data=conf2`: 返回设备菜单及SKU配方配置\n"
+                    "- `data=conf3`: 返回设备海报配置 (横屏/竖屏/Banner及版本号)",
+        request=DeviceUnifiedConfigRequestSerializer,
+        responses={200: DeviceUnifiedConfigResponseSerializer}
+    )
+    def post(self, request):
+        return self._handle_query(request)
+
+    def _handle_query(self, request):
+        req_data = request.data if isinstance(request.data, dict) else {}
+        params = request.query_params
+
+        device_sn = (
+            req_data.get('device_sn') or params.get('device_sn') or
+            req_data.get('sn') or params.get('sn') or
+            req_data.get('device_no') or params.get('device_no') or ''
+        )
+        if isinstance(device_sn, str):
+            device_sn = device_sn.strip()
+
+        if not device_sn:
+            return error('缺少设备编号 (device_sn)', code=6001)
+
+        data_type = str(
+            req_data.get('data') or params.get('data') or
+            req_data.get('type') or params.get('type') or ''
+        ).strip().lower()
+
+        if not data_type:
+            return error('缺少配置类型标识 (data: conf1/conf2/conf3)', code=6002)
+
+        # 1. conf1: 设备配置1 (无需强依赖 Device 记录存在即可返回)
+        if data_type == 'conf1':
+            result = get_device_conf1_data(device_sn)
+            return ok(result, message='ok')
+
+        # 2. conf2: 直接复用 menus/views.py 中的 StoreMenuView.get
+        if data_type == 'conf2':
+            from menus.views import StoreMenuView
+            return StoreMenuView().get(request, device_sn=device_sn)
+
+        # 3. conf3: 海报配置
+        if data_type == 'conf3':
+            device = Device.objects.filter(device_sn=device_sn).first()
+            if not device:
+                return error(f'设备 {device_sn} 不存在', code=6003, status=404)
+            result = get_device_poster_config_data(device)
+            return ok(result, message='ok')
+
+        return error(f"不支持的配置类型 '{data_type}'，可选值为 conf1 / conf2 / conf3", code=6004)
+
 

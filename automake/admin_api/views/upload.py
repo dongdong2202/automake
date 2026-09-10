@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -7,6 +8,8 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from utils.permissions import IsAdmin
 from utils.response import ok, error
+
+logger = logging.getLogger(__name__)
 
 
 class FileUploadView(APIView):
@@ -29,9 +32,12 @@ class FileUploadView(APIView):
         saved_path = default_storage.save(relative_path, ContentFile(file_obj.read()))
         url = default_storage.url(saved_path)
 
+        logger.info("Admin file uploaded: path=%s, size=%s by user=%s", saved_path, file_obj.size, request.user)
+
         return ok({
             'url': url,
             'path': saved_path,
             'filename': file_obj.name,
             'size': file_obj.size,
         }, message='文件上传成功')
+

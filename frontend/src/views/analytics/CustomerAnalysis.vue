@@ -25,10 +25,10 @@
           <div class="card-header">
             <span class="card-title">
               <el-icon><User /></el-icon>
-              小程序注册用户增长趋势
+              小程序注册用户增长趋势 (累计 {{ growthData.total_users }} 人)
             </span>
           </div>
-          <BaseChart :option="growthChartOption" height="340px" />
+          <BaseChart :option="growthChartOption" height="360px" />
         </div>
       </el-col>
 
@@ -40,7 +40,7 @@
               顾客复购与下单频次分布
             </span>
           </div>
-          <BaseChart :option="frequencyChartOption" height="340px" />
+          <BaseChart :option="frequencyChartOption" height="360px" />
         </div>
       </el-col>
     </el-row>
@@ -54,6 +54,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
 import { useDateRange } from '@/composables/useDateRange'
 import { getCustomerGrowthApi, getCustomerFrequencyApi } from '@/api/analytics'
+import {
+  createLinearGradient,
+  CHART_COLORS,
+  MODERN_TOOLTIP,
+  MODERN_GRID,
+} from '@/utils/chartThemes'
 
 const { dateRange, shortcuts } = useDateRange()
 const growthData = ref<{ total_users: number; growth_trend: any[] }>({
@@ -62,41 +68,81 @@ const growthData = ref<{ total_users: number; growth_trend: any[] }>({
 })
 const frequencyList = ref<any[]>([])
 
-// 1. 用户增长趋势 Option
+/**
+ * 1. 用户新增注册平滑渐变面积折线 Option
+ * - 结合双色渐变色板，展示小程序用户增量速度
+ */
 const growthChartOption = computed(() => {
   const dates = growthData.value.growth_trend.map((i) => i.date)
   const newUsers = growthData.value.growth_trend.map((i) => i.new_users)
 
   return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: '3%', right: '4%', bottom: '8%', top: '8%', containLabel: true },
-    xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: '新增用户(人)' },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'axis',
+    },
+    grid: MODERN_GRID,
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: '#E4E7ED' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      name: '新增用户 (人)',
+      axisLabel: { color: '#909399' },
+      splitLine: { lineStyle: { color: '#F2F6FC', type: 'dashed' } },
+    },
     series: [
       {
         name: '每日新增用户',
         type: 'line',
-        smooth: true,
-        areaStyle: { color: 'rgba(64, 158, 255, 0.2)' },
+        smooth: 0.35,
+        symbol: 'circle',
+        symbolSize: 6,
+        areaStyle: {
+          color: createLinearGradient('rgba(64, 158, 255, 0.35)', 'rgba(64, 158, 255, 0.02)'),
+        },
         data: newUsers,
-        itemStyle: { color: '#409EFF' },
+        itemStyle: { color: CHART_COLORS.primary },
+        lineStyle: { width: 3 },
       },
     ],
   }
 })
 
-// 2. 消费频次分布 Option
+/**
+ * 2. 消费频次阶梯环形分布 Option
+ * - 展现首购、复购 2-5 次、忠诚老客 (>5次) 的群体梯队
+ */
 const frequencyChartOption = computed(() => {
   return {
-    tooltip: { trigger: 'item', formatter: '{a} <br/>{b} : {c}人 ({d}%)' },
-    legend: { bottom: '5%', left: 'center' },
+    tooltip: {
+      ...MODERN_TOOLTIP,
+      trigger: 'item',
+      formatter: '{b}<br/>顾客数量：{c} 人 ({d}%)',
+    },
+    legend: {
+      bottom: '3%',
+      left: 'center',
+      icon: 'circle',
+      textStyle: { fontSize: 12, color: '#606266' },
+    },
+    color: CHART_COLORS.palette,
     series: [
       {
         name: '消费频次',
         type: 'pie',
-        radius: ['40%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+        radius: ['45%', '72%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: true,
+        padAngle: 3,
+        itemStyle: {
+          borderRadius: 6,
+          borderColor: '#fff',
+          borderWidth: 2,
+        },
         data: frequencyList.value.map((i) => ({ value: i.count, name: `${i.tier}` })),
       },
     ],
@@ -124,3 +170,10 @@ onMounted(() => {
   fetchData()
 })
 </script>
+
+<style scoped>
+.chart-card {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+}
+</style>

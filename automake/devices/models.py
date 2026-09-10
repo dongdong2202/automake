@@ -50,6 +50,14 @@ class Device(models.Model):
     )
     # 设备当前固件版本
     firmware_version = models.CharField(max_length=64, blank=True, verbose_name='固件版本')
+
+    @property
+    def device_version(self):
+        return self.firmware_version
+
+    @device_version.setter
+    def device_version(self, value):
+        self.firmware_version = value
     # 云端分配给设备的资源包版本号（用于云边同步判断）
     resource_version = models.IntegerField(default=0, verbose_name='资源版本号')
     # 最后心跳时间
@@ -491,3 +499,41 @@ class DevicePoster(models.Model):
 
     def __str__(self):
         return self.title or f"海报配置 #{self.pk} (v{self.version})"
+
+
+class DeviceConf1(models.Model):
+    """
+    设备配置表 (conf1)
+
+    存储设备的配置内容 (JSON)、版本号及时间，支持根据设备编号返回最新配置。
+    """
+    device_sn = models.CharField(
+        max_length=128, db_index=True, verbose_name='设备编号'
+    )
+    config = models.JSONField(
+        default=dict, blank=True, verbose_name='配置内容 (JSON)'
+    )
+    version = models.CharField(
+        max_length=64, default='1.0.0', verbose_name='版本号',
+        help_text='配置版本号，如 1.0.0 或 20260830'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True, db_index=True, verbose_name='创建时间'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True, verbose_name='更新时间'
+    )
+
+    class Meta:
+        db_table = 'device_conf1'
+        verbose_name = '设备配置1'
+        verbose_name_plural = '设备配置1列表'
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.device_sn} - v{self.version}"
+
+    @property
+    def content(self):
+        return self.config
+

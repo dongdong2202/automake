@@ -4,7 +4,7 @@ from django.utils.safestring import mark_safe
 from unfold.admin import ModelAdmin, TabularInline
 from unfold.widgets import UnfoldAdminFileFieldWidget
 from django.db import models
-from .models import Device, DeviceCommand, DeviceStatusLog, DeviceAlarm, DeviceMaterialStock, DeviceConsumableStock, DeviceConfig, DeviceTemperature, DeviceBarrel, DeviceSoftConf, DeviceCupSize, DeviceBarrelDict, DevicePoster
+from .models import Device, DeviceCommand, DeviceStatusLog, DeviceAlarm, DeviceMaterialStock, DeviceConsumableStock, DeviceConfig, DeviceTemperature, DeviceBarrel, DeviceSoftConf, DeviceCupSize, DeviceBarrelDict, DevicePoster, DeviceConf1
 
 
 # ── 状态颜色映射 ──────────────────────────────────────────
@@ -568,3 +568,18 @@ class DevicePosterAdmin(ModelAdmin):
         if count > 3:
             label += f" 等 {count} 台"
         return label
+
+
+@admin.register(DeviceConf1)
+class DeviceConf1Admin(ModelAdmin):
+    list_display = ('id', 'device_sn', 'version', 'config_summary', 'created_at', 'updated_at')
+    search_fields = ('device_sn', 'version')
+    list_filter = ('version', 'created_at')
+    readonly_fields = ('created_at', 'updated_at')
+
+    @admin.display(description='配置内容摘要')
+    def config_summary(self, obj):
+        import json
+        text = json.dumps(obj.config, ensure_ascii=False)
+        return (text[:80] + '...') if len(text) > 80 else text
+

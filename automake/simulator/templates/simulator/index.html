@@ -514,6 +514,9 @@
             </div>
         </div>
         <div class="status-header-badges">
+            <a href="/simulator/kiosk/" style="display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.75rem; background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.4); color:#34d399; border-radius:0.375rem; text-decoration:none; font-size:0.75rem; font-weight:600; transition:all 0.2s;">
+                🖥 切换到上位机触控终端 UI (Kiosk)
+            </a>
             <div id="device-state-badge" class="badge badge-offline">
                 <span class="badge-dot"></span>
                 <span id="device-state-text">设备未注册</span>
@@ -1023,12 +1026,13 @@
             if (currentOrderNo === payload.order_no) return;
             
             currentOrderNo = payload.order_no;
-            activeOrderSpan.innerText = currentOrderNo;
+            activeOrderSpan.innerText = payload.ticketNo ? `#${payload.ticketNo} (${currentOrderNo})` : currentOrderNo;
             
             // Render items list
             activeItemList.innerHTML = '';
-            if (payload.items && payload.items.length > 0) {
-                payload.items.forEach(item => {
+            const items = payload.merchInfos || payload.items || [];
+            if (items.length > 0) {
+                items.forEach(item => {
                     const row = document.createElement('div');
                     row.className = 'item-row';
                     row.innerHTML = `
