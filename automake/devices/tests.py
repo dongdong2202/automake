@@ -324,7 +324,8 @@ class DeviceBatchRefundTests(TestCase):
         from unittest.mock import patch, MagicMock
         from payments.models import RefundRecord
 
-        with patch('django_redis.get_redis_connection') as mock_get_redis:
+        with patch('django_redis.get_redis_connection') as mock_get_redis, \
+             patch('utils.wechat.WechatPayV3.apply_refund', return_value={'refund_id': 'rf_test_123', 'status': 'SUCCESS'}):
             mock_redis = MagicMock()
             mock_get_redis.return_value = mock_redis
 
@@ -357,7 +358,8 @@ class DeviceBatchRefundTests(TestCase):
     def test_batch_refund_partial_success(self):
         from unittest.mock import patch, MagicMock
 
-        with patch('django_redis.get_redis_connection') as mock_get_redis:
+        with patch('django_redis.get_redis_connection') as mock_get_redis, \
+             patch('utils.wechat.WechatPayV3.apply_refund', return_value={'refund_id': 'rf_test_123', 'status': 'SUCCESS'}):
             mock_redis = MagicMock()
             mock_get_redis.return_value = mock_redis
 
@@ -567,5 +569,63 @@ class DeviceUnifiedConfigTests(TestCase):
         res = self.client.get('/api/device/config?device_sn=sn_not_found&data=conf2')
         self.assertEqual(res.status_code, 404)
         self.assertEqual(res.json()['code'], 3001)
+
+    def test_receive_device_status_guard_refunded_order(self):
+        """测试已退款/已取消的订单防硬件状态回调覆盖"""
+        from orders.models import OrderMain
+        from devices.views import receive_device_status
+
+        user = User.objects.create(username='guard_test_user_1', role='user')
+        order = OrderMain.objects.create(
+            order_no='TEST_GUARD_REFUND_001',
+            user=user,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_REFUNDED
+        )
+        # 硬件上报 done
+        payload = {
+            'order_no': 'TEST_GUARD_REFUND_001',
+            'status': 'done'
+        }
+        receive_device_status(self.device.device_sn, payload)
+        order.refresh_from_db()
+        # 验证：状态依然是 STATUS_REFUNDED，绝不会被覆写为 done
+        self.assertEqual(order.status, OrderMain.STATUS_REFUNDED)
+
+    def test_deduct_order_redis_ingredients(self):
+        """测试出杯完成主动扣减 Redis 食材基准值 (防幽灵库存)"""
+        from orders.models import OrderMain, OrderItem
+        from orders.services import deduct_order_redis_ingredients, get_redis_stock_key
+        from django_redis import get_redis_connection
+
+        r = get_redis_connection('default')
+        bean_key = get_redis_stock_key(self.device.device_sn, 'coffee_bean_test')
+        r.set(bean_key, 1000)
+
+        user = User.objects.create(username='guard_test_user_2', role='user')
+        order = OrderMain.objects.create(
+            order_no='TEST_PHANTOM_STOCK_001',
+            user=user,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_MAKING
+        )
+        item = OrderItem.objects.create(
+            order=order,
+            item=self.menu_item,
+            item_name='拿铁咖啡',
+            quantity=1,
+            unit_price=1500,
+            subtotal=1500
+        )
+        item.skus.add(self.menu_sku)
+
+        deduct_order_redis_ingredients(order)
+
+        # 单杯用量: 18g coffee_bean_test
+        # 验证扣减: 1000 - 18 = 982
+        self.assertEqual(int(r.get(bean_key)), 982)
+
 
 

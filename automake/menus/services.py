@@ -77,7 +77,8 @@ def calculate_device_sold_out_items(device_sn: str, threshold: float = 500.0) ->
             device_mat_codes.add(sc.code)
 
     # 区分食材类物料与杯型耗材类物料
-    consumables_in_db = {cs.code_id: cs.quantity for cs in DeviceConsumableStock.objects.filter(device=device)}
+    consumables_records = {cs.code_id: cs for cs in DeviceConsumableStock.objects.filter(device=device)}
+    consumables_in_db = {cs.code_id: cs.quantity for cs in consumables_records.values()}
     
     # 获取所有已知物料的分类
     cup_and_consumable_codes = set(consumables_in_db.keys())
@@ -86,10 +87,12 @@ def calculate_device_sold_out_items(device_sn: str, threshold: float = 500.0) ->
     # 3. 筛选缺料物料集合
     shortage_materials = set()
 
-    # 3.1 杯型与耗材：通过 MySQL 数据库校验 (quantity <= 0 为缺料)
+    # 3.1 杯型与耗材：通过 MySQL 数据库校验 (当数量少于停售阈值或 <= 0 时为缺料停售)
     for cup_code in cup_and_consumable_codes:
-        qty = consumables_in_db.get(cup_code, 0)
-        if qty <= 0:
+        cs = consumables_records.get(cup_code)
+        stop_level = getattr(cs, 'stop_sale_level', 5) if cs else 0
+        qty = cs.quantity if cs else 0
+        if qty < stop_level or qty <= 0:
             shortage_materials.add(cup_code)
 
     # 3.2 食材料桶：通过 Redis 实时余量校验 (多桶累计 < 500ml 判定为售罄缺料)
@@ -129,12 +132,20 @@ def calculate_device_sold_out_items(device_sn: str, threshold: float = 500.0) ->
         if total_vol < threshold:  # 累计少于 500ml 停止售卖
             shortage_materials.add(mat_code)
 
-    # 4. 获取当前门店及设备型号下所有有效 MenuItem
-    items_query = MenuItem.objects.filter(store=store, is_active=True)
-    if device.device_model:
-        matched_items = items_query.filter(device_model=device.device_model)
-        if matched_items.exists():
-            items_query = matched_items
+    if not device.device_model:
+        return {
+            'device_sn': actual_device_sn,
+            'sold_out_item_ids': [],
+            'shortage_materials': list(shortage_materials)
+        }
+
+    # 4. 获取当前门店及当前设备型号下所有有效 MenuItem (严格限定当前设备型号，杜绝跨型号借调)
+    items_query = MenuItem.objects.filter(
+        store=store,
+        device_model=device.device_model,
+        global_item__category__device_model=device.device_model,
+        is_active=True
+    )
 
     menu_items = (
         items_query

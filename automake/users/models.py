@@ -91,7 +91,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     # 手机号（可选，用于通知）
     phone = models.CharField(
-        max_length=20, null=True, blank=True,
+        max_length=20, null=True, blank=True, unique=True,
         verbose_name='手机号'
     )
     # 角色
@@ -181,6 +181,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role == self.CUSTOMER
 
     def save(self, *args, **kwargs):
+        if self.phone == '':
+            self.phone = None
         # 如果是超级管理员、门店管理员、物料员、协调员或引导员，自动允许登录后台
         if self.role in (self.SUPER_ADMIN, self.ADMIN, self.MATERIAL_ADMIN, self.COORDINATOR, self.GUIDE):
             self.is_staff = True
@@ -189,14 +191,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 class UserProfile(models.Model):
     """
-    用户扩展信息表（与 User 一对一）
-
-    存放头像、昵称、微信会话密钥等非核心字段，
-    避免主表过宽，也便于单独更新用户信息。
+    用户扩展信息表
     """
     user = models.OneToOneField(
         User, on_delete=models.CASCADE,
-        related_name='profile', verbose_name='用户'
+        related_name='profile', verbose_name='关联用户'
     )
     nickname = models.CharField(max_length=64, blank=True, verbose_name='昵称')
     avatar_url = models.URLField(max_length=512, blank=True, verbose_name='头像 URL')
@@ -206,8 +205,6 @@ class UserProfile(models.Model):
     age = models.SmallIntegerField(null=True, blank=True, verbose_name='年龄')
     # 微信会话密钥（敏感，不应长期保存，此处仅做临时存储参考）
     session_key = models.CharField(max_length=128, blank=True, verbose_name='会话密钥')
-    # 会员积分（预留字段）
-    points = models.IntegerField(default=0, verbose_name='积分')
     # 备注
     remark = models.CharField(max_length=256, blank=True, verbose_name='备注')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')

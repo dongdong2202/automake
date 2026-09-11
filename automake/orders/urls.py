@@ -1,10 +1,9 @@
 from django.urls import path
 from . import views
-from devices.views import DeviceOrderPendingCheckView
 
 urlpatterns = [
-    path('check_pending', DeviceOrderPendingCheckView.as_view(), name='order-check-pending'),
-    path('status/check', DeviceOrderPendingCheckView.as_view(), name='order-status-check'),
+    path('check_pending', views.OrderPendingCheckView.as_view(), name='order-check-pending'),
+    path('status/check', views.OrderPendingCheckView.as_view(), name='order-status-check'),
     path('precheck', views.OrderPrecheckView.as_view(), name='order-precheck'),
     path('create', views.OrderCreateView.as_view(), name='order-create'),
     path('list', views.OrderListView.as_view(), name='order-list'),

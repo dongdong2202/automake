@@ -12,5 +12,6 @@ urlpatterns = [
     path('kiosk/', views.simulator_kiosk_view, name='simulator_kiosk'),
     path('api/kiosk/seed_menu/', views.simulator_seed_kiosk_menu_api, name='simulator_kiosk_seed_menu_api'),
     path('api/kiosk/toggle_stock/', views.simulator_toggle_kiosk_stock_api, name='simulator_kiosk_toggle_stock_api'),
+    path('api/kiosk/log/', views.simulator_kiosk_add_log_api, name='simulator_kiosk_add_log_api'),
 ]
 

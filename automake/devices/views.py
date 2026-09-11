@@ -33,7 +33,7 @@ def receive_device_status(device_sn: str, payload: dict):
     :param device_sn: 设备序列号
     :param payload: 上报内容
     """
-    from orders.models import ProductionTask
+    from orders.models import ProductionTask, OrderStatusLog
     from django.utils import timezone
 
     msg_type = payload.get('type')
@@ -71,6 +71,11 @@ def receive_device_status(device_sn: str, payload: dict):
             logger.error(f'设备状态回传：订单不存在，order_no={order_no}')
             return
 
+        # 防退款覆盖与非法状态拦截：若订单已被取消或退款，严禁被硬件回调改写为 done
+        if order.status in (OrderMain.STATUS_REFUNDED, OrderMain.STATUS_CANCELLED):
+            logger.warning(f"订单 {order_no} 已处于终态 [{order.status}]，忽略迟到的硬件状态回调: {new_status}")
+            return
+
         import json
         logger.info(json.dumps({
             "event": "device_callback",
@@ -101,8 +106,8 @@ def receive_device_status(device_sn: str, payload: dict):
             try:
                 from notifications.services import send_order_status_notify
                 # 预估等候时间
-                from notifications.views import _estimate_wait_minutes
-                wait = _estimate_wait_minutes(order)
+                from orders.services import estimate_wait_minutes
+                wait = estimate_wait_minutes(order)
                 extra = f'预计还需 {wait} 分钟' if wait else ''
                 send_order_status_notify(order, OrderMain.STATUS_MAKING, extra_remark=extra)
             except Exception as notify_exc:
@@ -129,6 +134,14 @@ def receive_device_status(device_sn: str, payload: dict):
                 done_at=timezone.now()
             )
             logger.info(f'已同步更新生产任务状态为: done，order_no={order_no}')
+
+            # 解决幽灵库存：出杯完成瞬间主动扣减 Redis 物理料桶基准值，消除在途清零与传感器上报时差导致的虚增
+            try:
+                from orders.services import deduct_order_redis_ingredients
+                deduct_order_redis_ingredients(order)
+            except Exception as stk_err:
+                logger.warning(f"出杯后预扣减 Redis 食材异常: {stk_err}")
+
             # 异步：生成取餐码 + 推送取餐码通知给用户（包括手机鸣馓）
             try:
                 from notifications.services import create_pickup_code, send_order_status_notify

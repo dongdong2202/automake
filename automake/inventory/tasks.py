@@ -11,10 +11,27 @@ from django.conf import settings
 
 from inventory.models import Material, InventoryRecord, StoreInventoryBatch
 from notifications.models import NotifyEvent
-from notifications.services import send_sms_notify
+from notifications.tasks import async_send_sms_task
 from users.models import User
 
 logger = logging.getLogger(__name__)
+
+
+def send_sms_notify(phone_numbers: str, template_param: str, template_code: str = None):
+    """
+    短信通知分发函数：在生产环境异步投递至 Celery 队列，避免阻塞主任务线程；
+    同时支持测试与直接调用。
+    """
+    try:
+        return async_send_sms_task.delay(
+            phone_numbers=phone_numbers,
+            template_param=template_param,
+            template_code=template_code
+        )
+    except Exception as e:
+        logger.warning(f"[Celery] 投递短信任务异常，尝试直接发送: {e}")
+        from notifications.services import send_sms_notify as _real_send_sms
+        return _real_send_sms(phone_numbers=phone_numbers, template_param=template_param, template_code=template_code)
 
 
 @shared_task(bind=True, max_retries=2)
@@ -127,7 +144,7 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
             extra_data=extra_data,
         )
 
-        # 2. 发送短信通知 (SMS)
+        # 2. 异步投递短信通知 (SMS)
         sms_sent_phones = []
         if admin_users.exists():
             phone_list = [u.phone.strip() for u in admin_users if u.phone.strip()]
@@ -138,14 +155,13 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
                         "days": str(days_left) if days_left >= 0 else "0",
                         "code": mat.code[:10]
                     }, ensure_ascii=False)
-                    res = send_sms_notify(
+                    send_sms_notify(
                         phone_numbers=phone,
                         template_param=template_param
                     )
-                    if res.get('ok'):
-                        sms_sent_phones.append(phone)
+                    sms_sent_phones.append(phone)
                 except Exception as sms_err:
-                    logger.warning(f'[Celery] 短信发送失败 phone={phone}: {sms_err}')
+                    logger.warning(f'[Celery] 投递短信任务失败 phone={phone}: {sms_err}')
 
         # 3. 记录 Redis 防刷标记 (24 小时过期)
         if redis_conn:
@@ -162,7 +178,7 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
         expiration_date__isnull=False,
         expiration_date__lte=threshold_date,
         quantity__gt=0
-    ).select_related('store', 'material').order_by('expiration_date')
+    ).select_related('store', 'material').prefetch_related('store__admins').order_by('expiration_date')
 
     store_scanned_count = store_batches.count()
     store_expiring_soon_count = 0
@@ -230,8 +246,8 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
             extra_data=extra_data,
         )
 
-        # 发送短信通知 (SMS)：优先精准提醒该门店店主/管理员 (store.admins)，并抄送系统管理员
-        store_admins = list(store.admins.filter(is_active=True).exclude(phone__isnull=True).exclude(phone=''))
+        # 异步投递短信通知 (SMS)：优先精准提醒该门店店主/管理员 (store.admins)，并抄送系统管理员
+        store_admins = [u for u in s_batch.store.admins.all() if u.is_active and u.phone and u.phone.strip()]
         recipient_users = list({u.id: u for u in (store_admins + list(admin_users))}.values())
 
         sms_sent_phones = []
@@ -244,14 +260,13 @@ def check_inventory_expiration_task(self, alert_days: int = 30, force: bool = Fa
                         "days": str(days_left) if days_left >= 0 else "0",
                         "code": mat.code[:10]
                     }, ensure_ascii=False)
-                    res = send_sms_notify(
+                    send_sms_notify(
                         phone_numbers=phone,
                         template_param=template_param
                     )
-                    if res.get('ok'):
-                        sms_sent_phones.append(phone)
+                    sms_sent_phones.append(phone)
                 except Exception as sms_err:
-                    logger.warning(f'[Celery] 门店保质期短信发送失败 phone={phone}: {sms_err}')
+                    logger.warning(f'[Celery] 投递门店保质期短信失败 phone={phone}: {sms_err}')
         if redis_conn:
             try:
                 redis_conn.setex(dedup_key, 86400, '1')

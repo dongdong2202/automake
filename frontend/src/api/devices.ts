@@ -69,3 +69,9 @@ export function getDeviceStocksOverviewApi(params?: { store_id?: number | string
 export function getDeviceInventoryRecordsApi(params?: { store_id?: number | string; device_sn?: string; search?: string; page?: number; page_size?: number }): Promise<ApiResponse<PaginatedData<any>>> {
   return http.get('/admin/devices/records/', { params })
 }
+
+// 设备耗材库存补货/盘点录入 (纸杯、塑料杯、杯盖、封口膜)
+export function updateDeviceConsumablesApi(sn: string, items: Array<{ code: string; quantity: number }>): Promise<ApiResponse<any>> {
+  return http.post(`/admin/devices/${sn}/consumables/update/`, { items })
+}
+

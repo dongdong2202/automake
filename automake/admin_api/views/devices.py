@@ -193,10 +193,16 @@ class DeviceBarrelDictListView(APIView):
         if not material:
             return error(f'未找到物料编码 {material_code}', code=4042)
 
+        update_defaults = {'material': material, 'created_by': request.user}
+        if 'alarm_threshold_1' in request.data:
+            update_defaults['alarm_threshold_1'] = request.data.get('alarm_threshold_1')
+        if 'alarm_threshold_2' in request.data:
+            update_defaults['alarm_threshold_2'] = request.data.get('alarm_threshold_2')
+
         barrel_obj, created = DeviceBarrelDict.objects.update_or_create(
             device=device,
             barrel_code=barrel_code,
-            defaults={'material': material, 'created_by': request.user}
+            defaults=update_defaults
         )
 
         return ok(DeviceBarrelDictSerializer(barrel_obj).data, message='料桶映射配置成功')
@@ -246,10 +252,16 @@ class GlobalBarrelDictListView(APIView):
         if not material:
             return error(f'未找到物料编码 {material_code}', code=4042)
 
+        update_defaults = {'material': material, 'created_by': request.user}
+        if 'alarm_threshold_1' in request.data:
+            update_defaults['alarm_threshold_1'] = request.data.get('alarm_threshold_1')
+        if 'alarm_threshold_2' in request.data:
+            update_defaults['alarm_threshold_2'] = request.data.get('alarm_threshold_2')
+
         barrel_obj, created = DeviceBarrelDict.objects.update_or_create(
             device=device,
             barrel_code=barrel_code,
-            defaults={'material': material, 'created_by': request.user}
+            defaults=update_defaults
         )
         return ok(DeviceBarrelDictSerializer(barrel_obj).data, message='料桶映射保存成功')
 
@@ -490,3 +502,32 @@ class DeviceInventoryRecordListView(APIView):
         page = paginator.paginate_queryset(qs, request)
         serializer = StoreInventoryRecordSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class DeviceConsumableStockUpdateView(APIView):
+    """
+    POST /api/admin/devices/<str:sn>/consumables/update/
+    PC Web 管理端录入/调整设备耗材库存
+    入参：{ "items": [{"code": "paperL", "quantity": 100}, {"code": "lid", "quantity": 100}] }
+    """
+    permission_classes = [IsAdmin]
+
+    def post(self, request, sn):
+        device = Device.objects.filter(device_sn=sn.strip()).first()
+        if not device:
+            return error('未找到该设备', code=2001, status=404)
+
+        items = request.data.get('items', [])
+        if not items or not isinstance(items, list):
+            return error('耗材数据 (items) 不能为空且必须为列表', code=2002)
+
+        from inventory.services import update_device_consumable_stock
+        updated = update_device_consumable_stock(
+            device=device,
+            items=items,
+            operator=request.user if request.user.is_authenticated else None,
+            remarks=f'PC Web管理端耗材录入 ({request.user.username if request.user.is_authenticated else "管理员"})'
+        )
+
+        return ok(updated, message='耗材库存已成功录入并实时同步至 Redis')
+

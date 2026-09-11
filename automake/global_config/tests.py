@@ -354,7 +354,7 @@ class CxdPermissionsAndSyncTests(TestCase):
         from devices.models import Device
         from global_config.models import DeviceModel, GlobalMenuCategory, GlobalMenuItem
 
-        self.cxd_user = User.objects.create_superuser(username='cxd', password='password123')
+        self.super_admin_user = User.objects.create_superuser(username='superadmin', password='password123')
         self.closed_store = Store.objects.create(name="未营业店", status=Store.STATUS_CLOSED)
         
         self.dev_type = DeviceModel.objects.create(name="咖啡机", code="coffee_maker")
@@ -372,7 +372,7 @@ class CxdPermissionsAndSyncTests(TestCase):
             category=self.g_cat, name="美式", base_price=1000, is_active=True
         )
 
-    def test_cxd_can_view_closed_store_menu(self):
+    def test_super_admin_can_view_closed_store_menu(self):
         from rest_framework.test import APIClient
         
         client = APIClient()
@@ -381,8 +381,8 @@ class CxdPermissionsAndSyncTests(TestCase):
         response = client.get(f'/api/menu/store/{self.closed_store.id}')
         self.assertEqual(response.status_code, 400)
         
-        # Log in as cxd
-        client.force_authenticate(user=self.cxd_user)
+        # Log in as superadmin
+        client.force_authenticate(user=self.super_admin_user)
         response = client.get(f'/api/menu/store/{self.closed_store.id}')
         self.assertEqual(response.status_code, 200)
         data = response.json()

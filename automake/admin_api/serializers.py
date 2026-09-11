@@ -172,6 +172,7 @@ class DeviceBarrelDictSerializer(serializers.ModelSerializer):
         model = DeviceBarrelDict
         fields = [
             'id', 'barrel_code', 'material', 'material_name', 'material_type',
+            'alarm_threshold_1', 'alarm_threshold_2',
             'device', 'device_sn', 'device_name', 'store_name', 'created_by_username', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']

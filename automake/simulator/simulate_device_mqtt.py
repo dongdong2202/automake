@@ -53,6 +53,21 @@ def on_message(client, userdata, msg):
         data = json.loads(payload_str)
         action = data.get("action") or data.get("type") or "unknown"
         logger.info(f"⚡ 解析指令动作: {action}")
+
+        if str(action).lower() == "cancel":
+            order_no = data.get("order_no") or data.get("orderNo")
+            reason = data.get("reason", "用户取消")
+            logger.info(f"🛑 收到上位机取消/停机制作指令: order_no={order_no}, reason={reason}")
+            reply_topic = f"c2s/shop/{DEVICE_SN}/state/command"
+            reply_payload = {
+                "type": "cancel_ack",
+                "order_no": order_no,
+                "status": "ok",
+                "reason": "上位机已停止制作并确认取消",
+                "ts": int(time.time() * 1000)
+            }
+            client.publish(reply_topic, json.dumps(reply_payload, ensure_ascii=False), qos=1)
+            logger.info(f"📤 已应答 cancel_ack (ok): topic={reply_topic}")
     except Exception as e:
         logger.warning(f"📩 收到非JSON原始数据: {msg.payload} (解析异常: {e})")
 

@@ -245,25 +245,68 @@ def create_pickup_code(order, max_retry: int = 5) -> PickupCode:
 
     expires_at = timezone.now() + timedelta(minutes=PICKUP_CODE_EXPIRE_MINUTES)
 
-    # 规则：当日支付订单号 + 1 (自增序号如 0001, 0002...)
-    today = timezone.now().date()
-    from orders.models import OrderMain
-    paid_count_today = OrderMain.objects.filter(
-        paid_at__date=today,
-        status__in=[OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING, OrderMain.STATUS_DONE]
-    ).exclude(pk=order.pk).count()
-    seq = paid_count_today + 1
-    candidate_code = f"{seq:04d}"
+    # 规则：按【设备编号 + 当天日期】独立自增发号 (0001, 0002...)
+    # 采用 Redis 原子 INCR 命令发号，按设备与日期键独立隔离，每日自动从 1 归零
+    today = timezone.localdate()
+    today_str = today.strftime('%Y%m%d')
+    device = getattr(order, 'device', None)
+    device_sn = device.device_sn if (device and getattr(device, 'device_sn', None)) else 'global'
+    redis_seq_key = f"automake:pickup_seq:{device_sn}:{today_str}"
 
-    # 遇到已有同号则顺延（防止历史测试数据冲突）
-    while PickupCode.objects.filter(code=candidate_code).exists():
-        seq += 1
-        candidate_code = f"{seq:04d}"
-        if len(candidate_code) > 8:
-            candidate_code = candidate_code[-8:]
-            break
+    seq = None
+    try:
+        from django_redis import get_redis_connection
+        r = get_redis_connection('default')
+        if not r.exists(redis_seq_key):
+            # 精确统计当前设备今天已生成的取餐码记录数
+            filter_kwargs = {'created_at__date': today}
+            if device:
+                filter_kwargs['order__device'] = device
+            else:
+                filter_kwargs['order__device__isnull'] = True
+            existing_count = PickupCode.objects.filter(**filter_kwargs).count()
+            r.set(redis_seq_key, existing_count)
+            r.expire(redis_seq_key, 86400 * 2)
+        seq = r.incr(redis_seq_key)
+        code = f"{seq:04d}"
 
-    code = candidate_code
+        # 防重碰撞探测：确保（设备编号、取餐码、当天）绝对唯一
+        attempts = 0
+        check_kwargs = {'code': code, 'created_at__date': today}
+        if device:
+            check_kwargs['order__device'] = device
+        else:
+            check_kwargs['order__device__isnull'] = True
+
+        while PickupCode.objects.filter(**check_kwargs).exists() and attempts < max_retry:
+            seq = r.incr(redis_seq_key)
+            code = f"{seq:04d}"
+            check_kwargs['code'] = code
+            attempts += 1
+
+    except Exception as e:
+        logger.warning(f"Redis 自增生成取餐码异常，回退使用数据库按设备+当天计数: {e}")
+        filter_kwargs = {'created_at__date': today}
+        if device:
+            filter_kwargs['order__device'] = device
+        else:
+            filter_kwargs['order__device__isnull'] = True
+        existing_count = PickupCode.objects.filter(**filter_kwargs).count()
+        seq = existing_count + 1
+        code = f"{seq:04d}"
+
+        attempts = 0
+        check_kwargs = {'code': code, 'created_at__date': today}
+        if device:
+            check_kwargs['order__device'] = device
+        else:
+            check_kwargs['order__device__isnull'] = True
+
+        while PickupCode.objects.filter(**check_kwargs).exists() and attempts < max_retry:
+            seq += 1
+            code = f"{seq:04d}"
+            check_kwargs['code'] = code
+            attempts += 1
 
     pickup = PickupCode.objects.create(
         order=order,
@@ -423,19 +466,26 @@ def verify_pickup_code(code: str, device_sn: str = '') -> dict:
     :param device_sn:  操作设备序列号（记录用，可选）
     :return:           {'ok': True, 'order_no': ..., 'items': [...]} 或 {'ok': False, 'reason': ...}
     """
-    try:
-        pickup = PickupCode.objects.select_related('order').get(code=code)
-    except PickupCode.DoesNotExist:
+    # 优先查找当前设备当天有效/未过期的取餐码
+    now = timezone.now()
+    today = timezone.localdate()
+    qs = PickupCode.objects.select_related('order').filter(code=code, created_at__date=today)
+    if device_sn:
+        qs_dev = qs.filter(order__device__device_sn=device_sn)
+        if qs_dev.exists():
+            qs = qs_dev
+
+    pickup = qs.filter(status=PickupCode.STATUS_ACTIVE, expires_at__gte=now).first()
+    if not pickup:
+        # 检查是否刚使用过
+        used = qs.filter(status=PickupCode.STATUS_USED).order_by('-scanned_at').first()
+        if used:
+            return {'ok': False, 'reason': '取餐码已使用'}
+        # 检查是否过期
+        expired = qs.filter(status=PickupCode.STATUS_EXPIRED).order_by('-expires_at').first()
+        if expired or qs.filter(expires_at__lt=now).exists():
+            return {'ok': False, 'reason': '取餐码已过期'}
         return {'ok': False, 'reason': '取餐码不存在'}
-
-    if pickup.status == PickupCode.STATUS_USED:
-        return {'ok': False, 'reason': '取餐码已使用'}
-
-    if pickup.status == PickupCode.STATUS_EXPIRED or timezone.now() > pickup.expires_at:
-        # 同步更新状态为 expired
-        pickup.status = PickupCode.STATUS_EXPIRED
-        pickup.save(update_fields=['status'])
-        return {'ok': False, 'reason': f'取餐码已过期（有效期至 {pickup.expires_at.strftime("%H:%M")}）'}
 
     # 核销成功，标记为已使用
     pickup.status = PickupCode.STATUS_USED

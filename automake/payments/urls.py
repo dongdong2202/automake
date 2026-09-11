@@ -14,7 +14,5 @@ urlpatterns = [
     path('status', views.PayStatusQueryView.as_view(), name='pay-status-query-param'),
     # 微信异步回调
     path('callback', views.PayCallbackView.as_view(), name='pay-callback'),
-    path('mock-success', views.PayMockSuccessView.as_view(), name='pay-mock-success'),
     path('refund', views.PayRefundView.as_view(), name='pay-refund'),
-    path('test/create-order', views.PayTestCreateOrderView.as_view(), name='pay-test-create-order'),
 ]

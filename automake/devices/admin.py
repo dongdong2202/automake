@@ -224,7 +224,7 @@ class DeviceMaterialStockAdmin(ModelAdmin):
 
 @admin.register(DeviceConsumableStock)
 class DeviceConsumableStockAdmin(ModelAdmin):
-    list_display = ('id', 'device', 'code', 'unit', 'init_quantity', 'quantity', 'warn_level', 'updated_at')
+    list_display = ('id', 'device', 'code', 'unit', 'init_quantity', 'quantity', 'warn_level', 'stop_sale_level', 'updated_at')
     search_fields = ('device__device_sn', 'code__name', 'code__code')
     list_filter = ('device', 'code')
 
@@ -427,14 +427,14 @@ class DeviceBarrelDictAdmin(ModelAdmin):
     """
     料桶字典后台管理
     """
-    list_display = ('device', 'barrel_code', 'material', 'created_by', 'created_at')
+    list_display = ('device', 'barrel_code', 'material', 'alarm_threshold_1', 'alarm_threshold_2', 'created_by', 'created_at')
     search_fields = ('device__device_sn', 'device__device_name', 'barrel_code', 'material__code', 'material__name')
     list_filter = ('device', 'created_at')
     readonly_fields = ('created_at', 'created_by')
 
     fieldsets = (
-        ('基础映射', {
-            'fields': ('device', 'barrel_code', 'material')
+        ('基础映射与阈值', {
+            'fields': ('device', 'barrel_code', 'material', 'alarm_threshold_1', 'alarm_threshold_2')
         }),
         ('审计信息', {
             'fields': ('created_by', 'created_at')

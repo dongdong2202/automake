@@ -50,11 +50,15 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderStatusLogSerializer(serializers.ModelSerializer):
     """订单状态日志 / 履约流转时间线序列化器"""
+    from_status_display = serializers.CharField(read_only=True)
+    to_status_display = serializers.CharField(read_only=True)
+    status_flow_display = serializers.CharField(read_only=True)
 
     class Meta:
         model = OrderStatusLog
         fields = [
-            'id', 'action', 'action_name', 'from_status', 'to_status',
+            'id', 'action', 'action_name', 'from_status', 'from_status_display',
+            'to_status', 'to_status_display', 'status_flow_display',
             'operator_type', 'operator', 'remark', 'payload', 'created_at'
         ]
 

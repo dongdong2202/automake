@@ -55,6 +55,7 @@ urlpatterns = [
     path('devices/records/', devices.DeviceInventoryRecordListView.as_view(), name='admin-device-records-all'),
     path('devices/stocks-overview/', devices.DeviceStockOverviewView.as_view(), name='admin-device-stocks-overview'),
     path('devices/<str:sn>/records/', devices.DeviceInventoryRecordListView.as_view(), name='admin-device-records-list'),
+    path('devices/<str:sn>/consumables/update/', devices.DeviceConsumableStockUpdateView.as_view(), name='admin-device-consumables-update'),
     path('devices/<str:sn>/', devices.DeviceDetailView.as_view(), name='admin-device-detail'),
     path('devices/<str:sn>/barrels/', devices.DeviceBarrelDictListView.as_view(), name='admin-device-barrels'),
     path('devices/barrel-dicts/', devices.GlobalBarrelDictListView.as_view(), name='admin-global-barrel-dicts'),
@@ -90,6 +91,8 @@ urlpatterns = [
     path('orders/', orders.OrderListView.as_view(), name='admin-order-list'),
     path('orders/<str:order_no>/', orders.OrderDetailView.as_view(), name='admin-order-detail'),
     path('orders/<str:order_no>/refund/', orders.OrderRefundActionView.as_view(), name='admin-order-refund'),
+    path('orders/<str:order_no>/refund/auto/', orders.OrderAutoRefundView.as_view(), name='admin-order-refund-auto'),
+    path('orders/<str:order_no>/refund/force/', orders.OrderForceRefundView.as_view(), name='admin-order-refund-force'),
 
     # 告警与事件通知
     path('notifications/events/', notifications.NotifyEventListView.as_view(), name='admin-notify-events'),

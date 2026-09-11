@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     'corsheaders',                      # CORS 跨域请求处理
     'rest_framework',                   # Django REST Framework
     'rest_framework_simplejwt',         # JWT 认证
+    'rest_framework_simplejwt.token_blacklist',  # JWT 令牌黑名单 (防重放攻击)
     'drf_spectacular',                  # OpenAPI 3.0 接口文档生成
     'channels',                         # Django Channels：WebSocket 支持
     # 业务应用
@@ -110,10 +111,9 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG  # 开发模式下允许所有来源
 # Django REST Framework 配置
 # ============================================================
 REST_FRAMEWORK = {
-    # 全局默认认证方式：JWT Bearer Token，开发环境支持免 Token 自动登录和 Session 登录
+    # 全局默认认证方式：JWT Bearer Token
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'users.authentication.DevMockAuthentication',            # 开发免 Token 自动登录
         'rest_framework.authentication.SessionAuthentication',    # 支持 Session（登录 Admin 后可自动授权）
     ),
     # 默认权限：需登录（可在具体接口覆盖）
@@ -167,7 +167,7 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),     # Access Token 有效期 2 小时
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),    # Refresh Token 有效期 30 天
     'ROTATE_REFRESH_TOKENS': True,                   # 刷新时同步更新 Refresh Token
-    'BLACKLIST_AFTER_ROTATION': False,               # 暂不启用黑名单
+    'BLACKLIST_AFTER_ROTATION': True,                # 启用黑名单防止旧 Token 复用 (防重放攻击)
     'AUTH_HEADER_TYPES': ('Bearer',),                # Header 格式：Authorization: Bearer <token>
 }
 

@@ -119,36 +119,9 @@ class OrderStatusQueryView(APIView):
 
 
 def _estimate_wait_minutes(order: OrderMain) -> int | None:
-    """
-    估算订单等候时间（分钟）
-
-    算法：
-      - 同一设备当前状态为 pending_dispense 或 making 的订单数量 × 2 分钟/单
-      - 仅在非终态（created/pending_dispense/making）时返回估算值
-      - 对于已完成或失败的订单返回 None
-    """
-    terminal_statuses = (
-        OrderMain.STATUS_DONE,
-        OrderMain.STATUS_CANCELLED,
-        OrderMain.STATUS_EXCEPTION,
-        OrderMain.STATUS_REFUNDED,
-    )
-    if order.status in terminal_statuses:
-        return None
-
-    if not order.device:
-        return None
-
-    # 查询排在当前订单之前（创建时间更早）且未完成的订单数
-    queue_ahead = OrderMain.objects.filter(
-        device=order.device,
-        status__in=(OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING),
-        created_at__lt=order.created_at,
-    ).count()
-
-    # 当前订单自身的制作时间预估 + 排队等待时间（每单约 2 分钟）
-    estimated = (queue_ahead + 1) * 2
-    return estimated
+    """估算订单等候时间（委托至 orders.services）"""
+    from orders.services import estimate_wait_minutes
+    return estimate_wait_minutes(order)
 
 
 class NotifyEventListView(APIView):

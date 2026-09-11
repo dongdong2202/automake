@@ -235,7 +235,7 @@ class OptimizedOrderProcessTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, OrderMain.STATUS_EXCEPTION)  # 'failed'
 
-        mock_redis_client.incrby.assert_any_call(get_redis_stock_key(self.device.device_sn, "coffee_bean"), 1500)
+        mock_redis_client.incrby.assert_any_call(get_redis_stock_key(self.device.device_sn, "coffee_bean"), 15)
 
     def test_reconciliation_lost_command_rollback(self, mock_get_redis):
         mock_redis_client = MagicMock()
@@ -516,28 +516,39 @@ class OptimizedOrderProcessTests(TestCase):
 
         per_cup_list = calculate_required_materials(items_data)
 
-        # 校验 1：返回列表长度必须为 2（2 杯独立，绝不合并为 1 条）
-        self.assertEqual(len(per_cup_list), 2)
+        # 校验 1：返回列表按商品规格行聚合（购买 2 杯为 1 条记录，包含 quantity=2）
+        self.assertEqual(len(per_cup_list), 1)
 
-        for cup in per_cup_list:
-            self.assertEqual(cup['item_name'], "热焦糖玛奇朵")
-            self.assertTrue(cup['is_hot'])
-            mats = cup['materials']
+        cup = per_cup_list[0]
+        self.assertEqual(cup['item_name'], "热焦糖玛奇朵")
+        self.assertEqual(cup['quantity'], 2)
+        self.assertTrue(cup['is_hot'])
 
-            # 校验 2：热饮塑料杯 (plasticL) 必须被自动纠正为纸杯 (paperL)
-            self.assertNotIn('plasticL', mats, "热饮不应包含塑料杯！")
-            self.assertEqual(mats.get('paperL'), Decimal('1.00'), "热饮塑料杯应自动纠正为 paperL！")
+        single_mats = cup['single_cup_materials']
+        sub_total_mats = cup['sub_total_materials']
+        self.assertNotIn('materials', cup)
+        self.assertNotIn('total_materials', cup)
 
-            # 校验 3：使用纸杯必须自动成套配备杯盖 (lid)
-            self.assertEqual(mats.get('lid'), Decimal('1.00'), "纸杯应自动配备杯盖 lid！")
+        # 校验 2：热饮塑料杯 (plasticL) 必须被自动纠正为纸杯 (paperL)
+        self.assertNotIn('plasticL', single_mats, "热饮不应包含塑料杯！")
+        self.assertEqual(single_mats.get('paperL'), Decimal('1.00'), "热饮塑料杯应自动纠正为 paperL！")
 
-            # 校验 4：必须配备封口膜 (membrane)
-            self.assertEqual(mats.get('membrane'), Decimal('1.00'), "每杯饮品必须配备封口膜 membrane！")
+        # 校验 3：使用纸杯必须自动成套配备杯盖 (lid)
+        self.assertEqual(single_mats.get('lid'), Decimal('1.00'), "纸杯应自动配备杯盖 lid！")
 
-            # 校验 5：单杯食材用量正确（15g 咖啡豆, 160ml 牛奶, 20ml 糖浆）
-            self.assertEqual(mats.get('coffee_bean'), Decimal('15.00'))
-            self.assertEqual(mats.get('fresh_milk'), Decimal('160.00'))
-            self.assertEqual(mats.get('syrup'), Decimal('20.00'))
+        # 校验 4：必须配备封口膜 (membrane)
+        self.assertEqual(single_mats.get('membrane'), Decimal('1.00'), "每杯饮品必须配备封口膜 membrane！")
+
+        # 校验 5：单杯食材用量正确（15g 咖啡豆, 160ml 牛奶, 20ml 糖浆）
+        self.assertEqual(single_mats.get('coffee_bean'), Decimal('15.00'))
+        self.assertEqual(single_mats.get('fresh_milk'), Decimal('160.00'))
+        self.assertEqual(single_mats.get('syrup'), Decimal('20.00'))
+
+        # 校验 6：小计耗用量必须准确对应 2 倍 (sub_total_materials = single_cup * quantity)
+        self.assertEqual(sub_total_mats.get('paperL'), Decimal('2.00'))
+        self.assertEqual(sub_total_mats.get('lid'), Decimal('2.00'))
+        self.assertEqual(sub_total_mats.get('membrane'), Decimal('2.00'))
+        self.assertEqual(sub_total_mats.get('coffee_bean'), Decimal('30.00'))
 
     def test_create_production_task_standardized_payload(self, mock_get_redis):
         """验证标准化 MQTT make 命令 Payload 结构与内容"""
@@ -722,14 +733,117 @@ class OrderTimelineLifecycleTests(TestCase):
         self.assertIn('无法退款', fail_log.payload.get('error', ''))
 
         # 2. 模拟微信退款成功，应当写入 refund_success 时间线
-        payment.transaction_id = f"mock_tx_{uuid.uuid4().hex[:12]}"
+        payment.transaction_id = "1234567890123456"
         payment.save()
 
-        refund_order(order, reason="正常退款成功测试")
+        with patch('utils.wechat.WechatPayV3.apply_refund', return_value={'refund_id': 'rf_12345678', 'status': 'SUCCESS'}):
+            refund_order(order, reason="正常退款成功测试")
         success_log = order.status_logs.filter(action=OrderStatusLog.ACTION_REFUND_SUCCESS).first()
         self.assertIsNotNone(success_log)
         self.assertEqual(success_log.action_name, '退款成功')
         self.assertEqual(success_log.payload.get('reason'), '正常退款成功测试')
+
+
+class OrderPrecheckViewPermissionTests(TestCase):
+    """验证 OrderPrecheckView 开放权限 (AllowAny) 与设备 Token 兼容性"""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        self.client = APIClient()
+        self.store = Store.objects.create(name="预检测试店", status=Store.STATUS_OPEN, code="ST_PRECHECK_01")
+        self.dev_type = DeviceModel.objects.create(name="测试机型", code="dev_precheck_01")
+        self.device = Device.objects.create(
+            store=self.store, device_sn="SN_PRECHECK_01", device_name="预检咖啡机",
+            device_model=self.dev_type, status=Device.STATUS_ONLINE
+        )
+        from inventory.models import Material
+        mat_bean, _ = Material.objects.get_or_create(name="咖啡豆", code="coffee_bean", unit="g")
+        mat_cup, _ = Material.objects.get_or_create(code="paperL", defaults={"name": "纸大杯", "unit": "个", "material_type": "cup"})
+        cat = GlobalMenuCategory.objects.create(device_model=self.dev_type, name="热饮", sort_order=1, is_active=True)
+        g_item = GlobalMenuItem.objects.create(category=cat, name="美式", base_price=1000, is_active=True)
+        g_tpl = GlobalSkuTemplate.objects.create(name="热大杯", category="默认", default_price_delta=0, is_active=True)
+        g_sku = GlobalMenuSku.objects.create(item=g_item, template=g_tpl, price_delta=0, is_active=True)
+        GlobalSkuIngredient.objects.create(sku=g_sku, material=mat_bean, quantity=15)
+        GlobalSkuIngredient.objects.create(sku=g_sku, material=mat_cup, quantity=1)
+
+        MenuItem.sync_store_menu(self.store)
+        self.menu_item = MenuItem.objects.get(store=self.store, global_item=g_item)
+        self.menu_sku = MenuSku.objects.get(item=self.menu_item, global_sku=g_sku)
+
+    @patch('django_redis.get_redis_connection')
+    def test_precheck_allows_device_token_without_401(self, mock_get_redis):
+        """验证携带上位机设备 Token (无 user_id) 请求预校验不会报 401 Unauthorized"""
+        import jwt, time
+        from django.conf import settings
+
+        mock_redis = MagicMock()
+        mock_redis.mget.return_value = [b"1000", b"100"]
+        mock_get_redis.return_value = mock_redis
+
+        # 模拟 DeviceRegisterView 生成的设备 Token
+        device_token = jwt.encode({
+            'device_sn': self.device.device_sn,
+            'device_name': self.device.device_name,
+            'store_id': self.store.id,
+            'exp': int(time.time()) + 3600
+        }, settings.SECRET_KEY, algorithm='HS256')
+
+        payload = {
+            'store_id': self.store.id,
+            'device_sn': self.device.device_sn,
+            'items': [{'item': self.menu_item.id, 'sku': [self.menu_sku.id], 'quantity': 1}]
+        }
+
+        # 1. 带设备 Token 发起预校验
+        res_dev = self.client.post(
+            '/api/order/precheck', payload, format='json',
+            HTTP_AUTHORIZATION=f'Bearer {device_token}'
+        )
+        self.assertEqual(res_dev.status_code, 200)
+        self.assertEqual(res_dev.data['code'], 0)
+
+        # 2. 完全匿名发起预校验
+        res_anon = self.client.post('/api/order/precheck', payload, format='json')
+        self.assertEqual(res_anon.status_code, 200)
+        self.assertEqual(res_anon.data['code'], 0)
+
+    @patch('django_redis.get_redis_connection')
+    def test_create_order_with_device_token_succeeds(self, mock_get_redis):
+        """验证携带上位机设备 Token (无 user_id) 请求创建订单成功且自动绑定该设备柜机用户"""
+        import jwt, time
+        from django.conf import settings
+
+        mock_redis = MagicMock()
+        mock_redis.mget.return_value = [b"1000", b"100"]
+        mock_get_redis.return_value = mock_redis
+
+        device_token = jwt.encode({
+            'device_sn': self.device.device_sn,
+            'device_name': self.device.device_name,
+            'store_id': self.store.id,
+            'exp': int(time.time()) + 3600
+        }, settings.SECRET_KEY, algorithm='HS256')
+
+        payload = {
+            'store_id': self.store.id,
+            'device_sn': self.device.device_sn,
+            'items': [{'item': self.menu_item.id, 'sku': [self.menu_sku.id], 'quantity': 1}],
+            'remark': '大屏自助点单测试'
+        }
+
+        res = self.client.post(
+            '/api/order/create', payload, format='json',
+            HTTP_AUTHORIZATION=f'Bearer {device_token}'
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['code'], 0)
+        order_no = res.data['data']['order_no']
+
+        order = OrderMain.objects.get(order_no=order_no)
+        self.assertEqual(order.device, self.device)
+        self.assertEqual(order.user.openid, f"kiosk_{self.device.device_sn}")
+
+
 
 
 

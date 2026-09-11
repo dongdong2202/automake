@@ -36,16 +36,6 @@ class PayCodePayRequestSerializer(serializers.Serializer):
     device_sn = serializers.CharField(required=False, allow_blank=True, max_length=128, help_text="设备编号 (可选)")
 
 
-class PayTestCreateOrderRequestSerializer(serializers.Serializer):
-    store_id = serializers.IntegerField(required=False, default=1, help_text="门店 ID")
-    device_sn = serializers.CharField(required=False, default="sn005", help_text="设备 SN")
-    item_id = serializers.IntegerField(required=False, help_text="商品 ID (可选)")
-
-
-class PayMockSuccessRequestSerializer(serializers.Serializer):
-    order_no = serializers.CharField(required=True, max_length=64, help_text="商户订单号")
-
-
 class PayRefundRequestSerializer(serializers.Serializer):
     device_sn = serializers.CharField(
         required=False,
@@ -259,100 +249,31 @@ class PayStatusQueryView(APIView):
             logger.exception(f'查询支付状态异常: {e}')
             return error('查询支付状态系统异常', code=5004, status=500)
 
+    def post(self, request, order_id=None, order_no=None, out_trade_no=None):
+        target_no = order_id or order_no or out_trade_no or request.data.get('order_no')
+        if not target_no:
+            return error('缺少订单号参数', code=5001)
 
-class PaymentTestPageView(APIView):
-    """
-    真实微信支付测试控制台 (Native 扫码 & 付款码 2合1 测试界面)
-    GET /payment-test/
-    """
-    permission_classes = [AllowAny]
-    throttle_classes = []
+        action = request.data.get('action', '')
+        if action in ('close', 'timeout', 'cancel'):
+            from orders.models import OrderMain
+            from .services import close_timeout_order
+            order = OrderMain.objects.filter(order_no=target_no).first()
+            if not order:
+                return error('订单不存在', code=5002, status=404)
+            remark = request.data.get('remark', '终端发起超时关单')
+            closed = close_timeout_order(order, operator='kiosk', remark=remark)
+            return ok({'closed': closed, 'order_no': order.order_no, 'order_status': order.status}, message='订单已关闭')
 
-    def get(self, request):
-        from django.shortcuts import render
-        from stores.models import Store
-        from devices.models import Device
-        from menus.models import MenuItem
-
-        stores = Store.objects.filter(status=Store.STATUS_OPEN)
-        devices = Device.objects.filter(status=Device.STATUS_ONLINE)
-        items = MenuItem.objects.filter(is_active=True).select_related('global_item')[:10]
-
-        context = {
-            'stores': stores,
-            'devices': devices,
-            'items': items,
-        }
-        return render(request, 'payments/test.html', context)
-
-
-class PayTestCreateOrderView(APIView):
-    """
-    测试专用：一键免鉴权创建 0.01 元真实测试订单
-    POST /api/pay/test/create-order
-    """
-    permission_classes = [AllowAny]
-    throttle_classes = []
-
-    def post(self, request):
-        from users.models import User
-        from stores.models import Store
-        from devices.models import Device
-        from menus.models import MenuItem, MenuSku
-        from orders.models import OrderMain, OrderItem
-
-        store_id = request.data.get('store_id', 1)
-        device_sn = request.data.get('device_sn', 'sn005')
-        item_id = request.data.get('item_id')
-
-        store = Store.objects.filter(id=store_id).first() or Store.objects.filter(status=Store.STATUS_OPEN).first()
-        device = Device.objects.filter(device_sn=device_sn).first() or Device.objects.filter(status=Device.STATUS_ONLINE).first()
-        
-        # 获取或创建测试用户
-        user, _ = User.objects.get_or_create(openid='oJqP67L3test_pay_user_openid')
-
-        item = MenuItem.objects.filter(id=item_id).first() if item_id else MenuItem.objects.filter(store=store, is_active=True).first()
-        if not item:
-            item = MenuItem.objects.filter(is_active=True).first()
-
-        # 创建 0.01 元测试订单
-        order = OrderMain.objects.create(
-            user=user,
-            store=store,
-            device=device,
-            total_amount=1, # 0.01元
-            discount_amount=0,
-            pay_amount=1,   # 1分钱
-            status=OrderMain.STATUS_PENDING_PAY
-        )
-
-        sku_name = "默认规格"
-        sku_obj = None
-        if item:
-            sku_obj = MenuSku.objects.filter(item=item, is_active=True).first()
-            if sku_obj and sku_obj.global_sku and sku_obj.global_sku.template:
-                sku_name = sku_obj.global_sku.template.name
-
-        order_item = OrderItem.objects.create(
-            order=order,
-            item=item,
-            item_name=item.name if item else "测试拿铁",
-            sku_name=sku_name,
-            quantity=1,
-            unit_price=1,
-            subtotal=1
-        )
-        if sku_obj:
-            order_item.skus.add(sku_obj)
-
-        return ok({
-            'order_no': order.order_no,
-            'pay_amount': order.pay_amount,
-            'status': order.status,
-            'status_display': order.get_status_display(),
-            'device_sn': device.device_sn if device else '',
-            'store_name': store.name if store else ''
-        }, message='测试订单创建成功 (0.01元)')
+        try:
+            from .services import query_and_sync_payment_status
+            status_data = query_and_sync_payment_status(target_no, sync_wechat=True)
+            return ok(status_data, message='查询成功')
+        except ValueError as e:
+            return error(str(e), code=5002, status=404)
+        except Exception as e:
+            logger.exception(f'查询支付状态异常: {e}')
+            return error('查询支付状态系统异常', code=5004, status=500)
 
 
 class PayCallbackView(APIView):
@@ -484,68 +405,8 @@ class PayCallbackView(APIView):
 
     @staticmethod
     def _fail_response(message: str):
-        """微信要求的失败应答格式（微信会重试）"""
-        return Response({'code': 'FAIL', 'message': message}, status=200)
-
-
-class PayMockSuccessView(APIView):
-    """
-    开发测试专用的模拟支付成功接口（仅在 DEBUG=True 且开发模式下可用）
-
-    POST /api/pay/mock-success
-    请求体：{ "order_no": "202506090001234" }
-    """
-    permission_classes = [AllowAny]
-    throttle_classes = []
-
-    @extend_schema(
-        summary="模拟支付成功 (开发环境)",
-        description="模拟微信支付成功并推进后续制作与出库流程。",
-        request=PayMockSuccessRequestSerializer,
-    )
-    def post(self, request):
-        from django.conf import settings
-        from django.utils import timezone
-        import uuid
-        
-        if not settings.DEBUG:
-            return error('仅在开发调试模式下允许调用模拟支付', code=5005, status=403)
-
-        order_no = request.data.get('order_no', '').strip()
-        if not order_no:
-            return error('order_no 不能为空', code=5001)
-
-        from .models import PaymentRecord
-        from orders.models import OrderMain
-
-        try:
-            order = OrderMain.objects.get(order_no=order_no)
-        except OrderMain.DoesNotExist:
-            return error('未找到该订单', code=5002, status=404)
-
-        payment, _ = PaymentRecord.objects.get_or_create(
-            out_trade_no=order_no,
-            defaults={
-                'order': order,
-                'user': order.user,
-                'amount': order.pay_amount,
-                'status': PaymentRecord.STATUS_PENDING
-            }
-        )
-
-        try:
-            from .services import confirm_payment_success
-            confirm_payment_success(
-                out_trade_no=order_no,
-                transaction_id=f"mock_tx_{uuid.uuid4().hex[:20]}",
-                paid_amount_fen=payment.amount,
-                source="mock"
-            )
-        except Exception as e:
-            logger.exception(f"模拟支付成功处理失败: {e}")
-            return error(f"处理失败: {str(e)}", code=5007)
-
-        return ok(message="模拟支付成功，订单已进入出库流程")
+        """微信要求的失败应答格式（非 200 状态码触发微信重试）"""
+        return Response({'code': 'FAIL', 'message': message}, status=500)
 
 
 class PayRefundView(APIView):
@@ -554,6 +415,7 @@ class PayRefundView(APIView):
     
     POST /api/pay/refund
     """
+    authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = []
 
@@ -564,11 +426,47 @@ class PayRefundView(APIView):
         responses={200: PayRefundResponseSerializer}
     )
     def post(self, request):
+        # 接口安全鉴权拦截：必须为已登录用户或携带合法上位机设备 Token (Bearer <token>)
+        caller_device_sn = None
+        auth_header = (
+            request.headers.get('Authorization') or
+            request.META.get('HTTP_AUTHORIZATION') or ''
+        ).strip()
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0].lower() == 'bearer':
+                raw_token = parts[1]
+                # 1. 尝试验证上位机设备 JWT Token
+                from devices.authentication import verify_device_token
+                is_valid, payload_or_err = verify_device_token(raw_token)
+                if is_valid and isinstance(payload_or_err, dict):
+                    caller_device_sn = payload_or_err.get('device_sn')
+                else:
+                    # 2. 尝试验证用户 JWT Token
+                    try:
+                        from rest_framework_simplejwt.authentication import JWTAuthentication
+                        jwt_auth = JWTAuthentication()
+                        validated_token = jwt_auth.get_validated_token(raw_token)
+                        user = jwt_auth.get_user(validated_token)
+                        if user:
+                            request.user = user
+                    except Exception:
+                        pass
+
+        user_authed = bool(request.user and request.user.is_authenticated)
+        if not user_authed and not caller_device_sn:
+            return Response({
+                'code': 0,
+                'message': '未授权访问：请先登录或在请求头携带有效设备认证凭证 (Authorization: Bearer <token>)',
+                'data': {'success': False, 'success_orders': []}
+            }, status=401)
+
         data = request.data if isinstance(request.data, dict) else {}
         params = request.query_params
 
         device_sn = (
             data.get('device_sn') or params.get('device_sn') or
+            caller_device_sn or
             data.get('sn') or params.get('sn') or
             data.get('device_no') or params.get('device_no') or ''
         )
@@ -600,8 +498,8 @@ class PayRefundView(APIView):
 
         reason = str(data.get('reason') or params.get('reason') or '退款申请').strip()
 
-        # 场景 1：设备批量退款（传入 device_sn 或 退款单号列表）
-        if device_sn or refund_stock or refund_no_stock:
+        # 场景 1：设备批量退款（传入退款单号列表）
+        if refund_stock or refund_no_stock:
             if not device_sn:
                 sample_no = (refund_stock[0] if refund_stock else (refund_no_stock[0] if refund_no_stock else ''))
                 order_obj = OrderMain.objects.filter(order_no=sample_no).first()
@@ -653,16 +551,27 @@ class PayRefundView(APIView):
 
         try:
             order_qs = OrderMain.objects.prefetch_related('items').filter(order_no=order_no)
-            if request.user and request.user.is_authenticated:
-                order = order_qs.filter(user=request.user).first() or order_qs.first()
+            if caller_device_sn:
+                order = order_qs.filter(device__device_sn=caller_device_sn).first()
+            elif request.user and request.user.is_authenticated:
+                is_admin_user = (
+                    getattr(request.user, 'is_super_admin', False) or
+                    getattr(request.user, 'is_admin', False) or
+                    getattr(request.user, 'is_staff', False)
+                )
+                if is_admin_user:
+                    order = order_qs.first()
+                else:
+                    order = order_qs.filter(user=request.user).first()
             else:
-                order = order_qs.first()
+                order = None
+
             if not order:
                 return Response({
                     'code': 0,
-                    'message': '订单不存在',
+                    'message': '订单不存在或无权操作',
                     'data': {'success': False, 'success_orders': []}
-                }, status=404)
+                }, status=403)
         except Exception as e:
             return Response({
                 'code': 0,
@@ -695,6 +604,13 @@ class PayRefundView(APIView):
                     'restored_materials': restore_res.get('restored_materials', []) if restore_res else []
                 }
             })
+        except ValueError as e:
+            logger.warning(f"单单退款业务校验未通过: {e}")
+            return Response({
+                'code': 0,
+                'message': str(e),
+                'data': {'success': False, 'success_orders': []}
+            }, status=400)
         except Exception as e:
             logger.exception(f"单单退款异常: {e}")
             return Response({

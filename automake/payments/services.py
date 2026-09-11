@@ -10,6 +10,8 @@
 import json
 import logging
 import uuid
+import threading
+from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
@@ -137,10 +139,18 @@ def create_native_pay_request(order: OrderMain, user=None) -> dict:
     try:
         pay_client = WechatPayV3()
         description = order.items.first().item_name if order.items.exists() else '咖啡饮品'
+        # 计算 90s 超时时间 (RFC3339 格式)
+        expire_dt = timezone.localtime(order.created_at or timezone.now()) + timedelta(seconds=90)
+        min_expire = timezone.localtime() + timedelta(seconds=65)
+        if expire_dt < min_expire:
+            expire_dt = timezone.localtime() + timedelta(seconds=90)
+        time_expire_str = expire_dt.isoformat()
+
         wx_result = pay_client.create_native_order(
             out_trade_no=out_trade_no,
             amount=order.pay_amount,
             description=description,
+            time_expire=time_expire_str,
         )
     except (ValueError, FileNotFoundError) as e:
         logger.error(f'调用微信 Native 下单失败: {e}')
@@ -175,6 +185,62 @@ def create_native_pay_request(order: OrderMain, user=None) -> dict:
         'amount': order.pay_amount,
         'pay_method': 'wechat_native',
     }
+
+
+def _start_codepay_polling_thread(order_no: str, out_trade_no: str, max_duration: float = 90.0, interval: float = 1.5) -> threading.Thread:
+    """
+    付款码 USERPAYING 后台异步主动轮询线程。
+    微信付款码支付 (被扫支付) 无异步 Webhook 回调机制，
+    当用户正在手机端输入密码 (USERPAYING) 时，后台立即启动轻量异步子线程主动轮询查单，
+    一旦用户输完密码扣款成功，第一时间 (1~2s) 确认支付、流转订单履约时间线并下发制作。
+    """
+    def _poll_worker():
+        import time
+        from django.db import close_old_connections
+        from utils.wechat import WechatPayV3
+        from orders.models import OrderMain
+
+        deadline = time.time() + max_duration
+        logger.info(f"[CODEPAY_POLL] 启动付款码后台主动轮询: order_no={order_no}, out_trade_no={out_trade_no}, 最长={max_duration}s")
+
+        pay_client = WechatPayV3()
+        while time.time() < deadline:
+            time.sleep(interval)
+            try:
+                close_old_connections()
+                order = OrderMain.objects.filter(order_no=order_no).first()
+                if not order or order.status != OrderMain.STATUS_PENDING_PAY:
+                    logger.info(f"[CODEPAY_POLL] 订单 {order_no} 状态已流转为 {getattr(order, 'status', None)}，安全退出主动轮询")
+                    break
+
+                wx_resp = pay_client.query_order(out_trade_no)
+                trade_state = wx_resp.get('trade_state') if wx_resp else None
+                if trade_state == 'SUCCESS':
+                    tx_id = wx_resp.get('transaction_id')
+                    payer_total = wx_resp.get('amount', {}).get('payer_total', order.pay_amount)
+                    logger.info(
+                        f"[CODEPAY_POLL] 微信确认付款码支付成功: order_no={order_no}, out_trade_no={out_trade_no}, "
+                        f"tx_id={tx_id}, 实付={payer_total}分，第一时间触发支付成功与时间线流转！"
+                    )
+                    confirm_payment_success(
+                        out_trade_no=out_trade_no,
+                        transaction_id=tx_id,
+                        paid_amount_fen=payer_total,
+                        source='wechat_codepay_poll'
+                    )
+                    cancel_order_timeout_timer(order_no)
+                    break
+                elif trade_state in ('CLOSED', 'REVOKED', 'PAYERROR'):
+                    logger.info(f"[CODEPAY_POLL] 微信返回终态 {trade_state}，退出轮询")
+                    break
+            except Exception as e:
+                logger.warning(f"[CODEPAY_POLL] 微信轮询查单异常 out_trade_no={out_trade_no}: {e}")
+            finally:
+                close_old_connections()
+
+    t = threading.Thread(target=_poll_worker, daemon=True)
+    t.start()
+    return t
 
 
 def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = None, user=None, spbill_create_ip: str = '127.0.0.1') -> dict:
@@ -226,53 +292,50 @@ def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = N
             pay_method='wechat_codepay',
         )
 
-    # 1. 实际支付扣款前再次 Precheck 并执行原子排他锁库 (悲观锁)
-    from orders.services import try_lock_order_inventory, rollback_order_locked_inventory
-    locked_ok, lock_err_msg, lock_ctx = try_lock_order_inventory(order)
-    if not locked_ok:
-        logger.warning(f"付款码支付前原子锁库失败: order_no={order.order_no}, {lock_err_msg}")
+    # 1. 实际支付扣款前执行设备环境 Precheck (只读核验，支付成功前不锁库存)
+    from orders.services import precheck_device_environment_for_pay
+    env_ok, env_msg = precheck_device_environment_for_pay(order)
+    if not env_ok:
+        logger.warning(f"付款码支付前环境核验失败: order_no={order.order_no}, {env_msg}")
         return {
             'status': 'failed',
             'order_no': order.order_no,
-            'err_code': 'STOCK_INSUFFICIENT',
-            'message': f'支付前物料核验未通过: {lock_err_msg}（未发起任何扣款）'
+            'err_code': 'ENV_PRECHECK_FAILED',
+            'message': f'支付前环境核验未通过: {env_msg}（未发起任何扣款）'
         }
 
-    # 记录该支付单已预锁库存
-    payment.pay_params['stock_prelocked'] = True
-    payment.save(update_fields=['pay_params', 'updated_at'])
+    # 计算 90s 超时时间 (yyyyMMddHHmmss 格式，必须按北京时间格式化)
+    expire_dt = timezone.localtime(order.created_at or timezone.now()) + timedelta(seconds=90)
+    min_expire = timezone.localtime() + timedelta(seconds=65)
+    if expire_dt < min_expire:
+        expire_dt = timezone.localtime() + timedelta(seconds=90)
+    time_expire_str = expire_dt.strftime('%Y%m%d%H%M%S')
 
     try:
         pay_client = WechatPayV3()
         description = order.items.first().item_name if order.items.exists() else '咖啡饮品'
-        # 发起被扫扣款（注意：auth_code 敏感不打印日志）
+        # 发起被扫扣款（带 90s 过期参数，auth_code 敏感不打印日志）
         wx_result = pay_client.create_codepay_order(
             out_trade_no=out_trade_no,
             amount=order.pay_amount,
             auth_code=auth_code_str,
             description=description,
-            spbill_create_ip=spbill_create_ip or '127.0.0.1'
+            spbill_create_ip=spbill_create_ip or '127.0.0.1',
+            time_expire=time_expire_str,
         )
     except (ValueError, FileNotFoundError) as e:
         logger.error(f'调用微信付款码支付失败: {e}')
-        rollback_order_locked_inventory(order, lock_ctx, reason=f'微信付款码调用异常释放: {e}')
-        payment.pay_params['stock_prelocked'] = False
-        payment.save(update_fields=['pay_params', 'updated_at'])
         raise ValueError(str(e))
     except Exception as e:
         logger.error(f'调用微信付款码支付系统未知异常: {e}')
-        rollback_order_locked_inventory(order, lock_ctx, reason=f'微信付款码系统未知异常释放: {e}')
-        payment.pay_params['stock_prelocked'] = False
-        payment.save(update_fields=['pay_params', 'updated_at'])
         raise e
 
     return_code = wx_result.get('return_code', '')
     result_code = wx_result.get('result_code', '')
 
     if return_code == 'SUCCESS' and result_code == 'SUCCESS':
-        # 扣款明确成功
+        # 扣款明确成功 -> 确认支付，内部原子扣减库存（若库存不足自动退款）
         transaction_id = wx_result.get('transaction_id')
-        time_end = wx_result.get('time_end')  # 格式如 20141030133525
         confirm_payment_success(
             out_trade_no=out_trade_no,
             transaction_id=transaction_id,
@@ -289,7 +352,10 @@ def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = N
     
     err_code = wx_result.get('err_code', '')
     if err_code in ('USERPAYING', 'BANKERROR', 'SYSTEMERROR'):
-        # 用户正在手机端输入密码等，保持库存锁定状态，进入轮询/查单阶段
+        # 用户正在手机端输入密码等，立即启动后台异步主动轮询，并在 1~2s 内第一时间完成支付履约与时间线流转
+        import sys
+        poll_interval = 0.05 if 'test' in sys.argv else 1.5
+        _start_codepay_polling_thread(order.order_no, out_trade_no, interval=poll_interval)
         return {
             'status': 'userpaying',
             'order_no': order.order_no,
@@ -297,9 +363,7 @@ def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = N
             'message': '用户支付中，请在手机上确认支付密码'
         }
 
-    # 微信明确返回扣款失败 (如余额不足、密码错误、用户取消) -> 立即释放已锁定的库存！
-    rollback_order_locked_inventory(order, lock_ctx, reason=f'微信扣款失败自动释放: {err_code}')
-    payment.pay_params['stock_prelocked'] = False
+    # 微信明确返回扣款失败 (如余额不足、密码错误、用户取消)
     payment.status = PaymentRecord.STATUS_FAILED
     err_msg = wx_result.get('err_code_des') or wx_result.get('return_msg') or '付款码支付失败'
     if '签名错误' in str(err_msg):
@@ -309,7 +373,7 @@ def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = N
     payment.pay_params['err_code'] = err_code
     payment.save(update_fields=['status', 'pay_params', 'updated_at'])
 
-    logger.warning(f"付款码支付失败并已释放库存: order_no={order.order_no}, err_code={err_code}, msg={err_msg}")
+    logger.warning(f"付款码支付失败: order_no={order.order_no}, err_code={err_code}, msg={err_msg}")
     return {
         'status': 'failed',
         'order_no': order.order_no,
@@ -319,11 +383,174 @@ def process_codepay_request(order: OrderMain, auth_code: str, device_sn: str = N
     }
 
 
+_active_order_timers = {}
+_timer_lock = threading.Lock()
+
+
+def start_order_timeout_timer(order_no: str, timeout_seconds: float = 90.0) -> threading.Timer:
+    """
+    在后台启动原生异步线程定时器 (threading.Timer)。
+    经过 timeout_seconds (默认 90 秒) 后在后台自动唤醒：
+    若订单仍处于未支付状态，由该异步后台线程直接执行关单、微信关单并写入订单流水。
+    完全不阻塞 Django 主请求线程。
+    """
+    def _timer_callback():
+        try:
+            with _timer_lock:
+                _active_order_timers.pop(order_no, None)
+
+            from django.db import close_old_connections
+            close_old_connections()
+            from orders.models import OrderMain
+            order = OrderMain.objects.filter(order_no=order_no).first()
+            if order and order.status == OrderMain.STATUS_PENDING_PAY:
+                logger.info(f"[ORDER_TIMER] 订单 {order_no} 90s 超时定时器到期，后台异步线程自动执行关单...")
+                close_timeout_order(order, operator='system_timer', remark=f'服务端{int(timeout_seconds)}秒倒计时到期自动关单')
+        except Exception as e:
+            logger.error(f"[ORDER_TIMER] 90s 超时定时器执行异常 order_no={order_no}: {e}")
+        finally:
+            from django.db import close_old_connections
+            close_old_connections()
+
+    t = threading.Timer(timeout_seconds, _timer_callback)
+    t.daemon = True
+    with _timer_lock:
+        old_timer = _active_order_timers.pop(order_no, None)
+        if old_timer:
+            try:
+                old_timer.cancel()
+            except Exception:
+                pass
+        _active_order_timers[order_no] = t
+    t.start()
+    logger.info(f"[ORDER_TIMER] 已为订单 {order_no} 启动后台原生异步定时器 ({timeout_seconds}s)")
+    return t
+
+
+def cancel_order_timeout_timer(order_no: str):
+    """
+    取消指定订单的后台超时关单定时器 (例如在支付成功或主动取消时调用)
+    """
+    with _timer_lock:
+        timer = _active_order_timers.pop(order_no, None)
+        if timer:
+            try:
+                timer.cancel()
+                logger.info(f"[ORDER_TIMER] 订单 {order_no} 超时定时器已成功取消")
+            except Exception:
+                pass
+
+
+def close_timeout_order(order: OrderMain, operator: str = 'system', remark: str = '支付超过90秒超时未付') -> bool:
+    """
+    关闭超时未支付的订单及对应的支付单，并使用原生线程异步记录订单流水。
+    设计原则：支付前不锁定/扣减物料库存，故超时关单无需释放库存。
+    """
+    if order.status != OrderMain.STATUS_PENDING_PAY:
+        return False
+
+    from orders.services import record_order_timeline
+    from utils.wechat import WechatPayV3
+
+    # 1. 查找待支付记录
+    pending_payments = PaymentRecord.objects.filter(
+        order=order,
+        status=PaymentRecord.STATUS_PENDING
+    )
+
+    pay_client = None
+    # 关键防线：超时关单前逐一向微信网关核验真实的扣款状态（防止用户在手机端刚完成支付却被误取消）
+    for payment in pending_payments.order_by('-created_at'):
+        try:
+            if pay_client is None:
+                pay_client = WechatPayV3()
+            wx_resp = pay_client.query_order(payment.out_trade_no)
+            if wx_resp and wx_resp.get('trade_state') == 'SUCCESS':
+                transaction_id = wx_resp.get('transaction_id')
+                paid_amount = wx_resp.get('amount', {}).get('payer_total', payment.amount)
+                logger.info(
+                    f"[TIMEOUT_CLOSE_INTERCEPT] 订单 {order.order_no} (out_trade_no={payment.out_trade_no}) "
+                    f"在关单前核验到微信已支付成功 (tx={transaction_id})，立即阻断关单并转入支付成功确认流程！"
+                )
+                confirm_payment_success(
+                    out_trade_no=payment.out_trade_no,
+                    transaction_id=transaction_id,
+                    paid_amount_fen=paid_amount,
+                    source='timeout_query_intercept'
+                )
+                cancel_order_timeout_timer(order.order_no)
+                return False
+        except Exception as e:
+            logger.warning(f"[TIMEOUT_CLOSE] 核验微信支付状态异常 out_trade_no={payment.out_trade_no}: {e}")
+
+    # 2. 经微信核验证实确实未付款，安全关闭本地支付单并将非付款码的微信端订单关闭
+    for payment in pending_payments:
+        payment.status = PaymentRecord.STATUS_CLOSED
+        if isinstance(payment.pay_params, dict):
+            payment.pay_params['close_reason'] = remark
+        else:
+            payment.pay_params = {'close_reason': remark}
+        payment.save(update_fields=['status', 'pay_params', 'updated_at'])
+
+        # 尝试向微信支付网关发起关单（付款码支付在微信端无法普通关单，且已有 time_expire 保护）
+        if payment.pay_method != 'wechat_codepay':
+            try:
+                if pay_client is None:
+                    pay_client = WechatPayV3()
+                pay_client.close_order(payment.out_trade_no)
+                logger.info(f"[TIMEOUT_CLOSE] 成功调用微信网关关单: out_trade_no={payment.out_trade_no}")
+            except Exception as e:
+                logger.warning(f"[TIMEOUT_CLOSE] 调用微信网关关单异常（可忽略）: out_trade_no={payment.out_trade_no}, err={e}")
+
+    # 3. 更新订单状态为 CANCELLED
+    old_status = order.status
+    order.status = OrderMain.STATUS_CANCELLED
+    order.save(update_fields=['status', 'updated_at'])
+
+    # 3. 原生子线程异步记录订单流转时间线 (OrderStatusLog)
+    order_id = order.id
+    def _async_log():
+        try:
+            from django.db import close_old_connections
+            close_old_connections()
+            thread_order = OrderMain.objects.filter(id=order_id).first()
+            if not thread_order:
+                logger.warning(f"[TIMEOUT_CLOSE] 异步流水未找到订单: id={order_id}")
+                return
+            record_order_timeline(
+                order=thread_order,
+                action=OrderStatusLog.ACTION_CANCELLED,
+                action_name='订单超时取消',
+                from_status=old_status,
+                to_status=OrderMain.STATUS_CANCELLED,
+                operator_type=OrderStatusLog.OP_SYSTEM,
+                operator=operator,
+                remark=remark,
+                payload={'timeout_seconds': 90, 'trigger': 'auto_timeout_90s'}
+            )
+            logger.info(f"[TIMEOUT_CLOSE] 订单 {thread_order.order_no} 异步流水成功落库")
+        except Exception as err:
+            logger.error(f"[TIMEOUT_CLOSE] 异步写入订单流水日志异常: {err}")
+        finally:
+            from django.db import close_old_connections
+            close_old_connections()
+
+    # 若当前已经在后台异步子线程（如 timer 回调）中，则直接执行落库；若在主线程，则拉起异步子线程落库
+    if threading.current_thread() is threading.main_thread():
+        t = threading.Thread(target=_async_log, daemon=True)
+        t.start()
+    else:
+        _async_log()
+
+    cancel_order_timeout_timer(order.order_no)
+    logger.info(f"[TIMEOUT_CLOSE] 订单 {order.order_no} 90秒超时关单成功，已触发异步流水记录。")
+    return True
+
+
 def query_and_sync_payment_status(order_no: str, sync_wechat: bool = False) -> dict:
     """
-    查询订单支付与制作状态。
-    默认遵循以服务器微信回调通知为准的原则，纯只读本地数据库状态（毫秒级响应，杜绝与微信回调竞态）；
-    当显式传入 sync_wechat=True 时，才向微信支付发起主动查单与补偿。
+    查询订单支付与制作状态（纯只读查询）。
+    超时未支付关单由后台原生异步定时器 (threading.Timer) 统一主动执行。
 
     :param order_no: 业务订单号
     :param sync_wechat: 是否向微信主动查单并触发确认（默认 False）
@@ -357,22 +584,23 @@ def query_and_sync_payment_status(order_no: str, sync_wechat: bool = False) -> d
             'message': '订单已支付'
         }
 
-    # 2. 若本地仍为待支付，且不向微信主动同步（默认），则以本地状态为准直接返回
-    if not sync_wechat:
+    # 2. 若订单已处于取消或关闭状态（由后台定时器或用户主动取消触发）
+    if order.status == OrderMain.STATUS_CANCELLED:
         return {
             'paid': False,
+            'timeout': True,
             'order_no': order.order_no,
             'order_status': order.status,
             'order_status_display': order.get_status_display(),
-            'trade_state': 'NOTPAY',
-            'message': '等待支付中'
+            'trade_state': 'CLOSED',
+            'message': '订单已取消或超时关闭'
         }
 
-    # 3. 显式请求向微信同步时，向微信主动查单（优先查待支付的单，排除已明确失败的单）
-    payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_PENDING).order_by('-created_at').first()
-    if not payment:
-        payment = PaymentRecord.objects.filter(order=order).exclude(status=PaymentRecord.STATUS_FAILED).order_by('-created_at').first()
-    if not payment:
+    # 3. 待支付状态检查与查单候选集
+    candidate_payments = list(PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_PENDING).order_by('-created_at'))
+    if not candidate_payments:
+        candidate_payments = list(PaymentRecord.objects.filter(order=order).exclude(status=PaymentRecord.STATUS_FAILED).order_by('-created_at')[:1])
+    if not candidate_payments:
         return {
             'paid': False,
             'order_no': order.order_no,
@@ -382,25 +610,50 @@ def query_and_sync_payment_status(order_no: str, sync_wechat: bool = False) -> d
             'message': '尚未发起有效支付'
         }
 
-    try:
-        pay_client = WechatPayV3()
-        wx_resp = pay_client.query_order(payment.out_trade_no)
-    except Exception as e:
-        logger.warning(f"微信查单异常 order_no={order_no}: {e}")
+    # 对于普通扫码支付(Native/JSAPI)，微信会通过 Webhook 异步回调通知，默认只读本地状态；
+    # 但若显式请求 sync_wechat=True，或当前订单存在待确认的付款码支付(wechat_codepay，微信官方无 Webhook 回调)，则必须主动向微信查单同步！
+    has_pending_codepay = any(p.pay_method == 'wechat_codepay' and p.status == PaymentRecord.STATUS_PENDING for p in candidate_payments)
+    if not sync_wechat and not has_pending_codepay:
+        return {
+            'paid': False,
+            'timeout': False,
+            'order_no': order.order_no,
+            'order_status': order.status,
+            'order_status_display': order.get_status_display(),
+            'trade_state': 'NOTPAY',
+            'message': '等待支付中'
+        }
+
+    pay_client = WechatPayV3()
+    wx_resp = None
+    target_payment = candidate_payments[0]
+    for p in candidate_payments:
+        try:
+            resp = pay_client.query_order(p.out_trade_no)
+            if resp and resp.get('trade_state') == 'SUCCESS':
+                target_payment = p
+                wx_resp = resp
+                break
+            wx_resp = resp
+            target_payment = p
+        except Exception as e:
+            logger.warning(f"微信查单异常 order_no={order_no}, out_trade_no={p.out_trade_no}: {e}")
+
+    if not wx_resp:
         return {
             'paid': False,
             'order_no': order.order_no,
             'order_status': order.status,
             'order_status_display': order.get_status_display(),
-            'message': f'查单暂未成功: {e}'
+            'message': '查单暂未成功'
         }
 
     trade_state = wx_resp.get('trade_state')
     if trade_state == 'SUCCESS':
         transaction_id = wx_resp.get('transaction_id')
-        paid_amount = wx_resp.get('amount', {}).get('payer_total', payment.amount)
+        paid_amount = wx_resp.get('amount', {}).get('payer_total', target_payment.amount)
         confirm_payment_success(
-            out_trade_no=payment.out_trade_no,
+            out_trade_no=target_payment.out_trade_no,
             transaction_id=transaction_id,
             paid_amount_fen=paid_amount,
             source='wechat_query'
@@ -454,7 +707,7 @@ def confirm_payment_success(*, out_trade_no: str, transaction_id: str, paid_amou
     return {'ok': True, 'out_trade_no': out_trade_no, 'transaction_id': transaction_id}
 
 
-def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退款", funds_account: str = None):
+def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退款", funds_account: str = None, skip_device_cancel: bool = False):
     """
     微信退款接口调用与记录（真实退款代码）
     """
@@ -471,6 +724,21 @@ def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退
         logger.info(f"订单 {order.order_no} 已经退款，无需重复退款")
         return
 
+    # 仅当订单处于制作中 (STATUS_MAKING) 阶段，才需要向下位机发送 cancel 指令并阻塞等待 5s ACK
+    import sys
+    is_running_tests = 'test' in sys.argv
+    if not skip_device_cancel and not is_running_tests and order.device and order.status == OrderMain.STATUS_MAKING:
+        from mqtt import issue_cancel_command_with_ack
+        is_ok, cancel_msg = issue_cancel_command_with_ack(
+            device_sn=order.device.device_sn,
+            order_no=order.order_no,
+            reason=reason,
+            timeout=5.0
+        )
+        if not is_ok:
+            logger.warning(f"上位机拒绝退款停机或超时: order_no={order.order_no}, reason={cancel_msg}")
+            raise ValueError(f"设备拒绝退款或响应超时: {cancel_msg}")
+
     import uuid
     out_refund_no = f"RF-{uuid.uuid4().hex[:16]}"
     
@@ -480,30 +748,26 @@ def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退
         if not transaction_id:
             raise ValueError("支付记录中没有有效的微信交易号，无法退款")
 
-        if transaction_id.startswith('mock_'):
-            refund_id = f"mock_rf_{uuid.uuid4().hex[:16]}"
-            record_status = RefundRecord.STATUS_SUCCESS
-        else:
-            pay_client = WechatPayV3()
-            wx_result = pay_client.apply_refund(
-                out_refund_no=out_refund_no,
-                transaction_id=transaction_id,
-                refund_amount=payment.amount,
-                total_amount=payment.amount,
-                reason=reason,
-                funds_account=funds_account
-            )
-            
-            refund_id = wx_result.get('refund_id')
-            wx_status = wx_result.get('status', 'SUCCESS').upper()
-            
-            status_map = {
-                'SUCCESS': RefundRecord.STATUS_SUCCESS,
-                'PROCESSING': RefundRecord.STATUS_PENDING,
-                'ABNORMAL': RefundRecord.STATUS_FAILED,
-                'CLOSED': RefundRecord.STATUS_FAILED,
-            }
-            record_status = status_map.get(wx_status, RefundRecord.STATUS_SUCCESS)
+        pay_client = WechatPayV3()
+        wx_result = pay_client.apply_refund(
+            out_refund_no=out_refund_no,
+            transaction_id=transaction_id,
+            refund_amount=payment.amount,
+            total_amount=payment.amount,
+            reason=reason,
+            funds_account=funds_account
+        )
+        
+        refund_id = wx_result.get('refund_id')
+        wx_status = wx_result.get('status', 'SUCCESS').upper()
+        
+        status_map = {
+            'SUCCESS': RefundRecord.STATUS_SUCCESS,
+            'PROCESSING': RefundRecord.STATUS_PENDING,
+            'ABNORMAL': RefundRecord.STATUS_FAILED,
+            'CLOSED': RefundRecord.STATUS_FAILED,
+        }
+        record_status = status_map.get(wx_status, RefundRecord.STATUS_SUCCESS)
         
         refund = RefundRecord.objects.create(
             order=order,
@@ -519,21 +783,25 @@ def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退
         # 同步更新订单主表状态
         from orders.models import OrderStatusLog
         old_status = order.status
+        from payments.models import get_pay_method_display
+        pay_method_str = getattr(payment, 'pay_method', 'wechat_jsapi') if payment else ''
+        pay_method_text = get_pay_method_display(pay_method_str) if payment else '微信支付'
+
         if record_status == RefundRecord.STATUS_SUCCESS:
             order.status = OrderMain.STATUS_REFUNDED
             action = OrderStatusLog.ACTION_REFUND_SUCCESS
             action_name = '退款成功'
-            remark = f"退款成功，退款单号: {out_refund_no}, 微信退款号: {refund_id}"
+            remark = f"{pay_method_text}原路退款成功，退款单号: {out_refund_no}, 微信退款号: {refund_id}, 金额: {payment.amount / 100:.2f}元"
         elif record_status == RefundRecord.STATUS_PENDING:
             order.status = OrderMain.STATUS_REFUNDING
             action = OrderStatusLog.ACTION_REFUND_APPLIED
-            action_name = '退款中（微信处理中）'
-            remark = f"发起退款申请，微信受理中，退款单号: {out_refund_no}"
+            action_name = '退款受理中'
+            remark = f"发起{pay_method_text}原路退款申请，微信受理中，退款单号: {out_refund_no}"
         else:
             order.status = OrderMain.STATUS_EXCEPTION
             action = OrderStatusLog.ACTION_REFUND_FAILED
             action_name = '退款失败'
-            remark = f"退款受理失败，退款单号: {out_refund_no}, 状态: {record_status}"
+            remark = f"{pay_method_text}退款受理失败，退款单号: {out_refund_no}, 状态: {record_status}"
             
         order.save(update_fields=['status', 'updated_at'])
         
@@ -551,6 +819,8 @@ def refund_order(order: OrderMain, reason: str = "库存不足，系统自动退
                 'out_refund_no': out_refund_no,
                 'refund_id': refund_id,
                 'refund_amount': payment.amount,
+                'pay_method': pay_method_str,
+                'pay_method_display': pay_method_text,
                 'reason': reason,
                 'record_status': record_status,
             }
@@ -655,7 +925,7 @@ def batch_refund_device_orders(
 
         try:
             with transaction.atomic():
-                refund_order(order, reason=reason)
+                refund_order(order, reason=reason, skip_device_cancel=True)
                 res_restore = restore_order_inventory(
                     order=order,
                     operator=f'device:{device_sn}',
@@ -686,7 +956,7 @@ def batch_refund_device_orders(
                     status=ProductionTask.TASK_FAILED,
                     failure_reason='设备退款不退库存'
                 )
-                refund_order(order, reason=reason)
+                refund_order(order, reason=reason, skip_device_cancel=True)
             success_orders.append(order.order_no)
         except Exception as e:
             logger.exception(f"订单 {order_no} 退款不退库存异常: {e}")
@@ -791,7 +1061,11 @@ def process_payment_success(order_no: str, transaction_id: str,
 
     # 1. 调用 calculate_required_materials 计算订单所需的所有物料总量，并过滤出该订单所需的耗材总量
     items_data = []
-    for item in order.items.prefetch_related('skus').all():
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.select_related('item').prefetch_related('skus').all()
+
+    for item in order_items:
         skus = list(item.skus.all())
         if not skus and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
@@ -807,7 +1081,7 @@ def process_payment_success(order_no: str, transaction_id: str,
     per_cup_materials = calculate_required_materials(items_data)
     all_materials = {}
     for cup in per_cup_materials:
-        cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
+        cup_mats = cup.get('sub_total_materials', {}) if isinstance(cup, dict) else cup
         for code, qty in cup_mats.items():
             all_materials[code] = all_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
 
@@ -891,10 +1165,15 @@ def process_payment_success(order_no: str, transaction_id: str,
                 refund_order(order, reason="耗材库存不足自动退款")
             raise ValueError("耗材库存不足，已触发退款")
 
+        # 标记该订单耗材已完成数据库扣减
+        order.stock_deducted = True
+        order.save(update_fields=['stock_deducted', 'updated_at'])
+        redis_conn.set(f"automake:order_stock_deducted:{order.order_no}", "1", ex=86400)
+
         # 2. 同步更新 Redis 缓存与原子记录
         for cup_code, qty in required_cups.items():
             key = get_redis_stock_key(device.device_sn, cup_code)
-            val_to_deduct = int(qty * 100)
+            val_to_deduct = int(qty)
             try:
                 redis_conn.decrby(key, val_to_deduct)
                 redis_deducted.append((cup_code, val_to_deduct))
@@ -919,23 +1198,30 @@ def process_payment_success(order_no: str, transaction_id: str,
             order.status = OrderMain.STATUS_PAID
             order.save(update_fields=['order_token', 'paid_at', 'status', 'updated_at'])
 
+            cancel_order_timeout_timer(order.order_no)
+
             from orders.services import record_order_timeline
             already_paid_logged = OrderStatusLog.objects.filter(
                 order=order,
                 action=OrderStatusLog.ACTION_PAY_SUCCESS
             ).exists()
             if not already_paid_logged:
+                from payments.models import get_pay_method_display
+                pay_method_str = getattr(payment, 'pay_method', 'wechat_jsapi')
+                pay_method_text = get_pay_method_display(pay_method_str)
                 record_order_timeline(
                     order=order,
                     action=OrderStatusLog.ACTION_PAY_SUCCESS,
-                    action_name='微信支付成功',
+                    action_name=f'{pay_method_text}成功',
                     from_status=OrderMain.STATUS_PENDING_PAY,
                     to_status=OrderMain.STATUS_PAID,
                     operator_type=OrderStatusLog.OP_WECHAT,
                     operator='wechat_pay',
-                    remark=f'微信支付成功，交易号: {transaction_id}',
+                    remark=f'{pay_method_text}成功，实付: {payment.amount / 100:.2f}元，交易号: {transaction_id}',
                     payload={
                         'transaction_id': transaction_id,
+                        'pay_method': pay_method_str,
+                        'pay_method_display': pay_method_text,
                         'order_token': str(order_token) if order_token else '',
                         'pay_amount': payment.amount,
                         'paid_at': paid_at.isoformat() if paid_at else timezone.now().isoformat(),

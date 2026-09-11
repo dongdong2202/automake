@@ -81,5 +81,5 @@ class UserAdmin(ReadOnlyStoreScopedUserAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(ReadOnlyStoreScopedUserAdmin):
-    list_display = ['user', 'nickname', 'points', 'created_at']
+    list_display = ['user', 'nickname', 'created_at']
     search_fields = ['user__openid', 'nickname']

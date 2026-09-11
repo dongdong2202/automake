@@ -155,9 +155,9 @@ class PickupCode(models.Model):
         verbose_name='关联订单'
     )
 
-    # 6 位数字取餐码（DB 层面 unique 保证唯一）
+    # 取餐码（支持当日递增 0001/0002，由 OneToOneField 保证每单唯一，加普通索引索引查询）
     code = models.CharField(
-        max_length=8, unique=True,
+        max_length=16,
         default=generate_pickup_code,
         db_index=True, verbose_name='取餐码'
     )

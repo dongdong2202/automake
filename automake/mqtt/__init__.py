@@ -93,8 +93,11 @@ def _on_connect(client, userdata, flags, reason_code, properties):
     # 订阅所有设备状态、物料及指令 Topic
     try:
         client.subscribe('c2s/shop/+/state/selfPack', qos=1)
+        client.subscribe('c2s/shop/+/state/command', qos=1)
         client.subscribe('automake/device/+/status', qos=1)
-        logger.info('MQTT 标准主题订阅已注册完成: status, state, material, selfPack, heart')
+        client.subscribe('automake/device/+/state', qos=1)
+        client.subscribe('automake/device/+/command', qos=1)
+        logger.info('MQTT 标准主题订阅已注册完成: status, state, material, selfPack, command, heart')
     except Exception as e:
         logger.error(f'MQTT 注册订阅失败: {e}')
 
@@ -119,9 +122,21 @@ def _on_message(client, userdata, msg):
 
     logger.debug(f'MQTT 收到消息，topic={topic}')
 
-    # 解析 Topic，格式：automake/device/{device_sn}/{type}
+    # 优先拦截上位机取消制作应答 (cancel_ack)
+    if isinstance(payload, dict):
+        order_no_ack = payload.get('order_no') or payload.get('orderNo')
+        msg_t = str(payload.get('type') or payload.get('action') or '').lower()
+        if order_no_ack and (msg_t in ('cancel_ack', 'cancel_reply') or (msg_t == 'cancel' and 'status' in payload)):
+            try:
+                from django_redis import get_redis_connection
+                r = get_redis_connection('default')
+                r.set(f"automake:cancel_ack:{order_no_ack}", json.dumps(payload), ex=30)
+                logger.info(f"[CANCEL_ACK] 收到上位机取消制作应答: order_no={order_no_ack}, status={payload.get('status')}")
+            except Exception as e_ack:
+                logger.warning(f"记录 cancel_ack 到 Redis 失败: {e_ack}")
+
+    # 解析 Topic，格式：automake/device/{device_sn}/{type} 或 c2s/shop/{device_sn}/state/{type}
     parts = topic.split('/')
-    print(topic)
     
     if len(parts) < 4:
         return
@@ -389,4 +404,74 @@ def _handle_device_command_intercept(device_sn: str, topic: str, payload: dict):
         logger.info(f"[SIMULATOR] 拦截并缓存设备指令: device_sn={device_sn}, topic={topic}")
     except Exception as e:
         logger.error(f"[SIMULATOR] 缓存指令异常: {e}")
+
+
+def issue_cancel_command_with_ack(device_sn: str, order_no: str, reason: str = "用户申请退款取消", timeout: float = 5.0) -> tuple:
+    """
+    向上位机下发制作取消命令，并同步等待上位机 ACK 应答 (超时 5 秒)。
+
+    报文格式:
+    {
+        "type": "cancel",
+        "order_no": order_no,
+        "reason": reason,
+        "ts": 1719042915000
+    }
+    :return: (is_ok: bool, message: str)
+    """
+    import time
+    from django_redis import get_redis_connection
+    redis_conn = get_redis_connection("default")
+    ack_key = f"automake:cancel_ack:{order_no}"
+    redis_conn.delete(ack_key)
+
+    ts = int(time.time() * 1000)
+    payload = {
+        "type": "cancel",
+        "order_no": str(order_no),
+        "reason": str(reason),
+        "ts": ts
+    }
+
+    topic = f's2c/shop/{device_sn}/state/command'
+    try:
+        client = get_mqtt_client()
+        result = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            logger.error(f'MQTT cancel 指令发布失败, rc={result.rc}, topic={topic}')
+            return False, f"MQTT cancel 指令发布失败 (rc={result.rc})"
+        logger.info(f"MQTT cancel 指令已下发: device_sn={device_sn}, order_no={order_no}, 阻塞等待上位机应答(超时{timeout}s)...")
+    except Exception as e:
+        logger.exception(f"MQTT 发送 cancel 异常: {e}")
+        return False, f"网络通讯异常: {e}"
+
+    # 轮询等待应答 (最多 timeout 秒)
+    start_time = time.time()
+    while (time.time() - start_time) < timeout:
+        ack_val = redis_conn.get(ack_key)
+        if ack_val:
+            try:
+                if isinstance(ack_val, bytes):
+                    ack_val = ack_val.decode('utf-8')
+                ack_data = json.loads(ack_val)
+                status = str(ack_data.get('status', '')).lower()
+                code = str(ack_data.get('code', ''))
+                result = str(ack_data.get('result', '')).lower()
+                data_val = str(ack_data.get('data', ''))
+                # 支持 1, ok, success, true 等上位机允许取消的应答标识
+                if status in ('ok', 'success', 'true', '1') or code in ('1', '0', 'ok') or result in ('ok', 'success', 'true', '1') or data_val in ('1', 'ok', 'true'):
+                    logger.info(f"上位机同意取消制作: order_no={order_no}")
+                    return True, "ok"
+                else:
+                    refuse_reason = ack_data.get('reason') or ack_data.get('message') or '上位机拒绝取消'
+                    logger.warning(f"上位机拒绝取消制作: order_no={order_no}, reason={refuse_reason}")
+                    return False, refuse_reason
+            except Exception as parse_err:
+                logger.warning(f"解析上位机 cancel_ack 失败: {parse_err}")
+                return False, f"上位机应答解析异常: {parse_err}"
+        time.sleep(0.1)
+
+    logger.warning(f"上位机取消响应超时 ({timeout}s): order_no={order_no}")
+    return False, f"上位机未在 {int(timeout)} 秒内响应取消，拒绝退款"
+
 

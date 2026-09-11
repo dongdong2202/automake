@@ -642,16 +642,17 @@ class MaterialForecastAnalyticsView(APIView):
 
     def get(self, request):
         seven_days_ago = timezone.now() - datetime.timedelta(days=7)
-        materials = Material.objects.all()
+        # 批量聚合所有物料过去 7 天出库总量，单次查询搞定 (消除 N+1)
+        recent_outs = InventoryRecord.objects.filter(
+            record_type='out',
+            created_at__gte=seven_days_ago
+        ).values('material_id').annotate(total=Sum('quantity'))
+        recent_out_map = {r['material_id']: r['total'] for r in recent_outs}
 
+        materials = Material.objects.all()
         results = []
         for m in materials:
-            recent_out = InventoryRecord.objects.filter(
-                material=m,
-                record_type='out',
-                created_at__gte=seven_days_ago
-            ).aggregate(total=Sum('quantity'))['total'] or 0
-
+            recent_out = recent_out_map.get(m.id, 0) or 0
             avg_daily = float(recent_out) / 7.0
             qty = float(m.quantity)
 
@@ -717,27 +718,25 @@ class CustomerFrequencyAnalyticsView(APIView):
     permission_classes = [IsAdmin]
 
     def get(self, request):
-        user_orders = OrderMain.objects.filter(
+        from django.db.models import Case, When, IntegerField, Sum, Count
+
+        valid_orders = OrderMain.objects.filter(
             status__in=[OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING, OrderMain.STATUS_DONE]
-        ).values('user_id').annotate(order_count=Count('id'))
+        )
+        aggregated = valid_orders.values('user_id').annotate(order_count=Count('id')).aggregate(
+            tier_1=Sum(Case(When(order_count=1, then=1), default=0, output_field=IntegerField())),
+            tier_2_3=Sum(Case(When(order_count__gte=2, order_count__lte=3, then=1), default=0, output_field=IntegerField())),
+            tier_4_9=Sum(Case(When(order_count__gte=4, order_count__lte=9, then=1), default=0, output_field=IntegerField())),
+            tier_10_plus=Sum(Case(When(order_count__gte=10, then=1), default=0, output_field=IntegerField())),
+            total_users=Count('user_id')
+        )
 
-        tier_1 = 0    # 1次
-        tier_2_3 = 0  # 2-3次
-        tier_4_9 = 0  # 4-9次
-        tier_10_plus = 0  # 10次以上
+        tier_1 = aggregated.get('tier_1') or 0
+        tier_2_3 = aggregated.get('tier_2_3') or 0
+        tier_4_9 = aggregated.get('tier_4_9') or 0
+        tier_10_plus = aggregated.get('tier_10_plus') or 0
+        total = aggregated.get('total_users') or 1
 
-        for u in user_orders:
-            c = u['order_count']
-            if c == 1:
-                tier_1 += 1
-            elif c <= 3:
-                tier_2_3 += 1
-            elif c <= 9:
-                tier_4_9 += 1
-            else:
-                tier_10_plus += 1
-
-        total = len(user_orders) or 1
         results = [
             {'tier': '1次尝鲜', 'count': tier_1, 'percentage': round(tier_1 / total * 100, 1)},
             {'tier': '2-3次回购', 'count': tier_2_3, 'percentage': round(tier_2_3 / total * 100, 1)},

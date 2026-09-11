@@ -28,7 +28,7 @@ class DeviceMonitorSnapshot(models.Model):
     """
 
     device_sn = models.CharField(
-        max_length=128, db_index=True,
+        max_length=128, unique=True, db_index=True,
         verbose_name='设备序列号'
     )
     # 整机健康：false 表示存在异常，应显示红色警告或闪烁

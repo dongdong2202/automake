@@ -238,6 +238,7 @@ class InventoryRecord(models.Model):
     expiration_date = models.DateField(
         null=True, 
         blank=True, 
+        db_index=True,
         verbose_name="批次过期时间", 
         help_text="进货/入库时若留空，cup类默认3年，其他物料默认6个月"
     )

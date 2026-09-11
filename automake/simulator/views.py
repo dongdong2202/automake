@@ -469,13 +469,19 @@ def simulator_diagnostics_api(request):
 def simulator_kiosk_view(request):
     """
     渲染上位机触控终端 (Kiosk) 模拟界面。
-    默认设备: sn001, 注册码: sn001, 关联门店: 北京1店 (100000)
+    默认设备: sn001, 注册码: sn001, 关联门店: 动态从设备获取，兜底北京1店 (100000)
     """
+    from devices.models import Device
+    from stores.models import Store
+    device = Device.objects.filter(device_sn='sn001').first()
+    store = device.store if (device and device.store) else Store.objects.filter(id=100000).first()
+    store_id = store.id if store else 100000
+    store_name = store.name if store else '北京1店'
     context = {
         'device_sn': 'sn001',
         'key_code': 'sn001',
-        'store_id': 100000,
-        'store_name': '北京1店',
+        'store_id': store_id,
+        'store_name': store_name,
     }
     return render(request, 'simulator/kiosk.html', context)
 
@@ -485,6 +491,7 @@ def simulator_seed_kiosk_menu_api(request):
     """
     一键初始化 0.2 元以内的模拟菜单及 sn001 上位机基础库存。
     商品价格严格控制在 0.20 元以内（如 0.01元、0.10元、0.20元），以供微信支付小额真实测试。
+    支持 SKU 规格选择与动态价格变动（如大杯/冷饮增量 +0.01元、+0.02元、+0.05元）。
     """
     try:
         from decimal import Decimal
@@ -492,7 +499,7 @@ def simulator_seed_kiosk_menu_api(request):
         from devices.models import Device, DeviceConsumableStock
         from global_config.models import GlobalMenuCategory, GlobalMenuItem, GlobalSkuTemplate, GlobalMenuSku, GlobalSkuIngredient
         from inventory.models import Material
-        from menus.models import MenuItem
+        from menus.models import MenuItem, MenuSku
         from django_redis import get_redis_connection
 
         device = Device.objects.filter(device_sn='sn001').first()
@@ -500,7 +507,12 @@ def simulator_seed_kiosk_menu_api(request):
             return JsonResponse({'code': 404, 'message': '设备 sn001 不存在，请先录入设备'}, status=404)
         store = device.store
         if not store:
-            return JsonResponse({'code': 404, 'message': '设备 sn001 未绑定门店'}, status=404)
+            store = Store.objects.filter(id=100000).first()
+            if store:
+                device.store = store
+                device.save(update_fields=['store'])
+            else:
+                return JsonResponse({'code': 404, 'message': '设备 sn001 未绑定门店'}, status=404)
 
         if not store.is_open:
             store.status = Store.STATUS_OPEN
@@ -556,96 +568,170 @@ def simulator_seed_kiosk_menu_api(request):
         for code, val in redis_stocks.items():
             redis_conn.set(f'automake:stock:sn001:{code}', val)
 
-        # 4. 规格模板（价格增量均为 0，确保单杯价格不超过 0.20 元）
-        tpl_cup_big, _ = GlobalSkuTemplate.objects.get_or_create(name='大杯', category='杯型', defaults={'default_price_delta': 0})
+        # 4. 规格模板与价格增量配置（价格变动微调，严格保证单杯总价 <= 0.20 元）
         tpl_cup_small, _ = GlobalSkuTemplate.objects.get_or_create(name='小杯', category='杯型', defaults={'default_price_delta': 0})
+        tpl_cup_big, _ = GlobalSkuTemplate.objects.get_or_create(name='大杯', category='杯型', defaults={'default_price_delta': 1})
         tpl_hot, _ = GlobalSkuTemplate.objects.get_or_create(name='热', category='温度', defaults={'default_price_delta': 0})
-        tpl_cold, _ = GlobalSkuTemplate.objects.get_or_create(name='冷', category='温度', defaults={'default_price_delta': 0})
+        tpl_cold, _ = GlobalSkuTemplate.objects.get_or_create(name='冷', category='温度', defaults={'default_price_delta': 1})
         tpl_normal, _ = GlobalSkuTemplate.objects.get_or_create(name='常温', category='温度', defaults={'default_price_delta': 0})
 
-        cat_coffee = GlobalMenuCategory.objects.filter(name='咖啡', device_model=device.device_model).first() or GlobalMenuCategory.objects.filter(name='咖啡').first()
-        cat_juice = GlobalMenuCategory.objects.filter(name='果汁', device_model=device.device_model).first() or GlobalMenuCategory.objects.filter(name='果汁').first()
+        # 绑定到 sn001 机器型号对应的分类
+        cat_coffee, _ = GlobalMenuCategory.objects.get_or_create(
+            name='咖啡',
+            device_model=device.device_model,
+            defaults={'is_active': True, 'sort_order': 1}
+        )
+        cat_coffee.is_active = True
+        cat_coffee.save()
+
+        cat_juice, _ = GlobalMenuCategory.objects.get_or_create(
+            name='果汁',
+            device_model=device.device_model,
+            defaults={'is_active': True, 'sort_order': 2}
+        )
+        cat_juice.is_active = True
+        cat_juice.save()
 
         # 5. 创建 3 款价格 <= 0.20 元的模拟商品
-        # 商品 1: 浓缩咖啡 (1分钱, ¥0.01)
+        # 商品 1: 浓缩咖啡 (Base 1分 = 0.01元, 大杯+1分=0.02元)
         item_espresso, _ = GlobalMenuItem.objects.get_or_create(
             category=cat_coffee,
             name='浓缩咖啡(测试0.01元)',
             defaults={
                 'base_price': 1,
-                'description': '上位机测试专享·浓缩意式咖啡 (0.01元)',
-                'main_ingredients': '精选咖啡豆 15g',
-                'price_description': '实付 0.01 元',
+                'description': '上位机测试专享·浓缩意式咖啡 (小杯0.01元/大杯0.02元)',
+                'main_ingredients': '精选咖啡豆 15g + 纯净水 30ml',
+                'price_description': '实付 0.01~0.02 元',
                 'is_active': True,
                 'sort_order': 1
             }
         )
+        item_espresso.category = cat_coffee
         item_espresso.base_price = 1
+        item_espresso.is_active = True
         item_espresso.save()
 
-        # 商品 2: 经典拿铁 (1毛钱, ¥0.10)
+        # 商品 2: 经典拿铁 (Base 10分 = 0.10元, 大杯+2分, 冰饮+1分)
         item_latte, _ = GlobalMenuItem.objects.get_or_create(
             category=cat_coffee,
             name='经典拿铁(测试0.10元)',
             defaults={
                 'base_price': 10,
-                'description': '上位机测试专享·新鲜奶泡拿铁 (0.10元)',
+                'description': '上位机测试专享·新鲜奶泡拿铁 (小杯0.10元/大杯0.12元/冷饮+0.01元)',
                 'main_ingredients': '精选咖啡豆 15g + 优质鲜奶 150ml',
-                'price_description': '实付 0.10 元',
+                'price_description': '实付 0.10~0.13 元',
                 'is_active': True,
                 'sort_order': 2
             }
         )
+        item_latte.category = cat_coffee
         item_latte.base_price = 10
+        item_latte.is_active = True
         item_latte.save()
 
-        # 商品 3: 鲜榨橙汁 (2毛钱, ¥0.20)
+        # 商品 3: 鲜榨橙汁 (Base 15分 = 0.15元, 大杯+5分 = 0.20元)
         item_juice, _ = GlobalMenuItem.objects.get_or_create(
             category=cat_juice,
             name='鲜榨橙汁(测试0.20元)',
             defaults={
-                'base_price': 20,
-                'description': '上位机测试专享·VC鲜榨鲜橙汁 (0.20元)',
+                'base_price': 15,
+                'description': '上位机测试专享·VC鲜榨鲜橙汁 (小杯0.15元/大杯0.20元)',
                 'main_ingredients': '鲜橙原汁 200ml',
-                'price_description': '实付 0.20 元',
+                'price_description': '实付 0.15~0.20 元',
                 'is_active': True,
                 'sort_order': 3
             }
         )
-        item_juice.base_price = 20
+        item_juice.category = cat_juice
+        item_juice.base_price = 15
+        item_juice.is_active = True
         item_juice.save()
 
-        # 关联 SKU 与配料 (delta 均为 0)
-        for tpl in [tpl_cup_big, tpl_cup_small, tpl_hot, tpl_normal]:
-            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl, defaults={'price_delta': 0})
-            sku.price_delta = 0
-            sku.save()
-            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
+        # 关联 SKU 与配料与价格增量
+        # 浓缩咖啡 SKU
+        sku_esp_small, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl_cup_small, defaults={'price_delta': 0})
+        sku_esp_small.price_delta = 0
+        sku_esp_small.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_esp_small, material=materials['paperM'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_esp_small, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
 
-        for tpl in [tpl_cup_big, tpl_cup_small, tpl_hot, tpl_cold]:
-            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl, defaults={'price_delta': 0})
-            sku.price_delta = 0
-            sku.save()
-            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
-            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['fresh_milk'], defaults={'quantity': Decimal('150.00'), 'unit': 'ml'})
+        sku_esp_big, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl_cup_big, defaults={'price_delta': 1})
+        sku_esp_big.price_delta = 1
+        sku_esp_big.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_esp_big, material=materials['paperL'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_esp_big, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
 
-        for tpl in [tpl_cup_big, tpl_cup_small, tpl_cold, tpl_normal]:
-            sku, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl, defaults={'price_delta': 0})
-            sku.price_delta = 0
-            sku.save()
-            GlobalSkuIngredient.objects.get_or_create(sku=sku, material=materials['orange_juice'], defaults={'quantity': Decimal('200.00'), 'unit': 'ml'})
+        sku_esp_hot, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl_hot, defaults={'price_delta': 0})
+        sku_esp_hot.price_delta = 0
+        sku_esp_hot.save()
 
-        # 6. 同步至当前门店
+        sku_esp_normal, _ = GlobalMenuSku.objects.get_or_create(item=item_espresso, template=tpl_normal, defaults={'price_delta': 0})
+        sku_esp_normal.price_delta = 0
+        sku_esp_normal.save()
+
+        # 拿铁 SKU
+        sku_latte_small, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl_cup_small, defaults={'price_delta': 0})
+        sku_latte_small.price_delta = 0
+        sku_latte_small.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_small, material=materials['paperM'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_small, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_small, material=materials['fresh_milk'], defaults={'quantity': Decimal('150.00'), 'unit': 'ml'})
+
+        sku_latte_big, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl_cup_big, defaults={'price_delta': 2})
+        sku_latte_big.price_delta = 2
+        sku_latte_big.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_big, material=materials['paperL'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_big, material=materials['coffee_bean'], defaults={'quantity': Decimal('15.00'), 'unit': 'g'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_latte_big, material=materials['fresh_milk'], defaults={'quantity': Decimal('150.00'), 'unit': 'ml'})
+
+        sku_latte_hot, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl_hot, defaults={'price_delta': 0})
+        sku_latte_hot.price_delta = 0
+        sku_latte_hot.save()
+
+        sku_latte_cold, _ = GlobalMenuSku.objects.get_or_create(item=item_latte, template=tpl_cold, defaults={'price_delta': 1})
+        sku_latte_cold.price_delta = 1
+        sku_latte_cold.save()
+
+        # 鲜橙汁 SKU
+        sku_juice_small, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl_cup_small, defaults={'price_delta': 0})
+        sku_juice_small.price_delta = 0
+        sku_juice_small.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_juice_small, material=materials['paperM'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_juice_small, material=materials['orange_juice'], defaults={'quantity': Decimal('200.00'), 'unit': 'ml'})
+
+        sku_juice_big, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl_cup_big, defaults={'price_delta': 5})
+        sku_juice_big.price_delta = 5
+        sku_juice_big.save()
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_juice_big, material=materials['paperL'], defaults={'quantity': Decimal('1.00'), 'unit': '个'})
+        GlobalSkuIngredient.objects.get_or_create(sku=sku_juice_big, material=materials['orange_juice'], defaults={'quantity': Decimal('200.00'), 'unit': 'ml'})
+
+        sku_juice_cold, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl_cold, defaults={'price_delta': 0})
+        sku_juice_cold.price_delta = 0
+        sku_juice_cold.save()
+
+        sku_juice_normal, _ = GlobalMenuSku.objects.get_or_create(item=item_juice, template=tpl_normal, defaults={'price_delta': 0})
+        sku_juice_normal.price_delta = 0
+        sku_juice_normal.save()
+
+        # 6. 同步至当前门店并更新门店 SKU 的 price_delta
         MenuItem.sync_store_menu(store)
+        for g_item in [item_espresso, item_latte, item_juice]:
+            m_item = MenuItem.objects.filter(store=store, global_item=g_item).first()
+            if m_item:
+                for g_sku in g_item.skus.all():
+                    MenuSku.objects.filter(item=m_item, global_sku=g_sku).update(
+                        price_delta=g_sku.price_delta,
+                        is_active=g_sku.is_active
+                    )
 
         return JsonResponse({
             'code': 0,
-            'message': '0.2元内模拟测试菜单及库存已成功初始化！',
+            'message': '0.2元内模拟测试菜单及库存已成功初始化（支持SKU价格变动测试）！',
             'data': {
                 'items': [
-                    {'name': '浓缩咖啡(测试0.01元)', 'price_fen': 1, 'price_yuan': 0.01},
-                    {'name': '经典拿铁(测试0.10元)', 'price_fen': 10, 'price_yuan': 0.10},
-                    {'name': '鲜榨橙汁(测试0.20元)', 'price_fen': 20, 'price_yuan': 0.20},
+                    {'name': '浓缩咖啡(测试0.01元)', 'base_price_yuan': 0.01, 'skus': '小杯(+0.00) / 大杯(+0.01)'},
+                    {'name': '经典拿铁(测试0.10元)', 'base_price_yuan': 0.10, 'skus': '小杯(+0.00) / 大杯(+0.02) / 冷饮(+0.01)'},
+                    {'name': '鲜榨橙汁(测试0.20元)', 'base_price_yuan': 0.15, 'skus': '小杯(+0.00) / 大杯(+0.05)'},
                 ],
                 'stock_status': '所有物料与耗材已补齐 (100+)'
             }
@@ -653,6 +739,33 @@ def simulator_seed_kiosk_menu_api(request):
     except Exception as e:
         logger.exception(f'初始化上位机菜单异常: {e}')
         return JsonResponse({'code': 500, 'message': f'初始化模拟菜单异常: {e}'}, status=500)
+
+
+@csrf_exempt
+def simulator_kiosk_add_log_api(request):
+    """
+    接收上位机触控终端 (Kiosk) 记录的操作与状态日志，写入 Redis 缓存。
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8')) if request.body else {}
+        device_sn = data.get('device_sn') or 'sn001'
+        log_entry = {
+            'timestamp': time.time(),
+            'type': data.get('type') or 'kiosk',
+            'level': data.get('level') or 'INFO',
+            'tag': data.get('tag') or 'SYS',
+            'message': data.get('message') or '',
+            'details': data.get('details')
+        }
+        key = f"simulator:logs:{device_sn}"
+        logs = cache.get(key, [])
+        logs.append(log_entry)
+        if len(logs) > 300:
+            logs = logs[-300:]
+        cache.set(key, logs, timeout=86400)
+        return JsonResponse({'code': 0, 'message': 'success'})
+    except Exception as e:
+        return JsonResponse({'code': 500, 'message': f'记录日志异常: {e}'}, status=500)
 
 
 @csrf_exempt

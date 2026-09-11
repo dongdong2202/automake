@@ -5,6 +5,7 @@
 云端通过 MQTT 向设备下发命令，设备通过 HTTP 上报状态。
 """
 
+from decimal import Decimal
 from django.db import models
 from django.conf import settings
 
@@ -281,7 +282,8 @@ class DeviceConsumableStock(models.Model):
     init_quantity = models.IntegerField(default=100, verbose_name='满载数量')
     quantity = models.IntegerField(default=100, verbose_name='当前剩余数量')
     unit = models.CharField(max_length=16, default='个', verbose_name='标准单位')
-    warn_level = models.IntegerField(default=10, verbose_name='预警数量')
+    warn_level = models.IntegerField(default=20, verbose_name='预警数量(报警1)', help_text='少于此数量时报警(默认20个)')
+    stop_sale_level = models.IntegerField(default=5, verbose_name='停售数量(报警2)', help_text='少于此数量时停止售卖(默认5个)')
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -297,13 +299,12 @@ class DeviceConsumableStock(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # 自动同步更新 Redis 虚拟库存
+        # 自动同步更新 Redis 物理库存 (1:1 真实数量，严禁放大100倍)
         try:
             from django_redis import get_redis_connection
             redis_conn = get_redis_connection("default")
             key = f"automake:stock:{self.device.device_sn}:{self.code_id}"
-            # Redis 库存存储数值为实际数量 * 100
-            redis_conn.set(key, int(self.quantity * 100))
+            redis_conn.set(key, int(self.quantity))
         except Exception:
             pass
 
@@ -407,6 +408,14 @@ class DeviceBarrelDict(models.Model):
     device = models.ForeignKey(
         'devices.Device', to_field='device_sn', db_column='device_sn',
         on_delete=models.CASCADE, related_name='barrel_dicts', verbose_name='设备编号'
+    )
+    alarm_threshold_1 = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        verbose_name='报警1阈值', help_text='达到或低于此值时发送报警短信并通知管理员(ml/g)'
+    )
+    alarm_threshold_2 = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        verbose_name='报警2阈值(停售阈值)', help_text='达到或低于此值时该料桶可用物料=0，停止售卖(ml/g)'
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     created_by = models.ForeignKey(

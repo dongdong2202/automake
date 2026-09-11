@@ -67,8 +67,22 @@ class PaymentRecord(models.Model):
         verbose_name_plural = '支付记录列表'
         ordering = ['-created_at']
 
+    @property
+    def pay_method_display(self):
+        return get_pay_method_display(self.pay_method)
+
     def __str__(self):
         return f'支付 {self.out_trade_no} ({self.get_status_display()})'
+
+
+PAY_METHOD_DISPLAY_MAP = {
+    'wechat_native': '微信扫码支付',
+    'wechat_codepay': '微信付款码支付',
+    'wechat_jsapi': '微信小程序支付',
+}
+
+def get_pay_method_display(pay_method: str) -> str:
+    return PAY_METHOD_DISPLAY_MAP.get(pay_method, '微信支付')
 
 
 class PaymentCallbackLog(models.Model):
@@ -142,7 +156,7 @@ class RefundRecord(models.Model):
     reason = models.CharField(max_length=256, blank=True, verbose_name='退款原因')
     status = models.CharField(
         max_length=20, choices=STATUS_CHOICES,
-        default=STATUS_PENDING, verbose_name='退款状态'
+        default=STATUS_PENDING, db_index=True, verbose_name='退款状态'
     )
     refunded_at = models.DateTimeField(null=True, blank=True, verbose_name='退款完成时间')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='申请时间')

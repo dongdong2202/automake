@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能制造与智能饮品点餐系统 · 客户测试操作手册</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#ecfdf5',
+                            100: '#d1fae5',
+                            500: '#10b981',
+                            600: '#059669',
+                            700: '#047857',
+                            900: '#064e3b'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+            background-color: #090d16;
+            color: #e2e8f0;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        /* 图片悬浮缩放动画 */
+        .zoomable-img {
+            cursor: zoom-in;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .zoomable-img:hover {
+            transform: scale(1.015);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+        }
+        /* 目录高亮 */
+        .toc-link.active {
+            color: #34d399;
+            border-left-color: #10b981;
+            font-weight: 600;
+            background: rgba(16, 185, 129, 0.08);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
+
+    <!-- 顶部固定导航栏 -->
+    <header class="sticky top-0 z-40 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 lg:px-8 py-3.5">
+        <div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/25 font-bold text-xl">
+                    ☕
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-base font-extrabold tracking-tight text-white">AutoMake 智能制造</span>
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">客户测试手册 v2.4</span>
+                    </div>
+                    <p class="text-xs text-slate-400 hidden sm:block">触控大屏 · 微信扫码真实付 · 上位机制造 · 云端运营中心</p>
+                </div>
+            </div>
+
+            <!-- 快捷直达入口 -->
+            <div class="flex items-center gap-2 sm:gap-3">
+                <a href="/simulator/kiosk/" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/90 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5">
+                    <span>☕ 触控大屏 (Kiosk)</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                </a>
+                <a href="/login" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600/90 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5">
+                    <span>🏢 运营管理后台</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                </a>
+                <a href="/simulator/" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition hidden md:flex items-center gap-1.5">
+                    <span>📟 协议黑匣子</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主体布局：左侧悬浮 TOC 目录，右侧主体文档 -->
+    <div class="max-w-7xl mx-auto w-full px-4 lg:px-8 py-8 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+
+        <!-- 左侧导航栏 (占 3 列) -->
+        <aside class="hidden lg:block lg:col-span-3 sticky top-24 space-y-4">
+            <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-xl backdrop-blur">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
+                    手册目录索引
+                </h3>
+                <nav class="space-y-1 text-xs" id="tocNav">
+                    <a href="#overview" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-300 hover:text-white transition">📌 测试环境与账号速览</a>
+                    <div class="pt-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">第一部分 · Kiosk 触控大屏</div>
+                    <a href="#kiosk-intro" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.1 大屏主页与设备状态</a>
+                    <a href="#kiosk-seed" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.2 注入 0.2元真实测试菜单</a>
+                    <a href="#kiosk-sku" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.3 选购商品与多维规格定制</a>
+                    <a href="#kiosk-precheck" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.4 物料智能预检与缺货拦截</a>
+                    <a href="#kiosk-pay" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.5 微信真实扫码与付款码支付</a>
+                    <a href="#kiosk-logs" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">1.6 制作出单与黑匣子日志</a>
+
+                    <div class="pt-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">第二部分 · 运营管理后台</div>
+                    <a href="#admin-login" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.1 管理员登录认证</a>
+                    <a href="#admin-dashboard" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.2 运营驾驶舱看板</a>
+                    <a href="#admin-devices" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.3 设备综合管理 (/devices)</a>
+                    <a href="#admin-menus" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.4 全局菜单档案与机型隔离</a>
+                    <a href="#admin-inventory" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.5 实时库存进销存审计</a>
+                    <a href="#admin-orders" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">2.6 订单中心与履约时间线</a>
+
+                    <div class="pt-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">第三部分 · 典型用例与支持</div>
+                    <a href="#test-cases" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">🧪 6大典型场景演练表</a>
+                    <a href="#faq" class="toc-link block py-1.5 px-2.5 rounded-md border-l-2 border-transparent text-slate-400 hover:text-white transition">📞 常见问题与排错指引</a>
+                </nav>
+            </div>
+
+            <!-- 极简快捷操作卡片 -->
+            <div class="p-4 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 text-xs space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">后台默认账号:</span>
+                    <button onclick="copyText('admin1')" class="font-mono text-emerald-400 hover:underline">admin1 📋</button>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">后台默认密码:</span>
+                    <button onclick="copyText('admin123')" class="font-mono text-emerald-400 hover:underline">admin123 📋</button>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">默认测试设备:</span>
+                    <span class="font-mono text-cyan-300">sn001</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">测试实付单价:</span>
+                    <span class="font-mono text-amber-300">0.01 ~ 0.20 元</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 右侧主体内容 (占 9 列) -->
+        <main class="lg:col-span-9 space-y-12">
+
+            <!-- 文档头部主标题 -->
+            <section class="border-b border-slate-800 pb-6">
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">系统交付与客户验收</span>
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400">更新时间: 2026-09-12</span>
+                </div>
+                <h1 class="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight leading-tight">
+                    智能制造与智能饮品点餐系统 · 客户测试操作手册
+                </h1>
+                <p class="mt-3 text-sm sm:text-base text-slate-300 leading-relaxed">
+                    本手册专为客户验收与联调测试量身定制，涵盖商用现磨/现调设备交互大屏（Kiosk）的完整点餐支付流、物理料位实时熔断拦截、上位机制造出杯协议追踪，以及云端多机型分权运营后台管理全流程。
+                </p>
+            </section>
+
+            <!-- 📌 快速导航与测试环境一览 -->
+            <section id="overview" class="space-y-4">
+                <div class="flex items-center gap-2 border-l-4 border-emerald-500 pl-3">
+                    <h2 class="text-xl font-bold text-white tracking-tight">📌 快速导航与测试环境一览</h2>
+                </div>
+                <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-lg">
+                    <table class="w-full text-left text-xs sm:text-sm">
+                        <thead class="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold">
+                            <tr>
+                                <th class="py-3 px-4">系统模块</th>
+                                <th class="py-3 px-4">访问地址 (公网 / 内网)</th>
+                                <th class="py-3 px-4">核心测试特性说明</th>
+                                <th class="py-3 px-4">登录与权限</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/80 text-slate-300 font-normal">
+                            <tr class="hover:bg-slate-800/40 transition">
+                                <td class="py-3 px-4 font-bold text-emerald-400 flex items-center gap-1.5">
+                                    <span>☕</span> 触控终端大屏 (Kiosk)
+                                </td>
+                                <td class="py-3 px-4 font-mono text-xs">
+                                    <a href="/simulator/kiosk/" target="_blank" class="text-cyan-400 hover:underline">https://tinylab.store/simulator/kiosk/</a>
+                                </td>
+                                <td class="py-3 px-4 text-xs">顾客触控选品、多维规格定制、实时物理料位核算、微信 Native 扫码/刷卡真实支付、制作状态监测</td>
+                                <td class="py-3 px-4 font-mono text-xs text-slate-400">免密进入 (默认绑定 sn001)</td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/40 transition">
+                                <td class="py-3 px-4 font-bold text-indigo-400 flex items-center gap-1.5">
+                                    <span>🏢</span> 运营管理后台 (Web)
+                                </td>
+                                <td class="py-3 px-4 font-mono text-xs">
+                                    <a href="/login" target="_blank" class="text-cyan-400 hover:underline">https://tinylab.store/login</a>
+                                </td>
+                                <td class="py-3 px-4 text-xs">运营驾驶舱、设备综合管理、硬件机型与菜单隔离、物料库存进销存审计、订单全生命周期履约追踪</td>
+                                <td class="py-3 px-4 font-mono text-xs text-amber-400">
+                                    账号: <strong class="text-white cursor-pointer hover:underline" onclick="copyText('admin1')">admin1</strong><br>
+                                    密码: <strong class="text-white cursor-pointer hover:underline" onclick="copyText('admin123')">admin123</strong>
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/40 transition">
+                                <td class="py-3 px-4 font-bold text-slate-300 flex items-center gap-1.5">
+                                    <span>📟</span> 通信模拟黑匣子
+                                </td>
+                                <td class="py-3 px-4 font-mono text-xs">
+                                    <a href="/simulator/" target="_blank" class="text-cyan-400 hover:underline">https://tinylab.store/simulator/</a>
+                                </td>
+                                <td class="py-3 px-4 text-xs">MQTT 指令实时报文监听、下位机硬件状态回传仿真与故障模拟</td>
+                                <td class="py-3 px-4 font-mono text-xs text-slate-400">免密进入 (支持切换 SN)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 🖥 第一部分：触控点餐终端 (Kiosk) 测试指南 -->
+            <section class="space-y-8 pt-4">
+                <div class="border-b border-slate-800 pb-3">
+                    <h2 class="text-2xl font-extrabold text-white flex items-center gap-2">
+                        <span class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white text-base">1</span>
+                        第一部分：上位机触控终端 (Kiosk) 测试指南
+                    </h2>
+                    <p class="text-xs sm:text-sm text-slate-400 mt-1">模拟咖啡机机身触控交互大屏，为到店顾客提供选配定制、实付扣款与出餐全过程。</p>
+                </div>
+
+                <!-- 1.1 大屏主页与设备状态 -->
+                <div id="kiosk-intro" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.1 大屏主页与设备状态概览
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        在浏览器中访问 <a href="/simulator/kiosk/" target="_blank" class="text-cyan-400 hover:underline font-mono">https://tinylab.store/simulator/kiosk/</a>，系统自动完成终端与云端服务器的安全连接，并加载该设备专属的门店信息与当前可用库存：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/01_kiosk_main.png" alt="Kiosk 主界面概览" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片可放大查看高精度细节</span>
+                            <span class="font-mono text-slate-500">图 1-1：Kiosk 触控大屏默认状态</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white font-semibold block mb-1">🟢 状态与识别标识</strong>
+                            <p class="text-slate-400">展示当前终端机身序列号 <code class="text-emerald-400">sn001</code> 及归属门店 <code class="text-slate-300">北京1店 (100000)</code>。绿灯呼吸闪烁代表云端连接与实时心跳正常。</p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white font-semibold block mb-1">📊 实时物料监控余量 HUD</strong>
+                            <p class="text-slate-400">顶部横条动态监测 Redis 物理料桶与耗材余量（水、咖啡豆、鲜奶、大纸杯、杯盖等），毫秒级感知原料动态。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1.2 注入 0.2元真实测试菜单 -->
+                <div id="kiosk-seed" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.2 一键注入 0.2元真实测试菜单
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击顶部工具栏的 <span class="px-2 py-1 rounded bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-semibold text-xs">🌱 注入 0.2元真实测试菜单</span> 按钮，系统将自动将测试低价饮品导入当前机型专属菜单库：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/01_kiosk_seeded.png" alt="注入测试菜单后的商品橱窗" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 1-2：注入极小额度真实测试商品</span>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-200 leading-relaxed">
+                        <strong class="font-bold flex items-center gap-1.5 mb-1">
+                            <span>💡</span> 真实支付测试安全性说明：
+                        </strong>
+                        测试菜单商品价格严格控制在 <strong>0.01 元、0.10 元、0.20 元</strong>。支持测试人员与客户直接使用微信“扫一扫”完成真实扣费测试，无需动用大额资金，且测试完成后支持一键全额原路退款。
+                    </div>
+                </div>
+
+                <!-- 1.3 选购商品与规格定制 -->
+                <div id="kiosk-sku" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.3 选购商品与多维规格定制 (SKU 动态算价)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        在商品橱窗中，点击任意商品（如“生椰拿铁”或“西瓜汁”）右下角的 <span class="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-xs">选规格</span> 按钮，唤起多维规格定制弹窗：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/02_kiosk_sku_modal.png" alt="多维规格定制弹窗" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 1-3：SKU 多维规格与实时价格联动</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-300">
+                        <p><strong>1. 杯型与温度联动</strong>：切换“中杯”或“大杯”（+0.02元），选择“热饮”或“冷饮”（冷饮耗用冰块与特定杯材）。</p>
+                        <p><strong>2. 实时价格公式盒</strong>：弹窗底部实时呈现透明公式，例如：<code class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-300 font-mono">基础价 ￥0.01 + 规格增量 ￥0.02 = ￥0.03</code>。</p>
+                        <p><strong>3. 加入购物车</strong>：点击“确认加入购物车”，系统自动打包所选规格并推入结算通道。</p>
+                    </div>
+                </div>
+
+                <!-- 1.4 物料智能预检与缺货拦截 -->
+                <div id="kiosk-precheck" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.4 智能物料预检 (Precheck) 与自动缺料熔断拦截
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        商品加入购物车后，系统防抖 250ms 即刻触发后端 Precheck 预检引擎，对比所需原料/耗材与机器当前真实余量：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/03_kiosk_cart.png" alt="购物车与物料预检通过" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 1-4：购物车实时核算与预检通过状态</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div class="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30">
+                            <strong class="text-emerald-300 font-bold block mb-1">✅ 放行状态 (物料充足)</strong>
+                            <p class="text-slate-300">展示绿色徽章 <span class="text-emerald-400 font-semibold">全部物料充足 · 允许出餐</span>，底部的“去结算出餐 · 微信真实支付”按钮自动激活高亮，允许顾客扫码付款。</p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-rose-950/30 border border-rose-500/30">
+                            <strong class="text-rose-300 font-bold block mb-1">⚠️ 拦截状态 (模拟缺料)</strong>
+                            <p class="text-slate-300">点击顶部工具栏的“⚠️ 清空大纸杯”，预检系统秒级感知，按钮瞬间置灰为 <span class="text-rose-400 font-semibold">❌ 存在缺料项，无法下单</span>，彻底避免顾客付完款机器却出不了杯的客诉事故。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1.5 微信真实扫码与付款码支付 -->
+                <div id="kiosk-pay" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.5 微信真实收银台 (Native 扫码与付款码刷卡)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击右下角绿色的 <span class="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-xs">去结算出餐</span> 按钮，系统向微信直连商户发起统一统一下单，弹出官方收银台：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/04_kiosk_pay_modal.png" alt="微信真实支付收银台" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览二维码</span>
+                            <span class="font-mono text-slate-500">图 1-5：微信 Native 官方支付真实收银台</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-300">
+                        <p><strong>模式 A · 微信 Native 二维码扫码 (推荐)</strong>：使用任意测试手机打开微信“扫一扫”，直接对准屏幕中的二维码即可唤起支付面板，金额为 ￥0.01 ~ 0.20 元。</p>
+                        <p><strong>模式 B · 付款码被扫 (条码枪模式)</strong>：切换至“付款码支付”选项卡，输入微信付款条码数字（18位），由商户直接向微信服务器发起即时扣费。</p>
+                        <p><strong>毫秒级回调侦测</strong>：收银台内置高速轮询器，一旦微信异步通知到达，收银台秒级关闭，并无缝切入饮品制作流程。</p>
+                    </div>
+                </div>
+
+                <!-- 1.6 制作出单与黑匣子日志 -->
+                <div id="kiosk-logs" class="space-y-4">
+                    <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                        1.6 设备制作出单与黑匣子运行日志追踪
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        支付成功后，云端即刻通过 MQTT 向物理设备下达出杯制造指令。滚动至页面最底部，可查阅全透明的黑匣子审计日志：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/05_kiosk_logs.png" alt="上位机底层运行日志黑匣子" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 1-6：上位机底层协议黑匣子与制作监控</span>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+                        <p><span class="font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/40">PAY</span> 记录商户订单号、支付交易单号及微信官方流水号。</p>
+                        <p><span class="font-mono px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-500/40">STOCK</span> 记录原料扣减流水（水、豆、奶、杯盖的精确克数/个量）。</p>
+                        <p><span class="font-mono px-1.5 py-0.5 rounded bg-purple-950 text-purple-400 border border-purple-500/40">MQTT</span> 下发下位机 PLC 控制指令（研磨、冲煮温度、水泵流量）。</p>
+                        <p><span class="font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-500/40">REFUND</span> 支持在活动订单卡片中点击“一键全额退款测试”，资金原路返回，库存安全回冲。</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 🏢 第二部分：运营管理后台测试指南 -->
+            <section class="space-y-8 pt-6 border-t border-slate-800">
+                <div class="border-b border-slate-800 pb-3">
+                    <h2 class="text-2xl font-extrabold text-white flex items-center gap-2">
+                        <span class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-base">2</span>
+                        第二部分：运营管理后台 (Web) 测试指南
+                    </h2>
+                    <p class="text-xs sm:text-sm text-slate-400 mt-1">面向品牌总部、运营店长与设备运维工程师，提供全网设备物联、动态定价、库存进销存与订单履约管理。</p>
+                </div>
+
+                <!-- 2.1 管理员登录认证 -->
+                <div id="admin-login" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.1 管理员登录认证与安全凭证
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        访问管理后台地址：<a href="/login" target="_blank" class="text-cyan-400 hover:underline font-mono">https://tinylab.store/login</a>
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/06_admin_login.png" alt="运营管理后台登录界面" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-1：AutoMake 运营管理后台登录界面</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                        <div>
+                            <span class="text-slate-400">用户名:</span>
+                            <code class="ml-1 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-emerald-400 font-mono text-sm font-bold cursor-pointer" onclick="copyText('admin1')">admin1 📋</code>
+                        </div>
+                        <div>
+                            <span class="text-slate-400">初始密码:</span>
+                            <code class="ml-1 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-emerald-400 font-mono text-sm font-bold cursor-pointer" onclick="copyText('admin123')">admin123 📋</code>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2.2 运营驾驶舱看板 -->
+                <div id="admin-dashboard" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.2 运营驾驶舱 (Dashboard)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        登录后默认进入驾驶舱，全景呈现机群的在线态势、营收走势与出品效率：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/07_admin_dashboard.png" alt="运营驾驶舱仪表盘" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-2：全网智能设备运营驾驶舱</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
+                        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white block mb-1">📈 顶层核心 KPI</strong>
+                            <p class="text-slate-400">今日销售额、支付订单数、出品总杯数、设备综合在线率。</p>
+                        </div>
+                        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white block mb-1">📊 7日/30日趋势图表</strong>
+                            <p class="text-slate-400">营收走势曲线、客流峰值时段分布及多门店对比。</p>
+                        </div>
+                        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white block mb-1">⚙️ 机型负荷与健康度</strong>
+                            <p class="text-slate-400">各硬件型号的产能产出占比及预警未处理事件跟踪。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2.3 设备综合管理 -->
+                <div id="admin-devices" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.3 设备综合管理 (/devices · 4大平行选项卡)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击左侧菜单 <span class="text-white font-semibold">设备综合管理</span>，系统深度整合了设备全维生命周期的 4 大选项卡：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/08_admin_devices.png" alt="设备综合管理界面" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-3：设备档案、机型、菜单定制与海报屏保</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-300">
+                        <p><strong>Tab 1 · 设备档案管理</strong>：查看 SN、所属门店、机型编码、状态（在线/离线/缺料/故障）、心跳时戳，支持远程指令下发。</p>
+                        <p><strong>Tab 2 · 设备型号/类型</strong>：定义机器物理构型（料桶数、蠕动泵数、研磨仓数），为商品与菜谱匹配提供物理基底。</p>
+                        <p><strong>Tab 3 · 设备菜单定制</strong>：支持单机独立启停指定商品，并支持基准价 <strong>±20%</strong> 范围内的个性化微调溢价。</p>
+                        <p><strong>Tab 4 · 设备海报屏保</strong>：向指定机型批量分发待机大屏轮播海报、促销视频与活动图。</p>
+                    </div>
+                </div>
+
+                <!-- 2.4 全局菜单档案管理 -->
+                <div id="admin-menus" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.4 全局菜单档案管理 (/menus · 机型强绑定隔离)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击左侧菜单 <span class="text-white font-semibold">全局菜单档案管理</span>，维护商品标准化规格与配方物料：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/09_admin_menus.png" alt="全局菜单档案管理" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-4：菜谱商品、规格模板与品类机型绑定</span>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl bg-amber-950/30 border border-amber-500/30 text-xs text-amber-200 leading-relaxed">
+                        <strong class="font-bold flex items-center gap-1.5 mb-1">
+                            <span>🔒</span> 重点架构安全约束：【分类 - 设备硬件机型】强隔离
+                        </strong>
+                        系统强制要求每个菜单分类必须明确指定绑定的“设备机型编码”。例如：咖啡分类绑定咖啡机型，果汁分类绑定鲜果机型。在触控大屏拉取菜单时，服务端强制剔除不匹配机型的商品，绝不产生“跨型号菜单泄露”，确保制造能力与界面展示 100% 吻合。
+                    </div>
+                </div>
+
+                <!-- 2.5 实时物料与库存管理 -->
+                <div id="admin-inventory" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.5 实时物料与库存管理 (/inventory)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击左侧菜单 <span class="text-white font-semibold">库存管理</span>，实时审计每一克原材料的进出流向：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/10_admin_inventory.png" alt="物料与库存管理" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-5：物料档案与出入库不可篡改流水台账</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-300">
+                        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white block mb-1">📦 物料仓库档案 (Tab 1)</strong>
+                            <p class="text-slate-400">咖啡豆、鲜奶、糖浆、纸杯、杯盖等各类原料的标准单位、安全警戒水位线及批次管理。</p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                            <strong class="text-white block mb-1">📑 进出库流水台账 (Tab 2)</strong>
+                            <p class="text-slate-400">每一笔订单制作扣料、取消释放、退款回冲、人工补仓操作均生成唯一流水单号，全链可追溯。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2.6 订单中心与履约追踪 -->
+                <div id="admin-orders" class="space-y-4">
+                    <h3 class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                        2.6 订单中心与全生命周期履约追踪 (/orders)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        点击左侧菜单 <span class="text-white font-semibold">订单中心</span>，汇总大屏与小程序全渠道实时交易单据：
+                    </p>
+                    <div class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-2xl">
+                        <img src="/guide/images/11_admin_orders.png" alt="订单中心与履约时间线" class="w-full rounded-xl zoomable-img" onclick="openLightbox(this.src)">
+                        <div class="p-3 text-xs text-slate-400 flex items-center justify-between">
+                            <span>🔍 点击图片放大预览</span>
+                            <span class="font-mono text-slate-500">图 2-6：订单中心、全链路时间线与退款操作</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-300">
+                        <p><strong>1. 全生命周期履约时间轴 (Timeline)</strong>：展示从 <code class="text-slate-400">用户下单</code> ➔ <code class="text-emerald-400">微信支付确认</code> ➔ <code class="text-sky-400">物料扣减</code> ➔ <code class="text-purple-400">MQTT制作指令下发</code> ➔ <code class="text-amber-400">机器制作完成</code> 的完整毫秒级时间线。</p>
+                        <p><strong>2. 原路退款保障</strong>：运营人员可对异常订单执行“原路退款”，资金由商户直连微信原路退回付款人，且系统同步回滚库存占用，保证财务与实物完全一致。</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 🧪 第三部分：典型测试场景演练表 -->
+            <section id="test-cases" class="space-y-6 pt-6 border-t border-slate-800">
+                <div class="border-b border-slate-800 pb-3">
+                    <h2 class="text-2xl font-extrabold text-white flex items-center gap-2">
+                        <span class="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center text-white text-base">3</span>
+                        第三部分：典型测试用例演练对照表
+                    </h2>
+                    <p class="text-xs sm:text-sm text-slate-400 mt-1">请测试人员按照下述标准测试用例矩阵逐一验证系统反应：</p>
+                </div>
+
+                <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-lg">
+                    <table class="w-full text-left text-xs sm:text-sm">
+                        <thead class="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold">
+                            <tr>
+                                <th class="py-3 px-4 w-20">用例编号</th>
+                                <th class="py-3 px-4 w-44">测试场景名称</th>
+                                <th class="py-3 px-4">执行操作步骤</th>
+                                <th class="py-3 px-4">系统预期结果判定标准</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/80 text-slate-300">
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-emerald-400">TC-01</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">正常选购与真实小额支付</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 访问 Kiosk 页面，点击“选规格”；<br>
+                                    2. 挑选大杯或冷热规格，加入购物车；<br>
+                                    3. 点击“去结算”，调起真实收银台；<br>
+                                    4. 使用微信“扫一扫”支付 0.01~0.20 元。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-emerald-300">
+                                    支付后弹窗秒级关闭，出单动画启动，底层日志记录 MQTT 制作指令，管理后台订单列表更新为“制作中”。
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-rose-400">TC-02</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">缺料熔断与自动锁单拦截</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 在 Kiosk 顶部点击“⚠️ 清空大纸杯”；<br>
+                                    2. 选择需要大纸杯的饮品加入购物车；<br>
+                                    3. 观察右侧购物车结算按钮变化。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-rose-300">
+                                    物料预检立刻显示“大纸杯缺料”，结算按钮变为灰色锁定并显示“❌ 存在缺料项，无法下单”，严格拦截付款。
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-teal-400">TC-03</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">物料补满与恢复放行</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 在 TC-02 拦截状态下，点击顶部“✅ 补满全部物料”；<br>
+                                    2. 观察购物车结算按钮变化。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-teal-300">
+                                    预检重新计算，徽章转绿为“全部物料充足”，结算按钮点亮恢复可用，允许继续支付。
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-amber-400">TC-04</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">超时未支付自动关单</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 点击去结算调出微信支付二维码；<br>
+                                    2. 不付款，静置等待超时（5分钟）。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-amber-300">
+                                    订单状态自动变更为“已取消”，预先锁定的原料在途占用全额回滚释放。
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-purple-400">TC-05</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">售后退款与库存安全回补</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 针对已成功支付的测试订单；<br>
+                                    2. 在 Kiosk 底部活动订单或运营后台点击“退款”。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-purple-300">
+                                    微信零钱即时到账，后台订单标记为“已退款”，物料进出库台账产生退款入库回滚记录。
+                                </td>
+                            </tr>
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-3.5 px-4 font-mono font-bold text-cyan-400">TC-06</td>
+                                <td class="py-3.5 px-4 font-semibold text-white">不同硬件机型专属菜单隔离</td>
+                                <td class="py-3.5 px-4 text-xs">
+                                    1. 在后台给 MODEL-B 分配果汁类目；<br>
+                                    2. 访问绑定 MODEL-B 的设备终端大屏。
+                                </td>
+                                <td class="py-3.5 px-4 text-xs text-cyan-300">
+                                    终端仅显示果汁类目与商品，绝不出现咖啡专属品类，多机型强隔离验证通过。
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 📞 常见问题与应急支持 -->
+            <section id="faq" class="space-y-4 pt-6 border-t border-slate-800">
+                <div class="flex items-center gap-2 border-l-4 border-indigo-500 pl-3">
+                    <h2 class="text-xl font-bold text-white tracking-tight">📞 常见问题与应急排错指引</h2>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs text-slate-300">
+                    <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                        <strong class="text-white block">Q: 微信扫码后提示“商户订单号重复”？</strong>
+                        <p class="text-slate-400">A: 每次点击“去结算”，系统均自动生成全新的纳秒级商户订单号；若反复扫码旧单，点击“清空购物车”重新加购结算即可生成新单。</p>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                        <strong class="text-white block">Q: Kiosk 页面提示“设备未认证”或“离线”？</strong>
+                        <p class="text-slate-400">A: 点击页面右上角蓝色的“终端认证 (sn001)”按钮，即可即时完成与云端的 Token 认证与状态同步。</p>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                        <strong class="text-white block">Q: 如何修改测试商品的基础售价？</strong>
+                        <p class="text-slate-400">A: 登录后台进入“全局菜单档案管理” ➔ “编辑商品”即可调整基准价格；或在“设备综合管理” ➔ “设备菜单定制”中针对当前设备设定差异化微调折扣。</p>
+                    </div>
+                    <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                        <strong class="text-white block">Q: 微信付款后机器没有出餐动作？</strong>
+                        <p class="text-slate-400">A: 页面下方黑匣子日志可直接查看 MQTT 下发状态。若本地模拟器未开启 MQTT 消费，可访问 <a href="/simulator/" class="text-cyan-400 underline">底层通信黑匣子</a> 查看下发的出杯控制报文。</p>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- 底部版权栏 -->
+    <footer class="mt-16 border-t border-slate-800/80 bg-slate-950 py-8 px-4 text-center text-xs text-slate-500">
+        <p>© 2026 AutoMake 智能制造运营管理系统 · 客户测试与交付中心</p>
+        <p class="mt-1 font-mono text-[11px] text-slate-600">Generated with Playwright E2E Visual Verification Suite</p>
+    </footer>
+
+    <!-- 图片放大灯箱 Modal (Lightbox) -->
+    <div id="lightboxModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md hidden flex items-center justify-center p-4" onclick="closeLightbox()">
+        <div class="relative max-w-6xl w-full flex flex-col items-center" onclick="event.stopPropagation()">
+            <img id="lightboxImg" src="" alt="放大预览" class="max-h-[85vh] max-w-full rounded-xl border border-slate-700 shadow-2xl object-contain">
+            <div class="mt-3 flex items-center gap-3 text-xs text-slate-400">
+                <span>按 ESC 或点击空白处关闭</span>
+                <button onclick="closeLightbox()" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white font-medium transition">关 闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 复制成功 Toast -->
+    <div id="copyToast" class="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-xl transition-opacity duration-300 opacity-0 pointer-events-none flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <span>已复制到剪贴板</span>
+    </div>
+
+    <script>
+        // 图片放大灯箱
+        function openLightbox(src) {
+            const modal = document.getElementById('lightboxModal');
+            const img = document.getElementById('lightboxImg');
+            img.src = src;
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            const modal = document.getElementById('lightboxModal');
+            modal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeLightbox();
+        });
+
+        // 复制文本提示
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById('copyToast');
+                toast.classList.remove('opacity-0');
+                setTimeout(() => {
+                    toast.classList.add('opacity-0');
+                }, 2000);
+            });
+        }
+
+        // 目录滚动跟踪高亮
+        const sections = document.querySelectorAll('section[id], div[id]');
+        const navLinks = document.querySelectorAll('#tocNav a');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop - 120;
+                if (window.scrollY >= sectionTop) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + current) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

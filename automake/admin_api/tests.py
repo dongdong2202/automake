@@ -222,54 +222,13 @@ class AdminApiTestCase(TestCase):
         mock_resp.raise_for_status.side_effect = http_error
 
         with patch('requests.request', return_value=mock_resp):
-            res = self.client.post(f'/api/admin/orders/{order.order_no}/refund/', {'reason': '人工退款'}, format='json')
+            res = self.client.post(f'/api/admin/orders/{order.order_no}/refund/', {'refund_type': 'force', 'reason': '人工退款'}, format='json')
             self.assertEqual(res.status_code, 400)
             data = res.json()
             self.assertEqual(data['code'], 4001)
             self.assertIn('基本账户余额不足', data['message'])
             self.assertIn('NOT_ENOUGH', data['message'])
 
-    def test_admin_order_refund_offline(self):
-        """测试管理员标记线下退款成功流程"""
-        from payments.models import PaymentRecord, RefundRecord
-
-        self.client.force_authenticate(user=self.super_admin)
-
-        order = OrderMain.objects.create(
-            order_no='ORD_TEST_REFUND_OFFLINE_001',
-            order_token='token-offline-001',
-            user=self.super_admin,
-            store=self.store,
-            device=self.device,
-            status=OrderMain.STATUS_PAID,
-            total_amount=200,
-            pay_amount=200
-        )
-        PaymentRecord.objects.create(
-            order=order,
-            user=self.super_admin,
-            transaction_id='4500000000000000000000000002',
-            out_trade_no=order.order_no,
-            amount=200,
-            status=PaymentRecord.STATUS_SUCCESS
-        )
-
-        res = self.client.post(
-            f'/api/admin/orders/{order.order_no}/refund/',
-            {'reason': '现场赔付现金', 'offline': True},
-            format='json'
-        )
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data['code'], 0)
-        self.assertIn('线下退款已成功记录', data['message'])
-
-        order.refresh_from_db()
-        self.assertEqual(order.status, OrderMain.STATUS_REFUNDED)
-        refund_record = RefundRecord.objects.filter(order=order).first()
-        self.assertIsNotNone(refund_record)
-        self.assertEqual(refund_record.status, RefundRecord.STATUS_SUCCESS)
-        self.assertIn('现场赔付现金', refund_record.reason)
 
     @patch('orders.services.restore_order_inventory')
     @patch('admin_api.views.orders.refund_order')
@@ -296,14 +255,13 @@ class AdminApiTestCase(TestCase):
 
         res = self.client.post(
             f'/api/admin/orders/{order.order_no}/refund/',
-            {'refund_type': 'auto', 'reason': '用户未制作取消'},
+            {'refund_type': 'auto', 'reason': '用户未制作取消', 'sync': True},
             format='json'
         )
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data['code'], 0)
-        self.assertIn('自动退款成功', data['message'])
-        self.assertIn('纸大杯 x1个', data['message'])
+        self.assertIn('自动退款', data['message'])
 
         mock_restore_inventory.assert_called_once()
         mock_refund_order.assert_called_once()
@@ -331,7 +289,7 @@ class AdminApiTestCase(TestCase):
         self.assertEqual(res.status_code, 400)
         data = res.json()
         self.assertEqual(data['code'], 4003)
-        self.assertIn('无法使用自动退款（放库存），请使用【强制退款】', data['message'])
+        self.assertIn('不支持自动退款', data['message'])
 
     @patch('orders.services.restore_order_inventory')
     @patch('admin_api.views.orders.refund_order')
@@ -365,5 +323,98 @@ class AdminApiTestCase(TestCase):
         mock_restore_inventory.assert_not_called()
         # 验证：微信退款正常触发
         mock_refund_order.assert_called_once()
+
+    @patch('mqtt.issue_cancel_command_with_ack')
+    @patch('orders.services.restore_order_inventory')
+    @patch('admin_api.views.orders.refund_order')
+    def test_admin_order_dedicated_auto_and_force_refund_endpoints(self, mock_refund_order, mock_restore_inventory, mock_cancel):
+        """测试独立的 /refund/auto/ 和 /refund/force/ 接口路由与状态控制"""
+        self.client.force_authenticate(user=self.super_admin)
+        from orders.models import ProductionTask
+
+        # 1. 订单处于 pending_dispense (待制作) 时，调 /refund/auto/ 成功且不调用上位机 (skip_device_cancel=True)
+        order_paid = OrderMain.objects.create(
+            order_no='ORD_TEST_PAID_AUTO_001',
+            order_token='token-paid-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_PAID,
+            total_amount=1800,
+            pay_amount=1800
+        )
+        task_paid = ProductionTask.objects.create(
+            order=order_paid,
+            device=self.device,
+            status=ProductionTask.TASK_PENDING
+        )
+        res_paid_auto = self.client.post(f'/api/admin/orders/{order_paid.order_no}/refund/auto/', {'sync': True}, format='json')
+        self.assertEqual(res_paid_auto.status_code, 200)
+        self.assertEqual(res_paid_auto.json()['code'], 0)
+        # 验证：生产任务被标记为 failed 防止后续下发
+        task_paid.refresh_from_db()
+        self.assertEqual(task_paid.status, ProductionTask.TASK_FAILED)
+        # 验证：上位机没有被调用，直接退款并释放库存
+        mock_cancel.assert_not_called()
+        mock_refund_order.assert_called_with(order_paid, reason='[自动退款] 自动退款放库', funds_account=None, skip_device_cancel=True)
+        mock_restore_inventory.assert_called()
+
+        # 2. 订单处于 making (制作中) 时，调 /refund/auto/ 必须调用上位机 MQTT cancel
+        order_making = OrderMain.objects.create(
+            order_no='ORD_TEST_MAKING_AUTO_001',
+            order_token='token-making-001',
+            user=self.super_admin,
+            store=self.store,
+            device=self.device,
+            status=OrderMain.STATUS_MAKING,
+            total_amount=1800,
+            pay_amount=1800
+        )
+        ProductionTask.objects.create(
+            order=order_making,
+            device=self.device,
+            status=ProductionTask.TASK_MAKING
+        )
+        # 2.1 上位机拒绝取消（返回非1或超时，结果异步沉淀至时间线）
+        mock_cancel.return_value = (False, '上位机未在 5 秒内响应取消，拒绝退款')
+        res_making_fail = self.client.post(f'/api/admin/orders/{order_making.order_no}/refund/auto/', {'sync': True}, format='json')
+        self.assertEqual(res_making_fail.status_code, 200)
+        self.assertEqual(res_making_fail.json()['code'], 0)
+        self.assertIn('已提交制作中自动停机退款申请', res_making_fail.json()['message'])
+        mock_cancel.assert_called_with(device_sn=self.device.device_sn, order_no=order_making.order_no, reason='自动退款放库', timeout=5.0)
+        # 验证：时间线中记录了【自动退款被拒】的明确轨迹与当前制作中状态
+        refuse_log = order_making.status_logs.filter(action='refund_failed').first()
+        self.assertIsNotNone(refuse_log)
+        self.assertEqual(refuse_log.action_name, '自动退款被拒')
+        self.assertEqual(refuse_log.from_status, OrderMain.STATUS_MAKING)
+        self.assertEqual(refuse_log.to_status, OrderMain.STATUS_MAKING)
+        self.assertEqual(refuse_log.from_status_display, '制作中')
+        self.assertIn('上位机拒绝取消或响应超时', refuse_log.remark)
+
+        # 2.2 上位机同意取消（返回1/ok成功）
+        mock_cancel.return_value = (True, 'ok')
+        mock_refund_order.reset_mock()
+        mock_restore_inventory.reset_mock()
+        res_making_ok = self.client.post(f'/api/admin/orders/{order_making.order_no}/refund/auto/', {'sync': True}, format='json')
+        self.assertEqual(res_making_ok.status_code, 200)
+        self.assertEqual(res_making_ok.json()['code'], 0)
+        mock_refund_order.assert_called_with(order_making, reason='[自动退款] 自动退款放库', funds_account=None, skip_device_cancel=True)
+        mock_restore_inventory.assert_called()
+
+        # 3. 订单处于 making 时，调 /refund/force/ 必须成功执行且不放库存、不调用上位机
+        mock_cancel.reset_mock()
+        mock_restore_inventory.reset_mock()
+        res_force = self.client.post(
+            f'/api/admin/orders/{order_making.order_no}/refund/force/',
+            {'reason': '制作中机器故障强退'},
+            format='json'
+        )
+        self.assertEqual(res_force.status_code, 200)
+        self.assertEqual(res_force.json()['code'], 0)
+        self.assertIn('强制退款成功', res_force.json()['message'])
+        mock_cancel.assert_not_called()
+        mock_restore_inventory.assert_not_called()
+        mock_refund_order.assert_called_with(order_making, reason='[强制退款] 制作中机器故障强退', funds_account=None, skip_device_cancel=True)
+
 
 

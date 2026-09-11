@@ -319,3 +319,83 @@ def dispatch_store_to_device_fefo(
             f"material={mat_obj.name}, quantity={qty_needed}, 分批记录数={len(created_records)}"
         )
         return store_inv, created_records
+
+
+def update_device_consumable_stock(
+    device: Device,
+    items: List[dict],
+    operator=None,
+    remarks: str = 'Web管理端录入'
+) -> List[dict]:
+    """
+    统一设备耗材录入与双写服务：
+    1. 事务锁定并更新 MySQL DeviceConsumableStock
+    2. 生成 StoreInventoryRecord 门店出库加料/盘点流水记录
+    3. 立即原子同步写入 Redis automake:stock:{sn}:{code} (真实物理件数，严禁放大100倍)
+    4. 若库存高于预警阈值，清除短信预警防抖锁
+    """
+    from django_redis import get_redis_connection
+    try:
+        redis_conn = get_redis_connection("default")
+    except Exception:
+        redis_conn = None
+
+    updated = []
+    with transaction.atomic():
+        for item in items:
+            code = item.get('code')
+            if not code:
+                continue
+            quantity = int(item.get('quantity', 0))
+
+            material, _ = Material.objects.get_or_create(
+                code=code,
+                defaults={
+                    'name': code,
+                    'material_type': Material.TYPE_CUP if code in {'paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'} else Material.TYPE_CONSUMABLE,
+                    'unit': '张' if code == 'membrane' else '个'
+                }
+            )
+
+            stock, created = DeviceConsumableStock.objects.select_for_update().get_or_create(
+                device=device,
+                code=material,
+                defaults={
+                    'quantity': quantity,
+                    'init_quantity': max(100, quantity),
+                    'unit': material.unit or '个'
+                }
+            )
+            old_qty = stock.quantity
+            stock.quantity = quantity
+            stock.save(update_fields=['quantity', 'updated_at'])
+
+            # 记录流水台账
+            if device.store:
+                StoreInventoryRecord.objects.create(
+                    store=device.store,
+                    material=material,
+                    device=device,
+                    record_type=StoreInventoryRecord.TYPE_OUT_TO_DEVICE,
+                    quantity=Decimal(str(quantity)),
+                    operator=operator,
+                    cost_price=material.price,
+                    remarks=f"{remarks}: 原存量={old_qty}, 调整为={quantity}"
+                )
+
+            # 同步更新 Redis (真实物理数量，严禁放大100倍)
+            if redis_conn:
+                redis_key = f"automake:stock:{device.device_sn}:{code}"
+                redis_conn.set(redis_key, quantity)
+
+                # 若库存充裕，清理报警锁
+                warn_threshold = int(getattr(stock, 'warn_level', 20))
+                if quantity >= warn_threshold:
+                    sms_lock_key = f"automake:sms_sent:{device.device_sn}:{code}"
+                    redis_conn.delete(sms_lock_key)
+
+            updated.append({'code': code, 'quantity': quantity, 'old_quantity': old_qty})
+
+    logger.info(f"[ConsumableStock] 设备 {device.device_sn} 耗材更新完成: 操作人={operator}, 详情={updated}")
+    return updated
+

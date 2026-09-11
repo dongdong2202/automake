@@ -7,7 +7,7 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from utils.response import ok, error
-from utils.permissions import IsAdminOrMaterialAdmin, IsAdminUser
+from utils.permissions import IsAdminOrMaterialAdmin, IsAdminUser, IsAdminOrCoordinator
 from devices.models import Device, DeviceConsumableStock, DeviceMaterialStock, DeviceCommand
 from inventory.models import Material
 from django_redis import get_redis_connection
@@ -120,7 +120,7 @@ class StaffConsumableUpdateView(APIView):
     POST /api/staff/consumables/update
     入参：{ "device_sn": "DEV_001", "items": [{"code": "paperL", "quantity": 85}, ...] }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrMaterialAdmin]
 
     def post(self, request):
         device_sn = request.data.get('device_sn', '').strip()
@@ -134,38 +134,15 @@ class StaffConsumableUpdateView(APIView):
         except Device.DoesNotExist:
             return error('未找到该设备', code=2001, status=404)
 
-        try:
-            redis_conn = get_redis_connection("default")
-        except Exception:
-            redis_conn = None
+        from inventory.services import update_device_consumable_stock
+        updated = update_device_consumable_stock(
+            device=device,
+            items=items,
+            operator=request.user if request.user.is_authenticated else None,
+            remarks=f'物料员小程序端录入 ({request.user.username if request.user.is_authenticated else "系统"})'
+        )
 
-        updated = []
-        for item in items:
-            code = item.get('code')
-            quantity = int(item.get('quantity', 0))
-
-            # 确保 Material 存在
-            material, _ = Material.objects.get_or_create(
-                code=code,
-                defaults={'name': code, 'material_type': Material.TYPE_CONSUMABLE, 'unit': '个'}
-            )
-
-            stock, _ = DeviceConsumableStock.objects.get_or_create(
-                device=device,
-                code=material,
-                defaults={'quantity': quantity}
-            )
-            stock.quantity = quantity
-            stock.save(update_fields=['quantity', 'updated_at'])
-
-            # 同步更新 Redis
-            if redis_conn:
-                redis_key = f"automake:stock:{device.device_sn}:{code}"
-                redis_conn.set(redis_key, quantity * 100)
-
-            updated.append({'code': code, 'quantity': quantity})
-
-        logger.info(f"物料员 {request.user.username} 更新设备 {device_sn} 耗材: {updated}")
+        logger.info(f"物料员 {request.user.username if request.user.is_authenticated else '匿名'} 更新设备 {device_sn} 耗材: {updated}")
         return ok(updated, message='耗材库存已成功更新并同步至云端')
 
 
@@ -175,7 +152,7 @@ class StaffDeviceActionView(APIView):
     POST /api/staff/devices/<device_sn>/action
     入参: { "action": "reset" | "sync" | "dispense", "payload": {} }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request, device_sn):
         action = request.data.get('action', 'reset').strip()

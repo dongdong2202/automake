@@ -207,3 +207,26 @@ def expire_pickup_codes(self) -> dict:
 
     logger.info(f'[Celery] 清理过期取餐码：共处理 {updated} 条')
     return {'expired_count': updated}
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def async_send_sms_task(self, phone_numbers: str, template_param: str, template_code: str = None):
+    """
+    异步发送短信通知任务，防止阻塞主业务或调度任务进程
+    """
+    from notifications.services import send_sms_notify
+    try:
+        kwargs = {'phone_numbers': phone_numbers, 'template_param': template_param}
+        if template_code:
+            kwargs['template_code'] = template_code
+        res = send_sms_notify(**kwargs)
+        if not res.get('ok'):
+            logger.warning(f"[Celery] 异步短信发送失败: {res.get('message')}")
+        return res
+    except Exception as e:
+        logger.exception(f"[Celery] 异步短信发送异常: {e}")
+        raise self.retry(exc=e)

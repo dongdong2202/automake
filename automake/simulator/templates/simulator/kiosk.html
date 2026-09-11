@@ -58,14 +58,16 @@
                 <div>
                     <div class="flex items-center gap-2">
                         <h1 class="font-extrabold text-lg tracking-tight text-white">上位机触控终端</h1>
-                        <span class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-slate-800 text-emerald-400 border border-emerald-500/30">SN: sn001</span>
-                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">北京1店 (100000)</span>
+                        <span class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/40 shadow-sm">SN: {{ device_sn|default:"sn001" }} (单机测试)</span>
+                        <span id="headerStoreBadge" class="px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">{{ store_name|default:"北京1店" }} ({{ store_id|default:100000 }})</span>
                     </div>
                     <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
                         <span id="deviceOnlineIndicator" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                         <span id="deviceStatusText">设备在线</span>
                         <span class="text-slate-600">|</span>
                         <span id="registerStatusBadge" class="text-amber-400 font-medium">● 状态: 检测中...</span>
+                        <span class="text-slate-600">|</span>
+                        <span class="text-emerald-400/90 font-mono text-[11px]">实测单价 ≤ 0.20元</span>
                     </p>
                 </div>
             </div>
@@ -73,30 +75,35 @@
             <!-- 控制台快捷操作 -->
             <div class="flex items-center flex-wrap gap-2">
                 <!-- 注册按钮 -->
-                <button onclick="registerDevice()" id="btnRegister" class="px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+                <button onclick="registerDevice()" id="btnRegister" class="px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path></svg>
-                    <span>终端注册 (sn001)</span>
+                    <span>终端认证 (sn001)</span>
                 </button>
 
                 <!-- 注入0.2元模拟菜单 -->
-                <button onclick="seedKioskMenu()" id="btnSeedMenu" class="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+                <button onclick="seedKioskMenu()" id="btnSeedMenu" class="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                     <span>🌱 注入 0.2元真实测试菜单</span>
                 </button>
 
                 <!-- 库存调节：清空纸杯拦截测试 -->
-                <button onclick="toggleStock('empty', 'paperL')" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                    <span>⚠️ 清空纸杯 (测试缺货拦截)</span>
+                <button onclick="toggleStock('empty', 'paperL')" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                    <span>⚠️ 清空大纸杯 (缺货拦截)</span>
                 </button>
 
                 <!-- 库存调节：补满库存放行测试 -->
-                <button onclick="toggleStock('refill')" class="px-3 py-1.5 bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                    <span>✅ 补满所有物料</span>
+                <button onclick="toggleStock('refill')" class="px-3 py-1.5 bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                    <span>✅ 补满全部物料 (放行)</span>
                 </button>
 
                 <!-- 刷新状态 -->
-                <button onclick="refreshAll()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1">
+                <button onclick="refreshAll()" title="刷新全量状态" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                </button>
+
+                <!-- 滚动至日志面板 -->
+                <button onclick="scrollToLogPanel()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-lg text-xs font-semibold border border-slate-700 transition flex items-center gap-1">
+                    <span>📜 查看运行日志</span>
                 </button>
             </div>
         </div>
@@ -286,9 +293,56 @@
         </aside>
     </main>
 
+    <!-- 底部：上位机实时运行与全流程操作日志终端 (永久可见 & 实时滚屏) -->
+    <section id="kioskLogSection" class="max-w-7xl w-full mx-auto px-6 pb-6">
+        <div class="bg-slate-900/95 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <!-- 日志控制台顶栏 -->
+            <div class="bg-slate-950/90 px-4 py-2.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <h3 class="font-bold text-xs text-slate-200 tracking-wide">📡 上位机 sn001 全流程真实测试实时运行日志</h3>
+                    <span id="logCountBadge" class="font-mono text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-emerald-400 border border-emerald-500/30 font-semibold">0 条记录</span>
+                </div>
+
+                <!-- 日志分类筛选按钮 -->
+                <div class="flex items-center gap-1 overflow-x-auto text-[11px]">
+                    <button onclick="filterLogs('ALL')" id="logTab-ALL" class="px-2.5 py-1 rounded-lg font-semibold bg-emerald-600 text-white shadow-sm transition">全部</button>
+                    <button onclick="filterLogs('SKU')" id="logTab-SKU" class="px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">点餐/SKU/价格</button>
+                    <button onclick="filterLogs('STOCK')" id="logTab-STOCK" class="px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">库存预检</button>
+                    <button onclick="filterLogs('PAY')" id="logTab-PAY" class="px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">微信支付</button>
+                    <button onclick="filterLogs('REFUND')" id="logTab-REFUND" class="px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">退款放库</button>
+                    <button onclick="filterLogs('SYS')" id="logTab-SYS" class="px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">系统设备</button>
+                </div>
+
+                <!-- 控制操作 -->
+                <div class="flex items-center gap-1.5 text-xs">
+                    <button onclick="toggleAutoScroll()" id="btnAutoScroll" class="px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[11px] font-semibold transition flex items-center gap-1">
+                        <span>⬇️ 自动滚屏: 开</span>
+                    </button>
+                    <button onclick="copyLogsToClipboard()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition flex items-center gap-1">
+                        <span>📋 复制全部</span>
+                    </button>
+                    <button onclick="clearAllLogs()" class="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/40 text-[11px] font-medium transition flex items-center gap-1">
+                        <span>🗑️ 清空日志</span>
+                    </button>
+                    <button onclick="toggleLogHeight()" id="btnToggleLogHeight" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] transition">
+                        ↕️ 展开/收起
+                    </button>
+                </div>
+            </div>
+
+            <!-- 日志滚动输出窗口 -->
+            <div id="logTerminalBody" class="h-64 p-3 bg-slate-950 font-mono text-xs overflow-y-auto space-y-1 select-text transition-all duration-300">
+                <div class="text-slate-500 text-center py-6 text-[11px]">
+                    终端已启动，等待执行测试操作...
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- 规格选择弹窗 (Specification Modal) -->
     <div id="specModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
             <div class="flex justify-between items-start">
                 <div>
                     <h3 id="specItemName" class="text-base font-bold text-white">饮品名称</h3>
@@ -301,7 +355,10 @@
 
             <!-- 杯型选项 -->
             <div id="specCupSection" class="space-y-1.5">
-                <label class="text-xs font-semibold text-slate-300 block">杯型规格</label>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-semibold text-slate-300 block">杯型规格</label>
+                    <span class="text-[10px] text-slate-400">大杯关联 paperL 纸杯耗材，小杯关联 paperM</span>
+                </div>
                 <div id="specCupOptions" class="flex flex-wrap gap-2"></div>
             </div>
 
@@ -311,15 +368,27 @@
                 <div id="specTempOptions" class="flex flex-wrap gap-2"></div>
             </div>
 
+            <!-- 动态价格变动与核算明细展示盒 (核心特性) -->
+            <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5 font-mono text-xs">
+                <div class="flex items-center justify-between text-slate-400 text-[11px]">
+                    <span>💰 实时价格变动核算明细:</span>
+                    <span id="specPriceDeltaBadge" class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">+￥0.00</span>
+                </div>
+                <div id="specPriceFormula" class="text-slate-300 text-[11px] font-mono leading-relaxed">
+                    基础价 ￥0.01 + 规格增量 ￥0.00 = ￥0.01
+                </div>
+            </div>
+
             <!-- 价格与确认加购 -->
             <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
                 <div>
-                    <span class="text-xs text-slate-400">单价: </span>
+                    <span class="text-xs text-slate-400">当前单价: </span>
                     <span class="text-xs text-rose-400 font-bold">￥</span>
-                    <span id="specCurrentPrice" class="text-xl font-extrabold text-rose-400 font-mono">0.00</span>
+                    <span id="specCurrentPrice" class="text-2xl font-extrabold text-rose-400 font-mono">0.00</span>
                 </div>
-                <button onclick="confirmAddToCart()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow transition">
-                    确认加入购物车
+                <button onclick="confirmAddToCart()" class="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center gap-1.5">
+                    <span>确认加入购物车</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
                 </button>
             </div>
         </div>
@@ -413,17 +482,20 @@
 
     <!-- JavaScript 交互脚本 -->
     <script>
-        // 常量配置
-        const DEVICE_SN = 'sn001';
-        const KEY_CODE = 'sn001';
-        const STORE_ID = 100000;
+        // ==========================================
+        // 0. 全局常量与状态初始化
+        // ==========================================
+        const DEVICE_SN = '{{ device_sn|default:"sn001" }}';
+        const KEY_CODE = '{{ key_code|default:"sn001" }}';
+        let currentStoreId = parseInt('{{ store_id|default:100000 }}') || 100000;
+        let currentStoreName = '{{ store_name|default:"北京1店" }}';
 
-        // 全局状态
-        let deviceToken = localStorage.getItem('device_token_sn001') || '';
+        let deviceToken = localStorage.getItem('device_token_' + DEVICE_SN) || '';
         let isRegistered = false;
         let menuItems = [];
         let currentCategory = 'all';
         let cart = []; // [{ item, skus: [skuObj], quantity, unit_price, subtotal }]
+
         let activeSelectedItem = null;
         let selectedCupSku = null;
         let selectedTempSku = null;
@@ -436,8 +508,17 @@
         let precheckDebounceTimer = null;
         let isPrecheckPassing = false;
 
+        // 全流程日志系统状态
+        let logsHistory = [];
+        let activeLogFilter = 'ALL';
+        let isAutoScrollEnabled = true;
+        let isLogExpanded = false;
+        let serverLogPollTimer = null;
+        let seenServerLogKeys = new Set();
+
         // 页面启动
         window.addEventListener('DOMContentLoaded', async () => {
+            addLog('SYS', `[系统启动] 智能上位机触控终端已载入，设备编号: ${DEVICE_SN}，所属门店: ${currentStoreName} (${currentStoreId})`, 'INFO');
             await checkDeviceStatus();
             await loadMenu();
             await refreshDiagnostics();
@@ -445,10 +526,261 @@
             document.getElementById('authCodeInput').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') submitCodePay();
             });
+
+            // 启动后端日志定时轮询同步 (每 3.5 秒)
+            startServerLogSync();
         });
 
         // ==========================================
-        // 1. 全局 Toast 提示系统
+        // 1. 全流程高可读性日志系统 (核心功能)
+        // ==========================================
+        function formatTimestamp(date = new Date()) {
+            const pad = (n, len = 2) => String(n).padStart(len, '0');
+            const h = pad(date.getHours());
+            const m = pad(date.getMinutes());
+            const s = pad(date.getSeconds());
+            const ms = pad(date.getMilliseconds(), 3);
+            return `${h}:${m}:${s}.${ms}`;
+        }
+
+        function addLog(tag, message, level = 'INFO', details = null) {
+            const timeStr = formatTimestamp();
+            const logItem = {
+                id: Date.now() + Math.random().toString(36).substr(2, 5),
+                time: timeStr,
+                tag: tag,
+                message: message,
+                level: level,
+                details: details
+            };
+
+            logsHistory.push(logItem);
+            if (logsHistory.length > 500) logsHistory.shift();
+
+            // 更新日志计数徽章
+            const countBadge = document.getElementById('logCountBadge');
+            if (countBadge) countBadge.innerText = `${logsHistory.length} 条记录`;
+
+            renderLogEntry(logItem);
+
+            // 异步提交到后端 Redis 日志缓存，保持设备双端统一
+            try {
+                fetch('/simulator/api/kiosk/log/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_sn: DEVICE_SN,
+                        tag: tag,
+                        level: level,
+                        message: message,
+                        details: details
+                    })
+                }).catch(() => {});
+            } catch (e) {}
+        }
+
+        function renderLogEntry(logItem) {
+            const container = document.getElementById('logTerminalBody');
+            if (!container) return;
+
+            // 如果当前处于特定过滤分类且不匹配，则暂时隐藏
+            if (activeLogFilter !== 'ALL' && !matchLogFilter(logItem.tag, activeLogFilter)) {
+                return;
+            }
+
+            // 清理空状态提示
+            if (container.children.length === 1 && container.children[0].innerText.includes('终端已启动')) {
+                container.innerHTML = '';
+            }
+
+            const row = document.createElement('div');
+            row.className = 'py-0.5 flex items-start gap-2 leading-relaxed hover:bg-slate-900/60 px-1.5 rounded transition-colors';
+            row.dataset.tag = logItem.tag;
+
+            const timeSpan = `<span class="text-slate-500 shrink-0 select-none">[${logItem.time}]</span>`;
+
+            // Tag 样式映射
+            const tagStyles = {
+                'SKU': 'bg-cyan-950 text-cyan-300 border-cyan-500/40',
+                'PRICE': 'bg-amber-950 text-amber-300 border-amber-500/40',
+                'ORDER': 'bg-blue-950 text-blue-300 border-blue-500/40',
+                'CART': 'bg-sky-950 text-sky-300 border-sky-500/40',
+                'STOCK': 'bg-purple-950 text-purple-300 border-purple-500/40',
+                'PAY': 'bg-emerald-950 text-emerald-300 border-emerald-500/40',
+                'PAID': 'bg-green-900 text-green-200 border-green-400 font-bold',
+                'DISPENSE': 'bg-teal-950 text-teal-300 border-teal-500/40',
+                'REFUND': 'bg-rose-950 text-rose-300 border-rose-500/40',
+                'SYS': 'bg-slate-800 text-slate-300 border-slate-700',
+                'ERR': 'bg-rose-950 text-rose-300 border-rose-500/60 font-bold',
+                'MQTT': 'bg-indigo-950 text-indigo-300 border-indigo-500/40'
+            };
+
+            const tagLabels = {
+                'SKU': 'SKU规格',
+                'PRICE': '价格变动',
+                'ORDER': '点餐加购',
+                'CART': '购物车',
+                'STOCK': '库存预检',
+                'PAY': '微信支付',
+                'PAID': '支付成功',
+                'DISPENSE': '出餐凭证',
+                'REFUND': '退款放库',
+                'SYS': '设备系统',
+                'ERR': '拦截报错',
+                'MQTT': '上位机指令'
+            };
+
+            const tagStyle = tagStyles[logItem.tag] || 'bg-slate-800 text-slate-300 border-slate-700';
+            const tagLabel = tagLabels[logItem.tag] || logItem.tag;
+            const badgeSpan = `<span class="log-tag-badge ${tagStyle}">[${tagLabel}]</span>`;
+
+            // 文本内容高亮
+            let msgHtml = escapeHtml(logItem.message);
+            // 高亮金额
+            msgHtml = msgHtml.replace(/(￥\d+\.\d{2}|实付\s*\d+\.\d{2}\s*元|\d+\.\d{2}\s*元|\+\￥\d+\.\d{2})/g, '<span class="text-amber-300 font-bold">$1</span>');
+            // 高亮取餐码
+            msgHtml = msgHtml.replace(/(【\d{4}】)/g, '<span class="text-emerald-300 font-bold bg-emerald-950/80 px-1 rounded">$1</span>');
+            // 高亮商品与规格
+            msgHtml = msgHtml.replace(/(【[^】]+】)/g, '<span class="text-sky-300 font-semibold">$1</span>');
+            // 高亮对勾与叉号
+            msgHtml = msgHtml.replace(/(✅[^\s]+)/g, '<span class="text-emerald-400 font-bold">$1</span>');
+            msgHtml = msgHtml.replace(/(❌[^\s]+)/g, '<span class="text-rose-400 font-bold">$1</span>');
+
+            const contentSpan = `<span class="flex-1 text-slate-300 font-mono text-[11px] leading-tight break-all">${msgHtml}</span>`;
+
+            row.innerHTML = `${timeSpan} ${badgeSpan} ${contentSpan}`;
+            container.appendChild(row);
+
+            if (isAutoScrollEnabled) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function matchLogFilter(tag, filter) {
+            if (filter === 'ALL') return true;
+            if (filter === 'SKU' && ['SKU', 'PRICE', 'ORDER', 'CART'].includes(tag)) return true;
+            if (filter === 'STOCK' && ['STOCK'].includes(tag)) return true;
+            if (filter === 'PAY' && ['PAY', 'PAID'].includes(tag)) return true;
+            if (filter === 'REFUND' && ['REFUND', 'DISPENSE'].includes(tag)) return true;
+            if (filter === 'SYS' && ['SYS', 'MQTT', 'ERR'].includes(tag)) return true;
+            return false;
+        }
+
+        function filterLogs(filter) {
+            activeLogFilter = filter;
+            ['ALL', 'SKU', 'STOCK', 'PAY', 'REFUND', 'SYS'].forEach(tab => {
+                const btn = document.getElementById(`logTab-${tab}`);
+                if (!btn) return;
+                if (tab === filter) {
+                    btn.className = 'px-2.5 py-1 rounded-lg font-semibold bg-emerald-600 text-white shadow-sm transition';
+                } else {
+                    btn.className = 'px-2.5 py-1 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+                }
+            });
+
+            // 重新刷新视图
+            const container = document.getElementById('logTerminalBody');
+            container.innerHTML = '';
+            const filtered = logsHistory.filter(l => matchLogFilter(l.tag, filter));
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-slate-500 text-center py-6 text-[11px]">该分类下暂无日志记录</div>`;
+            } else {
+                filtered.forEach(item => renderLogEntry(item));
+            }
+        }
+
+        function toggleAutoScroll() {
+            isAutoScrollEnabled = !isAutoScrollEnabled;
+            const btn = document.getElementById('btnAutoScroll');
+            if (isAutoScrollEnabled) {
+                btn.className = 'px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[11px] font-semibold transition flex items-center gap-1';
+                btn.innerHTML = '<span>⬇️ 自动滚屏: 开</span>';
+                const container = document.getElementById('logTerminalBody');
+                container.scrollTop = container.scrollHeight;
+            } else {
+                btn.className = 'px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 border border-slate-700 text-[11px] font-medium transition flex items-center gap-1';
+                btn.innerHTML = '<span>⏸️ 自动滚屏: 关</span>';
+            }
+        }
+
+        function toggleLogHeight() {
+            const container = document.getElementById('logTerminalBody');
+            isLogExpanded = !isLogExpanded;
+            if (isLogExpanded) {
+                container.className = 'h-96 p-3 bg-slate-950 font-mono text-xs overflow-y-auto space-y-1 select-text transition-all duration-300';
+            } else {
+                container.className = 'h-64 p-3 bg-slate-950 font-mono text-xs overflow-y-auto space-y-1 select-text transition-all duration-300';
+            }
+        }
+
+        async function clearAllLogs() {
+            logsHistory = [];
+            const container = document.getElementById('logTerminalBody');
+            container.innerHTML = `<div class="text-slate-500 text-center py-6 text-[11px]">日志已清空，等待执行新的操作...</div>`;
+            const countBadge = document.getElementById('logCountBadge');
+            if (countBadge) countBadge.innerText = `0 条记录`;
+
+            try {
+                await fetch(`/simulator/api/clear_logs/?sn=${DEVICE_SN}`, { method: 'POST' });
+            } catch (e) {}
+            showToast('已清空上位机测试日志', 'info', 1500);
+        }
+
+        function copyLogsToClipboard() {
+            if (logsHistory.length === 0) {
+                showToast('当前暂无日志可复制', 'warn');
+                return;
+            }
+            const text = logsHistory.map(l => `[${l.time}] [${l.tag}] ${l.message}`).join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                showToast(`已成功复制 ${logsHistory.length} 条测试日志到剪贴板！`, 'success');
+            }).catch(e => {
+                showToast(`复制失败: ${e}`, 'error');
+            });
+        }
+
+        function scrollToLogPanel() {
+            const el = document.getElementById('kioskLogSection');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // 后端 MQTT / 系统日志自动轮询合并
+        function startServerLogSync() {
+            if (serverLogPollTimer) clearInterval(serverLogPollTimer);
+            serverLogPollTimer = setInterval(async () => {
+                try {
+                    const res = await fetch(`/simulator/api/logs/?sn=${DEVICE_SN}`);
+                    const data = await res.json();
+                    if (data.code === 0 && data.data && Array.isArray(data.data.logs)) {
+                        data.data.logs.forEach(item => {
+                            const key = `${item.timestamp}_${item.type}_${item.topic || ''}_${JSON.stringify(item.payload || '')}`;
+                            if (!seenServerLogKeys.has(key)) {
+                                seenServerLogKeys.add(key);
+                                if (item.type === 'recv' || item.type === 'sent') {
+                                    const actionName = item.type === 'sent' ? '后端上报' : '云端下发';
+                                    const topic = item.topic || 'automake/command';
+                                    const payloadStr = JSON.stringify(item.payload || {});
+                                    addLog('MQTT', `[MQTT通信] ${actionName} [${topic}]: ${payloadStr.substring(0, 80)}`, 'INFO');
+                                }
+                            }
+                        });
+                    }
+                } catch (e) {}
+            }, 3500);
+        }
+
+        // ==========================================
+        // 2. 全局 Toast 提示系统
         // ==========================================
         function showToast(msg, type = 'info', duration = 3500) {
             const container = document.getElementById('toastContainer');
@@ -483,9 +815,10 @@
         }
 
         // ==========================================
-        // 2. 上位机注册与状态检测
+        // 3. 上位机注册与状态检测
         // ==========================================
         async function registerDevice() {
+            addLog('SYS', `发起上位机终端认证注册: POST /api/device/register, 设备号: ${DEVICE_SN}, 注册码: ${KEY_CODE}...`, 'INFO');
             showToast(`正在注册设备 SN=${DEVICE_SN}, Key=${KEY_CODE}...`, 'info');
             try {
                 const res = await fetch('/api/device/register', {
@@ -501,15 +834,21 @@
                     const token = data.data?.access_token || '';
                     if (token) {
                         deviceToken = token;
-                        localStorage.setItem('device_token_sn001', token);
+                        localStorage.setItem('device_token_' + DEVICE_SN, token);
+                    }
+                    if (data.data?.store_id) {
+                        currentStoreId = data.data.store_id;
                     }
                     isRegistered = true;
                     updateRegisterUI(true);
+                    addLog('SYS', `✅ 设备 ${DEVICE_SN} 注册认证成功！Token有效，MQTT Broker: ${data.data?.mqtt_broker || '默认'}，终端已上线就绪`, 'SUCCESS');
                     showToast(`上位机 sn001 注册认证成功，已上线就绪！`, 'success');
                 } else {
+                    addLog('ERR', `❌ 上位机注册失败: ${data.message || '未知错误'}`, 'ERR');
                     showToast(`注册失败: ${data.message || '未知错误'}`, 'error');
                 }
             } catch (e) {
+                addLog('ERR', `❌ 上位机注册网络异常: ${e}`, 'ERR');
                 showToast(`注册网络异常: ${e}`, 'error');
             }
         }
@@ -523,12 +862,14 @@
                     if (dev.device_exists && dev.device_status === 'online') {
                         isRegistered = true;
                         updateRegisterUI(true);
+                        addLog('SYS', `设备检测: ${DEVICE_SN} 在线，已关联门店 [${dev.store_name || currentStoreName}] (ID: ${dev.store_id || currentStoreId})`, 'INFO');
                     } else {
                         updateRegisterUI(false);
+                        addLog('SYS', `设备检测: ${DEVICE_SN} 待注册/离线，请点击右上角【终端认证】按钮`, 'WARN');
                     }
                 }
             } catch (e) {
-                console.error('Check status error:', e);
+                addLog('ERR', `检查设备状态异常: ${e}`, 'ERR');
             }
         }
 
@@ -538,40 +879,45 @@
             const statusText = document.getElementById('deviceStatusText');
             if (online) {
                 badge.className = 'text-emerald-400 font-semibold';
-                badge.innerText = '● 已注册在线';
+                badge.innerText = '● 已注册认证在线';
                 dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
                 statusText.innerText = '设备在线';
             } else {
                 badge.className = 'text-amber-400 font-medium';
-                badge.innerText = '○ 未注册';
+                badge.innerText = '○ 未认证注册';
                 dot.className = 'w-2 h-2 rounded-full bg-amber-500';
-                statusText.innerText = '待注册';
+                statusText.innerText = '待认证';
             }
         }
 
         // ==========================================
-        // 3. 菜单初始化与库存调节测试
+        // 4. 模拟菜单初始化与库存调节测试
         // ==========================================
         async function seedKioskMenu() {
+            addLog('SYS', `发起一键初始化 ≤0.20元 模拟测试菜单与基础物料库存...`, 'INFO');
             showToast('正在初始化 ≤ 0.20 元模拟菜单与物料基础库存...', 'info');
             try {
                 const res = await fetch('/simulator/api/kiosk/seed_menu/', { method: 'POST' });
                 const data = await res.json();
                 if (data.code === 0) {
-                    showToast('🌱 0.20元测试饮品已注入（浓缩咖啡0.01元、拿铁0.10元、橙汁0.20元）！', 'success');
+                    addLog('SYS', `✅ 0.20元测试饮品已注入: 浓缩咖啡(0.01~0.02元)、经典拿铁(0.10~0.13元)、鲜榨橙汁(0.15~0.20元)，规格价格变动配置完成`, 'SUCCESS');
+                    showToast('🌱 0.20元测试饮品已注入！支持SKU选择与动态价格变动测试。', 'success');
                     await loadMenu();
                     await refreshDiagnostics();
                     triggerAutoPrecheck();
                 } else {
+                    addLog('ERR', `初始化模拟菜单失败: ${data.message}`, 'ERR');
                     showToast(`初始化菜单失败: ${data.message}`, 'error');
                 }
             } catch (e) {
+                addLog('ERR', `初始化菜单网络异常: ${e}`, 'ERR');
                 showToast(`请求异常: ${e}`, 'error');
             }
         }
 
         async function toggleStock(action, matCode = 'paperL') {
-            const label = action === 'empty' ? '清空纸杯 (测试缺货拦截)' : '补满全部物料 (放行测试)';
+            const label = action === 'empty' ? '清空大纸杯 (测试缺货拦截)' : '补满全部物料 (放行测试)';
+            addLog('STOCK', `发起库存调节: ${label}, 目标物料: ${matCode}...`, 'INFO');
             showToast(`正在执行库存调节: ${label}...`, 'info');
             try {
                 const res = await fetch('/simulator/api/kiosk/toggle_stock/', {
@@ -586,21 +932,26 @@
                 const data = await res.json();
                 if (data.code === 0) {
                     if (action === 'empty') {
-                        showToast(`⚠️ 已清空纸杯库存 (0)！购物车自动校验将触发缺货拦截。`, 'warn', 4500);
+                        addLog('STOCK', `⚠️ 已将大纸杯【paperL】库存清空为 0！点选含大纸杯的饮品将触发自动缺货拦截`, 'WARN');
+                        showToast(`⚠️ 已清空大纸杯库存 (0)！选大杯饮品将触发缺货拦截。`, 'warn', 4500);
                     } else {
+                        addLog('STOCK', `✅ 已补满所有物料与耗材 (纸杯、杯盖、咖啡豆、鲜奶、橙汁等均 >= 100)，库存校验恢复放行`, 'SUCCESS');
                         showToast(`✅ 已补满所有物料与耗材！库存校验已恢复放行。`, 'success', 4500);
                     }
                     await refreshDiagnostics();
                     triggerAutoPrecheck();
                 } else {
+                    addLog('ERR', `调节库存失败: ${data.message}`, 'ERR');
                     showToast(`调节库存失败: ${data.message}`, 'error');
                 }
             } catch (e) {
+                addLog('ERR', `调节库存网络异常: ${e}`, 'ERR');
                 showToast(`调节库存异常: ${e}`, 'error');
             }
         }
 
         async function refreshAll() {
+            addLog('SYS', `用户点击刷新：正在全量同步设备状态、菜单数据与物理库存监控...`, 'INFO');
             await checkDeviceStatus();
             await loadMenu();
             await refreshDiagnostics();
@@ -609,7 +960,7 @@
         }
 
         // ==========================================
-        // 4. 实时库存 HUD 指标刷新
+        // 5. 实时库存 HUD 指标刷新
         // ==========================================
         async function refreshDiagnostics() {
             try {
@@ -640,18 +991,18 @@
                 else if (stk.code === 'membrane') unit = '张';
 
                 if (isZero) {
-                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-500/50 flex items-center gap-1 animate-pulse';
-                    pill.innerHTML = `<span class="w-1 h-1 rounded-full bg-rose-500"></span>${displayName} (${medium}): 缺料 (0${unit})`;
+                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-500/50 flex items-center gap-1 animate-pulse shrink-0';
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>${displayName} (${medium}): 缺料 (0${unit})`;
                 } else {
-                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-900 text-slate-300 border border-slate-700 flex items-center gap-1';
-                    pill.innerHTML = `<span class="w-1 h-1 rounded-full bg-emerald-400"></span>${displayName} <span class="text-[9px] text-slate-500">(${medium})</span>: <span class="text-emerald-300 font-bold">${Math.round(currentVal)}${unit}</span>`;
+                    pill.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-900 text-slate-300 border border-slate-700 flex items-center gap-1 shrink-0';
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>${displayName} <span class="text-[9px] text-slate-500">(${medium})</span>: <span class="text-emerald-300 font-bold">${Math.round(currentVal)}${unit}</span>`;
                 }
                 container.appendChild(pill);
             });
         }
 
         // ==========================================
-        // 5. 菜单数据加载与渲染
+        // 6. 菜单数据加载与渲染 (点餐选品)
         // ==========================================
         async function loadMenu() {
             try {
@@ -665,15 +1016,17 @@
                             menuItems.push(item);
                         });
                     });
+                    addLog('ORDER', `成功加载门店菜单: 共 ${data.data.categories.length} 个分类、${menuItems.length} 款饮品上线可用`, 'INFO');
                     renderMenu();
                 }
             } catch (e) {
-                console.error('Menu load error:', e);
+                addLog('ERR', `加载菜单失败: ${e}`, 'ERR');
             }
         }
 
         function filterCategory(cat) {
             currentCategory = cat;
+            addLog('ORDER', `切换菜单分类视图: 【${cat === 'all' ? '全部商品' : cat}】`, 'INFO');
             ['all', '咖啡', '果汁'].forEach(c => {
                 const btn = document.getElementById(`catBtn-${c}`);
                 if (!btn) return;
@@ -697,7 +1050,7 @@
 
             if (filtered.length === 0) {
                 grid.innerHTML = `
-                    <div class="col-span-full py-10 text-center text-slate-500 text-xs">
+                    <div class="col-span-full py-12 text-center text-slate-500 text-xs">
                         暂无商品，请点击右上角「🌱 注入 0.2元真实测试菜单」
                     </div>
                 `;
@@ -728,6 +1081,7 @@
 
                     <div class="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between">
                         <div>
+                            <span class="text-xs text-slate-400">起价: </span>
                             <span class="text-xs text-rose-400 font-bold">￥</span>
                             <span class="text-base font-extrabold text-rose-400 font-mono">${priceYuan}</span>
                         </div>
@@ -742,7 +1096,7 @@
         }
 
         // ==========================================
-        // 6. 规格选择弹窗
+        // 7. 规格选择弹窗与实时价格变动引擎 (核心功能)
         // ==========================================
         function openSpecModal(itemId) {
             const item = menuItems.find(i => i.id === itemId);
@@ -761,7 +1115,9 @@
             selectedCupSku = cupSkus.length > 0 ? cupSkus[0] : null;
             selectedTempSku = tempSkus.length > 0 ? tempSkus[0] : null;
 
-            updateSpecPrice();
+            addLog('ORDER', `打开规格选购弹窗: 【${item.name}】，基础起价 ￥${(item.base_price/100).toFixed(2)}，待选规格分类: 杯型 (${cupSkus.length})、温度 (${tempSkus.length})`, 'INFO');
+
+            updateSpecPrice(false);
             document.getElementById('specModal').classList.remove('hidden');
         }
 
@@ -774,45 +1130,91 @@
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             if (skuList.length === 0) {
-                container.innerHTML = `<span class="text-xs text-slate-500">常规标准</span>`;
+                container.innerHTML = `<span class="text-xs text-slate-500">常规标准规格</span>`;
                 return;
             }
 
             skuList.forEach((sku, idx) => {
                 const btn = document.createElement('button');
                 btn.id = `skuBtn-${type}-${sku.id}`;
+                const deltaFen = sku.price_delta || 0;
+                const deltaStr = deltaFen > 0 ? `+￥${(deltaFen / 100).toFixed(2)}` : `+￥0.00`;
+
                 btn.className = (idx === 0)
-                    ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 transition'
-                    : 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition';
-                btn.innerText = sku.name;
+                    ? 'px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 shadow-sm transition flex items-center gap-1.5'
+                    : 'px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition flex items-center gap-1.5';
+
+                btn.innerHTML = `
+                    <span>${sku.name}</span>
+                    <span class="text-[10px] font-mono opacity-80">(${deltaStr})</span>
+                `;
                 btn.onclick = () => selectSku(type, sku, skuList);
                 container.appendChild(btn);
             });
         }
 
         function selectSku(type, sku, list) {
+            const prevSku = (type === 'cup') ? selectedCupSku : selectedTempSku;
+            const typeLabel = (type === 'cup') ? '杯型' : '温度';
+
             if (type === 'cup') selectedCupSku = sku;
             if (type === 'temp') selectedTempSku = sku;
 
             list.forEach(s => {
                 const b = document.getElementById(`skuBtn-${type}-${s.id}`);
                 if (!b) return;
+                const deltaFen = s.price_delta || 0;
+                const deltaStr = deltaFen > 0 ? `+￥${(deltaFen / 100).toFixed(2)}` : `+￥0.00`;
                 if (s.id === sku.id) {
-                    b.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 transition';
+                    b.className = 'px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 shadow-sm transition flex items-center gap-1.5';
+                    b.innerHTML = `<span>${s.name}</span><span class="text-[10px] font-mono opacity-90 font-bold">(${deltaStr})</span>`;
                 } else {
-                    b.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition';
+                    b.className = 'px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition flex items-center gap-1.5';
+                    b.innerHTML = `<span>${s.name}</span><span class="text-[10px] font-mono opacity-70">(${deltaStr})</span>`;
                 }
             });
 
-            updateSpecPrice();
+            const prevName = prevSku ? prevSku.name : '未选';
+            const curDeltaStr = (sku.price_delta || 0) > 0 ? `加价 +￥${((sku.price_delta || 0)/100).toFixed(2)}` : '标准加价 +￥0.00';
+            addLog('SKU', `【${activeSelectedItem?.name}】选择【${typeLabel}】: 从【${prevName}】切换为【${sku.name}】(${curDeltaStr})`, 'INFO');
+
+            updateSpecPrice(true, prevSku, sku, typeLabel);
         }
 
-        function updateSpecPrice() {
+        function updateSpecPrice(isUserChange = false, prevSku = null, curSku = null, typeLabel = '') {
             if (!activeSelectedItem) return;
-            let totalFen = activeSelectedItem.base_price;
-            if (selectedCupSku) totalFen += (selectedCupSku.price_delta || 0);
-            if (selectedTempSku) totalFen += (selectedTempSku.price_delta || 0);
-            document.getElementById('specCurrentPrice').innerText = (totalFen / 100).toFixed(2);
+
+            const baseFen = activeSelectedItem.base_price;
+            const cupDeltaFen = selectedCupSku ? (selectedCupSku.price_delta || 0) : 0;
+            const tempDeltaFen = selectedTempSku ? (selectedTempSku.price_delta || 0) : 0;
+            const totalDeltaFen = cupDeltaFen + tempDeltaFen;
+            const finalUnitFen = baseFen + totalDeltaFen;
+
+            const baseYuan = (baseFen / 100).toFixed(2);
+            const cupDeltaYuan = (cupDeltaFen / 100).toFixed(2);
+            const tempDeltaYuan = (tempDeltaFen / 100).toFixed(2);
+            const totalDeltaYuan = (totalDeltaFen / 100).toFixed(2);
+            const finalUnitYuan = (finalUnitFen / 100).toFixed(2);
+
+            // 更新弹窗内价格与核算公式
+            document.getElementById('specCurrentPrice').innerText = finalUnitYuan;
+            document.getElementById('specPriceDeltaBadge').innerText = totalDeltaFen > 0 ? `+￥${totalDeltaYuan}` : `+￥0.00`;
+
+            const cupName = selectedCupSku ? selectedCupSku.name : '标准';
+            const tempName = selectedTempSku ? selectedTempSku.name : '标准';
+            document.getElementById('specPriceFormula').innerHTML = `
+                公式: 基础价 ￥${baseYuan} + 杯型[${cupName}](+￥${cupDeltaYuan}) + 温度[${tempName}](+￥${tempDeltaYuan}) = <span class="text-rose-400 font-bold">￥${finalUnitYuan}</span>
+            `;
+
+            // 如果是用户点击切换规格，记录价格变动日志
+            if (isUserChange) {
+                const diffFen = (curSku?.price_delta || 0) - (prevSku?.price_delta || 0);
+                let diffStr = '单价不变';
+                if (diffFen > 0) diffStr = `单价上涨 +￥${(diffFen/100).toFixed(2)}`;
+                else if (diffFen < 0) diffStr = `单价下调 -￥${(Math.abs(diffFen)/100).toFixed(2)}`;
+
+                addLog('PRICE', `【${activeSelectedItem.name}】单价实时变动: 基础价 ￥${baseYuan} + 规格总增量 ￥${totalDeltaYuan} = ￥${finalUnitYuan} (${diffStr})`, 'INFO');
+            }
         }
 
         function confirmAddToCart() {
@@ -845,14 +1247,21 @@
                 });
             }
 
+            const specNames = selectedSkus.map(s => s.name).join(' / ') || '常规';
+            const unitYuan = (unitPrice / 100).toFixed(2);
+            const totalCartFen = cart.reduce((acc, cur) => acc + cur.subtotal, 0);
+            const totalCartYuan = (totalCartFen / 100).toFixed(2);
+
+            addLog('ORDER', `成功加购: 【${activeSelectedItem.name}】(${specNames}) x 1, 单价: ￥${unitYuan}, 当前购物车总额: ￥${totalCartYuan}`, 'SUCCESS');
+            showToast(`已加购: ${activeSelectedItem.name} (${specNames})`, 'info', 1500);
+
             closeSpecModal();
             renderCart();
-            showToast(`已加购: ${activeSelectedItem.name}`, 'info', 1500);
             triggerAutoPrecheck();
         }
 
         // ==========================================
-        // 7. 购物车渲染与自动库存校验 (核心功能)
+        // 8. 购物车渲染与实时物料预校验 (点餐流程)
         // ==========================================
         function renderCart() {
             const container = document.getElementById('cartItemsList');
@@ -881,13 +1290,13 @@
                 row.innerHTML = `
                     <div class="flex-1 pr-2">
                         <div class="font-bold text-slate-200 text-xs">${cItem.item.name}</div>
-                        <div class="text-[10px] text-slate-400">${specNames}</div>
+                        <div class="text-[10px] text-slate-400 mt-0.5">${specNames}</div>
                         <div class="text-rose-400 font-mono font-bold mt-0.5">￥${(cItem.unit_price / 100).toFixed(2)}</div>
                     </div>
                     <div class="flex items-center gap-1.5">
-                        <button onclick="changeCartQty(${idx}, -1)" class="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs">-</button>
-                        <span class="font-mono font-bold text-xs w-4 text-center text-white">${cItem.quantity}</span>
-                        <button onclick="changeCartQty(${idx}, 1)" class="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs">+</button>
+                        <button onclick="changeCartQty(${idx}, -1)" class="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs transition">-</button>
+                        <span class="font-mono font-bold text-xs w-5 text-center text-white">${cItem.quantity}</span>
+                        <button onclick="changeCartQty(${idx}, 1)" class="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-xs transition">+</button>
                     </div>
                 `;
                 container.appendChild(row);
@@ -898,17 +1307,27 @@
 
         function changeCartQty(index, delta) {
             if (!cart[index]) return;
-            cart[index].quantity += delta;
-            if (cart[index].quantity <= 0) {
+            const cItem = cart[index];
+            const oldQty = cItem.quantity;
+            cItem.quantity += delta;
+
+            const specNames = cItem.skus.map(s => s.name).join('/') || '常规';
+            if (cItem.quantity <= 0) {
                 cart.splice(index, 1);
+                addLog('CART', `移除商品: 【${cItem.item.name}】(${specNames})`, 'INFO');
             } else {
-                cart[index].subtotal = cart[index].quantity * cart[index].unit_price;
+                cItem.subtotal = cItem.quantity * cItem.unit_price;
+                const actionStr = delta > 0 ? '增加数量' : '减少数量';
+                addLog('CART', `${actionStr}: 【${cItem.item.name}】(${specNames}) 数量 ${oldQty} -> ${cItem.quantity}, 小计: ￥${(cItem.subtotal/100).toFixed(2)}`, 'INFO');
             }
             renderCart();
             triggerAutoPrecheck();
         }
 
         function clearCart() {
+            if (cart.length > 0) {
+                addLog('CART', `用户清空购物车 (原包含 ${cart.length} 种商品)`, 'INFO');
+            }
             cart = [];
             renderCart();
             triggerAutoPrecheck();
@@ -929,7 +1348,7 @@
             const summaryBadge = document.getElementById('materialCheckSummaryBadge');
             container.classList.remove('hidden');
             summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/40 animate-pulse';
-            summaryBadge.innerText = '⚡ 实时核算中...';
+            summaryBadge.innerText = '⚡ 实时物料核算中...';
 
             precheckDebounceTimer = setTimeout(async () => {
                 await executeAutoPrecheck();
@@ -946,12 +1365,18 @@
                 quantity: c.quantity
             }));
 
+            addLog('STOCK', `开始自动物料预校验: POST /api/order/precheck, 门店: ${currentStoreId}, 设备: ${DEVICE_SN}, 待核验清单商品数: ${payloadItems.length}...`, 'INFO');
+
             try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (deviceToken) {
+                    headers['Authorization'] = `Bearer ${deviceToken}`;
+                }
                 const res = await fetch('/api/order/precheck', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({
-                        store_id: STORE_ID,
+                        store_id: currentStoreId,
                         device_sn: DEVICE_SN,
                         items: payloadItems
                     })
@@ -959,6 +1384,7 @@
                 const data = await res.json();
                 renderMaterialCheckTable(data);
             } catch (e) {
+                addLog('ERR', `自动物料预校验网络异常: ${e}`, 'ERR');
                 console.error('Auto precheck failed:', e);
             }
         }
@@ -1013,8 +1439,11 @@
                 summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold';
                 summaryBadge.innerText = '✅ 全部物料充足 · 允许出餐';
                 notice.className = 'mt-2 text-[10px] text-emerald-400 font-medium';
-                notice.innerText = '✅ 库存与在途占用比对完全满足，系统允许下单支付。';
-                updateCheckoutButton(true, `去结算出餐 · 真实支付 (￥${document.getElementById('cartTotalPrice').innerText})`);
+                notice.innerText = '✅ 物理库存与在途占用比对完全满足，系统允许下单真实支付。';
+                updateCheckoutButton(true, `去结算出餐 · 微信真实支付 (￥${document.getElementById('cartTotalPrice').innerText})`);
+
+                const checkSummary = checks.map(c => `${c.name}需${c.required}/可用${c.effective_available}`).join(', ');
+                addLog('STOCK', `✅ 物料预校验完全通过！(${checkSummary}) -> 满足出餐条件，激活结算按钮`, 'SUCCESS');
             } else {
                 isPrecheckPassing = false;
                 summaryBadge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-500/40 font-bold animate-pulse';
@@ -1022,6 +1451,9 @@
                 notice.className = 'mt-2 text-[10px] text-rose-400 font-medium';
                 notice.innerText = `❌ 下单拦截：${respData.message || '部分物料或耗材余量不足'}`;
                 updateCheckoutButton(false, '❌ 存在缺料项，无法下单');
+
+                const shortages = checks.filter(c => !c.is_sufficient).map(c => `${c.name}缺${(c.required - c.effective_available).toFixed(1)}${c.unit}`).join('、');
+                addLog('ERR', `❌ 物料预校验拦截！短缺项: 【${shortages || respData.message}】，系统自动锁定去结算按钮`, 'ERR');
             }
         }
 
@@ -1038,15 +1470,14 @@
         }
 
         // ==========================================
-        // 8. 订单创建与唤起真实支付 (POST /api/order/create)
+        // 9. 订单创建与唤起真实支付 (POST /api/order/create)
         // ==========================================
         async function createOrderAndPay() {
             if (!isPrecheckPassing || cart.length === 0) {
+                addLog('ERR', `尝试创建订单被阻止: 物料未校验通过或购物车为空`, 'ERR');
                 showToast('库存校验未通过或购物车为空，请检查物料！', 'error');
                 return;
             }
-
-            showToast('物料核验通过，正在创建真实商户订单...', 'info');
 
             const payloadItems = cart.map(c => ({
                 item: c.item.id,
@@ -1054,15 +1485,23 @@
                 quantity: c.quantity
             }));
 
+            const drinkSummary = cart.map(c => `${c.item.name}(${c.skus.map(s=>s.name).join('/')})x${c.quantity}`).join(' + ');
+            addLog('ORDER', `发起商户创建订单: POST /api/order/create, 门店=${currentStoreId}, 设备=${DEVICE_SN}, 清单: ${drinkSummary}...`, 'INFO');
+            showToast('物料核验通过，正在创建真实商户订单...', 'info');
+
             try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (deviceToken) {
+                    headers['Authorization'] = `Bearer ${deviceToken}`;
+                }
                 const res = await fetch('/api/order/create', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({
-                        store_id: STORE_ID,
+                        store_id: currentStoreId,
                         device_sn: DEVICE_SN,
                         items: payloadItems,
-                        remark: '上位机终端真实下单测试'
+                        remark: '上位机终端真实下单测试(单机sn001)'
                     })
                 });
                 const data = await res.json();
@@ -1072,24 +1511,29 @@
                     currentActiveOrderNo = orderData.order_no;
                     currentOrderAmountFen = orderData.pay_amount;
 
-                    showToast(`订单已创建: ${currentActiveOrderNo} (金额: ￥${(currentOrderAmountFen / 100).toFixed(2)})`, 'success');
+                    const amountYuan = (currentOrderAmountFen / 100).toFixed(2);
+                    addLog('ORDER', `✅ 商户订单创建成功! 商户订单号: ${currentActiveOrderNo}, 应付实付: ￥${amountYuan}, 状态: ${orderData.status}`, 'SUCCESS');
+                    showToast(`订单已创建: ${currentActiveOrderNo} (金额: ￥${amountYuan})`, 'success');
                     openPayModal(currentActiveOrderNo, currentOrderAmountFen);
                 } else {
+                    addLog('ERR', `创建订单失败: ${data.message}`, 'ERR');
                     showToast(`创建订单失败: ${data.message}`, 'error');
                 }
             } catch (e) {
+                addLog('ERR', `创建订单网络异常: ${e}`, 'ERR');
                 showToast(`创建订单异常: ${e}`, 'error');
             }
         }
 
         // ==========================================
-        // 9. 真实微信支付流程 (Native QR / 付款码)
+        // 10. 真实微信支付流程 (Native QR / 付款码)
         // ==========================================
         function openPayModal(orderNo, amountFen) {
             document.getElementById('payModalOrderNo').innerText = orderNo;
             document.getElementById('payModalAmount').innerText = (amountFen / 100).toFixed(2);
             document.getElementById('payModal').classList.remove('hidden');
 
+            addLog('PAY', `唤起真实微信收银台: 订单号 ${orderNo}, 实付金额 ￥${(amountFen/100).toFixed(2)}`, 'INFO');
             switchPayTab('native');
             generateNativeQR(orderNo);
         }
@@ -1104,6 +1548,7 @@
                 clearInterval(qrCountdownTimer);
                 qrCountdownTimer = null;
             }
+            addLog('PAY', `用户关闭收银台弹窗`, 'INFO');
         }
 
         function switchPayTab(tab) {
@@ -1113,18 +1558,20 @@
             const secCodepay = document.getElementById('paySectionCodepay');
 
             if (tab === 'native') {
-                tabNative.className = 'flex-1 py-2.5 text-center text-xs active-tab flex items-center justify-center gap-1.5';
+                tabNative.className = 'flex-1 py-2.5 text-center text-xs active-pay-tab flex items-center justify-center gap-1.5';
                 tabCodepay.className = 'flex-1 py-2.5 text-center text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5';
                 secNative.classList.remove('hidden');
                 secCodepay.classList.add('hidden');
+                addLog('PAY', `切换支付方式: 【微信扫码 (Native 主扫模式)】`, 'INFO');
                 if (currentActiveOrderNo) {
                     startPaymentPolling(currentActiveOrderNo);
                 }
             } else {
-                tabCodepay.className = 'flex-1 py-2.5 text-center text-xs active-tab flex items-center justify-center gap-1.5';
+                tabCodepay.className = 'flex-1 py-2.5 text-center text-xs active-pay-tab flex items-center justify-center gap-1.5';
                 tabNative.className = 'flex-1 py-2.5 text-center text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5';
                 secCodepay.classList.remove('hidden');
                 secNative.classList.add('hidden');
+                addLog('PAY', `切换支付方式: 【微信付款码 (被扫扣款模式)】`, 'INFO');
                 if (pollTimer) {
                     clearInterval(pollTimer);
                     pollTimer = null;
@@ -1148,6 +1595,8 @@
             qrBox.classList.add('hidden');
             qrPrompt.classList.add('hidden');
             if (countdownBox) countdownBox.classList.add('hidden');
+
+            addLog('PAY', `请求微信官方 Native 支付二维码: POST /api/pay/wechat/native, 订单号: ${orderNo}...`, 'INFO');
 
             try {
                 const res = await fetch('/api/pay/wechat/native', {
@@ -1174,12 +1623,16 @@
                     qrBox.classList.remove('hidden');
                     qrPrompt.classList.remove('hidden');
 
+                    addLog('PAY', `✅ 成功获取 Native 码串: ${codeUrl.substring(0, 32)}... 已完成二维码渲染，请使用手机微信扫码支付`, 'SUCCESS');
+
                     startNativeQRCountdown(orderNo);
                     startPaymentPolling(orderNo);
                 } else {
+                    addLog('ERR', `请求 Native 二维码失败: ${data.message}`, 'ERR');
                     qrLoading.innerHTML = `<span class="text-rose-400">请求 Native 码失败: ${data.message}</span>`;
                 }
             } catch (e) {
+                addLog('ERR', `请求 Native 码网络异常: ${e}`, 'ERR');
                 qrLoading.innerHTML = `<span class="text-rose-400">网络异常: ${e}</span>`;
             }
         }
@@ -1193,6 +1646,8 @@
                 box.innerHTML = `<span>⏳ 支付倒计时:</span><span id="qrCountdownText" class="font-bold text-amber-300">${remaining}s</span>`;
                 box.classList.remove('hidden');
             }
+
+            addLog('PAY', `启动 90s 支付倒计时与状态轮询 (每 2000ms 查询一次)`, 'INFO');
 
             qrCountdownTimer = setInterval(() => {
                 remaining--;
@@ -1214,6 +1669,7 @@
                         box.className = 'my-2 px-3 py-1.5 rounded-xl bg-rose-950/90 border border-rose-700 text-xs font-mono text-rose-300 flex items-center gap-1.5';
                         box.innerHTML = '⚠️ 支付已超时 (90s)，二维码已失效，请重新下单';
                     }
+                    addLog('ERR', `支付倒计时已超时 (90s)，二维码失效，等待后台定时器关闭订单`, 'ERR');
                     showToast('二维码已超时失效，请重新下单', 'warn');
                 }
             }, 1000);
@@ -1235,6 +1691,8 @@
             alertBox.className = 'p-2.5 rounded-xl text-xs bg-blue-950/80 text-blue-200 border border-blue-500/40 block';
             alertBox.innerHTML = '正在与微信支付网关通讯扣款...';
 
+            addLog('PAY', `提交 18 位微信付款码扣款: auth_code=${authCode.substring(0, 6)}******, 订单号=${currentActiveOrderNo}...`, 'INFO');
+
             try {
                 const res = await fetch('/api/internal/payments/wechat/codepay/', {
                     method: 'POST',
@@ -1251,6 +1709,7 @@
                 if (data.code === 0 && resData.status === 'success') {
                     alertBox.className = 'p-2.5 rounded-xl text-xs bg-emerald-950/90 text-emerald-200 border border-emerald-500/60 font-bold block';
                     alertBox.innerHTML = `✅ 扣款成功！微信交易号: ${resData.transaction_id}`;
+                    addLog('PAID', `✅ 付款码直接扣款成功！微信交易号: ${resData.transaction_id}`, 'SUCCESS');
                     showToast('付款码扣款成功！订单已确认支付。', 'success');
 
                     setTimeout(() => {
@@ -1258,31 +1717,73 @@
                     }, 500);
                 } else if (resData.status === 'userpaying') {
                     alertBox.className = 'p-2.5 rounded-xl text-xs bg-amber-950/90 text-amber-200 border border-amber-500/60 block';
-                    alertBox.innerHTML = '⏳ 用户手机端输入密码中... 系统正在自动轮询';
+                    alertBox.innerHTML = '⏳ 用户手机端输入密码中... 系统正在自动轮询 (90s超时)';
+                    addLog('PAY', `⏳ 付款码返回 USERPAYING: 用户手机正在输入密码，开启 90s 倒计时与轮询检测`, 'INFO');
+                    startNativeQRCountdown(currentActiveOrderNo);
                     startPaymentPolling(currentActiveOrderNo);
                 } else {
                     alertBox.className = 'p-2.5 rounded-xl text-xs bg-rose-950/90 text-rose-200 border border-rose-500/60 block font-semibold';
                     const errMsg = (data && data.message) || resData.message || '请重试';
                     alertBox.innerHTML = `❌ 扣款失败: ${errMsg}`;
+                    addLog('ERR', `❌ 付款码扣款失败: ${errMsg}`, 'ERR');
                     showToast(`扣款失败: ${errMsg}`, 'error', 6000);
                 }
             } catch (e) {
+                addLog('ERR', `付款码请求异常: ${e}`, 'ERR');
                 showToast(`付款码请求异常: ${e}`, 'error');
             }
         }
 
         // 真实支付状态轮询 (每 2 秒)
+        let pollCount = 0;
         function startPaymentPolling(orderNo) {
             if (pollTimer) clearInterval(pollTimer);
+            pollCount = 0;
             pollTimer = setInterval(async () => {
+                pollCount++;
                 try {
                     const res = await fetch(`/api/pay/status/${orderNo}`);
                     const data = await res.json();
-                    if (data.code === 0 && data.data && data.data.paid) {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        showToast(`🎉 订单已确认真实支付成功！`, 'success');
-                        handlePaymentSuccessConfirmed(orderNo, data.data);
+                    if (data.code === 0 && data.data) {
+                        if (data.data.paid) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                            if (qrCountdownTimer) {
+                                clearInterval(qrCountdownTimer);
+                                qrCountdownTimer = null;
+                            }
+                            addLog('PAID', `🎉 轮询确认支付成功! 订单号: ${orderNo}, 状态: ${data.data.order_status}`, 'SUCCESS');
+                            showToast(`🎉 订单已确认真实支付成功！`, 'success');
+                            handlePaymentSuccessConfirmed(orderNo, data.data);
+                        } else if (data.data.timeout || data.data.order_status === 'cancelled') {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                            if (qrCountdownTimer) {
+                                clearInterval(qrCountdownTimer);
+                                qrCountdownTimer = null;
+                            }
+                            const qBox = document.getElementById('qrBox');
+                            const qPrompt = document.getElementById('qrPrompt');
+                            if (qBox) qBox.classList.add('hidden');
+                            if (qPrompt) qPrompt.classList.add('hidden');
+                            const box = document.getElementById('qrCountdownBox');
+                            if (box) {
+                                box.className = 'my-2 px-3 py-1.5 rounded-xl bg-rose-950/90 border border-rose-700 text-xs font-mono text-rose-300 flex items-center gap-1.5';
+                                box.innerHTML = '⚠️ 支付已超时 (90s)，订单已自动关闭，请重新下单';
+                                box.classList.remove('hidden');
+                            }
+                            const alertBox = document.getElementById('codePayStatusAlert');
+                            if (alertBox) {
+                                alertBox.className = 'p-2.5 rounded-xl text-xs bg-rose-950/90 text-rose-200 border border-rose-500/60 block font-semibold';
+                                alertBox.innerHTML = '⚠️ 支付超时 (90s)，订单已关闭';
+                            }
+                            addLog('ERR', `支付已超时 (90s)，订单 ${orderNo} 已自动取消关闭`, 'ERR');
+                            showToast('支付已超时 (90s)，请重新下单', 'warn');
+                        } else {
+                            if (pollCount % 5 === 1) {
+                                addLog('PAY', `支付轮询中 (第 ${pollCount} 次): 订单 ${orderNo} 状态: ${data.data.trade_state || 'NOTPAY'} (等待用户微信付款)`, 'INFO');
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error('Polling error:', e);
@@ -1291,7 +1792,7 @@
         }
 
         // ==========================================
-        // 10. 支付成功确认 & 取餐码看板呈现
+        // 11. 支付成功确认 & 取餐码看板呈现
         // ==========================================
         async function handlePaymentSuccessConfirmed(orderNo, cachedStatusData = null) {
             closePayModal();
@@ -1333,12 +1834,15 @@
 
             document.getElementById('latestOrderCard').classList.remove('hidden');
 
+            addLog('DISPENSE', `【出餐凭证生成】取餐码: 【${pickupCode}】(当日支付订单+1规则), 制作凭证 OrderToken: ${orderToken}, 微信流水号: ${transactionId}`, 'SUCCESS');
+            addLog('STOCK', `订单已锁定物料与在途占用，正在刷新物理监控余量...`, 'INFO');
+
             await refreshDiagnostics();
             showToast(`🎉 支付成功！【取餐码: ${pickupCode}】已生成！`, 'success', 5000);
         }
 
         // ==========================================
-        // 11. 【未制作自动退款放库】 (无倒计时触发)
+        // 12. 【未制作自动退款放库】 (无倒计时触发)
         // ==========================================
         async function refundCurrentOrder() {
             if (!currentActiveOrderNo) {
@@ -1349,15 +1853,27 @@
                 return;
             }
 
+            if (!deviceToken) {
+                addLog('ERR', `发起退款放库失败: 未检测到上位机 access_token，请先点击右上角【终端认证】`, 'ERR');
+                showToast('请先点击右上角【终端认证】获取上位机设备凭证！', 'warn');
+                return;
+            }
+
+            addLog('REFUND', `用户发起【未制作自动退款与放库】: POST /api/pay/refund, 订单号: ${currentActiveOrderNo}...`, 'INFO');
             showToast(`正在向微信发起原路退款并执行物料全数放库...`, 'info');
+
             const btnRefund = document.getElementById('btnAutoRefund');
             btnRefund.disabled = true;
             btnRefund.innerText = '正在执行退款放库...';
 
             try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (deviceToken) {
+                    headers['Authorization'] = `Bearer ${deviceToken}`;
+                }
                 const res = await fetch('/api/pay/refund', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({
                         order_no: currentActiveOrderNo,
                         reason: '已支付未制作，触控屏申请退款放库'
@@ -1365,7 +1881,16 @@
                 });
                 const data = await res.json();
 
-                if (data.code === 1 || data.code === 0 || data.code === 200) {
+                if (res.status === 401) {
+                    btnRefund.disabled = false;
+                    btnRefund.innerText = '⚡ 未制作自动退款 (退款放库)';
+                    addLog('ERR', `退款鉴权未通过 (401): ${data.message || '凭证失效，请重新认证'}`, 'ERR');
+                    showToast(`退款鉴权未通过: ${data.message || '请先注册认证上线'}`, 'error');
+                    return;
+                }
+
+                if ((data.code === 1 || data.code === 200) && res.ok) {
+                    addLog('REFUND', `✅ 微信官方原路退款成功！退款金额已返回微信零钱/银行卡`, 'SUCCESS');
                     showToast(`✅ 退款放库处理成功！金额已原路退回微信，耗材与食材已释放入库。`, 'success', 5000);
 
                     // 更新状态看板
@@ -1383,27 +1908,33 @@
 
                     const mats = data.data?.restored_materials || [];
                     if (mats.length > 0) {
+                        let matsSummary = [];
                         mats.forEach(m => {
                             const li = document.createElement('li');
                             const icon = m.type === '耗材' ? '📦' : '☕';
                             li.innerHTML = `${icon} <span class="font-bold text-slate-200">${m.name}</span>: 释放 +${m.quantity}${m.unit} <span class="text-slate-500">(${m.target})</span>`;
                             stockList.appendChild(li);
+                            matsSummary.push(`${m.name}+${m.quantity}${m.unit}`);
                         });
+                        addLog('REFUND', `📦 物料已全数归还放库: ${matsSummary.join('、')}`, 'SUCCESS');
                     } else {
                         stockList.innerHTML = `<li class="text-slate-400">已撤销生产任务并解除在途占用</li>`;
+                        addLog('REFUND', `已撤销上位机制作队列任务并解除物料在途占用`, 'SUCCESS');
                     }
                     reportBox.classList.remove('hidden');
 
-                    // 实时刷新顶部 HUD 监控条，让用户立即看到物理余量加回！
+                    // 实时刷新顶部 HUD 监控条
                     await refreshDiagnostics();
                 } else {
                     btnRefund.disabled = false;
                     btnRefund.innerText = '⚡ 未制作自动退款 (退款放库)';
-                    showToast(`退款失败: ${data.message}`, 'error');
+                    addLog('ERR', `退款失败: ${data.message || '系统拒绝退款'}`, 'ERR');
+                    showToast(`退款失败: ${data.message || '系统拒绝退款'}`, 'error');
                 }
             } catch (e) {
                 btnRefund.disabled = false;
                 btnRefund.innerText = '⚡ 未制作自动退款 (退款放库)';
+                addLog('ERR', `退款网络请求异常: ${e}`, 'ERR');
                 showToast(`退款网络请求异常: ${e}`, 'error');
             }
         }

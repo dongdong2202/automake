@@ -59,12 +59,19 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
     barrel_to_mat_code = {}
     barrel_to_mat_name = {}
     mat_code_to_name = {}
+    barrel_thresholds = {}
     
     for item in barrel_mappings:
         if item.material:
             barrel_to_mat_code[item.barrel_code] = item.material.code
             barrel_to_mat_name[item.barrel_code] = item.material.name
             mat_code_to_name[item.material.code] = item.material.name
+            alarm_1 = float(item.alarm_threshold_1) if getattr(item, 'alarm_threshold_1', None) is not None else 0.0
+            alarm_2 = float(item.alarm_threshold_2) if getattr(item, 'alarm_threshold_2', None) is not None else 0.0
+            barrel_thresholds[item.barrel_code] = {
+                'alarm_threshold_1': alarm_1,
+                'alarm_threshold_2': alarm_2,
+            }
 
     # 3. 遍历薄料区(thinP)、厚料区(thickP)、固料区(solidP)，进行料桶解析与多桶余量聚合
     barrel_details = {}
@@ -91,14 +98,39 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
 
             mat_code = barrel_to_mat_code.get(b_code)
             mat_name = barrel_to_mat_name.get(b_code, b_code)
+            thresholds = barrel_thresholds.get(b_code, {'alarm_threshold_1': 0.0, 'alarm_threshold_2': 0.0})
+            alarm_1 = thresholds['alarm_threshold_1']
+            alarm_2 = thresholds['alarm_threshold_2']
+
+            # 报警2 检测：达到或低于报警2阈值时，该料桶视为物料=0 (停止售卖)
+            is_empty = False
+            usable_v = v_num
+            if alarm_2 > 0 and v_num <= alarm_2:
+                is_empty = True
+                usable_v = 0
+                abnormalities[f"barrel.{b_code}.empty"] = f"料桶 {b_code}({mat_name}) 达到停售线({v_num} <= 报警2: {alarm_2})，已按物料=0停止售卖"
+            elif v_num <= 0:
+                is_empty = True
+                usable_v = 0
+            
+            # 报警1 检测：达到或低于报警1阈值时，发送报警短信并通知管理员
+            is_low = False
+            if alarm_1 > 0 and v_num <= alarm_1 and not is_empty:
+                is_low = True
+                abnormalities[f"barrel.{b_code}.low"] = f"料桶 {b_code}({mat_name}) 余量偏低({v_num} <= 报警1: {alarm_1})"
 
             barrel_details[b_code] = {
                 'barrel_code': b_code,
                 'section': section,
                 'volume': v_num,
+                'usable_volume': usable_v if not damaged else 0,
                 'damaged': damaged,
                 'material_code': mat_code,
                 'material_name': mat_name,
+                'alarm_threshold_1': alarm_1,
+                'alarm_threshold_2': alarm_2,
+                'is_low': is_low,
+                'is_empty': is_empty,
             }
 
             if damaged:
@@ -118,13 +150,16 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
                         'is_empty': False,
                     }
                 aggregated_materials[mat_code]['total_volume'] += v_num
-                if not damaged and v_num > 0:
-                    aggregated_materials[mat_code]['usable_volume'] += v_num
+                if not damaged and usable_v > 0:
+                    aggregated_materials[mat_code]['usable_volume'] += usable_v
                     aggregated_materials[mat_code]['has_available_barrel'] = True
                 aggregated_materials[mat_code]['barrels'].append({
                     'barrel_code': b_code,
                     'volume': v_num,
-                    'damaged': damaged
+                    'usable_volume': usable_v if not damaged else 0,
+                    'damaged': damaged,
+                    'is_low': is_low,
+                    'is_empty': is_empty,
                 })
 
     # 4. 获取物料库存预警配置 (DeviceMaterialStock)
@@ -134,14 +169,18 @@ def parse_device_status_payload(device_sn: str, raw_data: dict) -> dict:
 
     for mat_code, mat_info in aggregated_materials.items():
         stock_cfg = material_stock_configs.get(mat_code)
-        # 某种物料累计少于 1000ml 则系统报警
         warn_level = max(float(stock_cfg.warn_level), 1000.0) if stock_cfg else 1000.0
         mat_unit = getattr(stock_cfg, 'unit', '') or ('g' if '粉' in mat_info['name'] or '豆' in mat_info['name'] else 'ml')
         
-        if mat_info['total_volume'] <= 0:
+        if mat_info['usable_volume'] <= 0:
             mat_info['is_empty'] = True
-            abnormalities[f"material.{mat_code}.empty"] = f"物料 {mat_info['name']}({mat_code}) 已耗尽"
-        elif mat_info['total_volume'] < warn_level:
+            if f"material.{mat_code}.empty" not in abnormalities:
+                abnormalities[f"material.{mat_code}.empty"] = f"物料 {mat_info['name']}({mat_code}) 已耗尽/停售"
+        elif any(b.get('is_low') for b in mat_info['barrels']):
+            mat_info['is_low'] = True
+            if f"material.{mat_code}.low" not in abnormalities:
+                abnormalities[f"material.{mat_code}.low"] = f"物料 {mat_info['name']}({mat_code}) 余量低"
+        elif mat_info['total_volume'] < warn_level and not any(b.get('alarm_threshold_1', 0) > 0 for b in mat_info['barrels']):
             mat_info['is_low'] = True
             abnormalities[f"material.{mat_code}.low"] = f"物料 {mat_info['name']}({mat_code}) 余量低({mat_info['total_volume']}{mat_unit} < {warn_level}{mat_unit})"
 
@@ -251,21 +290,17 @@ def update_device_status_to_redis(device_sn: str, parsed_data: dict) -> None:
     try:
         redis_conn = get_redis_connection("default")
         
-        # 1. 写入每种聚合后物料的可用库存量
+        # 1. 写入每种聚合后食材物料的可用库存量（上位机称重/液位计实时上报）
         # 键名规范：automake:stock:{device_sn}:{material_code}
         for mat_code, mat_info in parsed_data.get('materials', {}).items():
             stock_key = f"automake:stock:{device_sn}:{mat_code}"
             usable_vol = mat_info.get('usable_volume') if 'usable_volume' in mat_info else mat_info.get('total_volume', 0)
             redis_conn.set(stock_key, max(0, int(usable_vol)))
 
-        # 2. 写入耗材可用状态（若用尽则设为 0，若正常且原来没有则设为默认可用）
-        for cup_code, cup_info in parsed_data.get('cups', {}).items():
-            cup_stock_key = f"automake:stock:{device_sn}:{cup_code}"
-            if cup_info.get('empty') or cup_info.get('damaged'):
-                redis_conn.set(cup_stock_key, 0)
-            else:
-                if redis_conn.get(cup_stock_key) is None:
-                    redis_conn.set(cup_stock_key, 100)
+        # 2. 写入耗材/杯型物理传感器状态（若传感器上报缺杯或损坏，将 Redis 库存置 0 联动拦截）
+        for c_code, c_info in parsed_data.get('cups', {}).items():
+            if c_info.get('empty') or c_info.get('damaged'):
+                redis_conn.set(f"automake:stock:{device_sn}:{c_code}", 0)
 
         # 3. 写入完整监控快照，用于 REST API 与前端直接快速获取
         snapshot_key = f"automake:monitor:snapshot:{device_sn}"
@@ -408,16 +443,18 @@ def sync_to_mysql_if_changed(device: Device, parsed_data: dict) -> DeviceMonitor
 
     snapshot = latest_snapshot
     if should_save:
-        snapshot = DeviceMonitorSnapshot.objects.create(
+        snapshot, _ = DeviceMonitorSnapshot.objects.update_or_create(
             device_sn=device_sn,
-            healthy=is_healthy,
-            disconnected=is_disconnected,
-            last_time=int(timezone.now().timestamp() * 1000),
-            mem_size=free_mem,
-            abnormality=abnormalities,
-            raw_data=raw_payload
+            defaults={
+                'healthy': is_healthy,
+                'disconnected': is_disconnected,
+                'last_time': int(timezone.now().timestamp() * 1000),
+                'mem_size': free_mem,
+                'abnormality': abnormalities,
+                'raw_data': raw_payload
+            }
         )
-        logger.info(f"[Monitor] 设备 {device_sn} 状态变化，已生成新监控快照 (healthy={is_healthy}, status={parsed_data['display_status']})")
+        logger.info(f"[Monitor] 设备 {device_sn} 状态变化，已更新监控快照 (healthy={is_healthy}, status={parsed_data['display_status']})")
 
     return snapshot
 

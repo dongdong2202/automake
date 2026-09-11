@@ -6,6 +6,7 @@
 """
 
 import datetime
+import json
 import logging
 import uuid
 from decimal import Decimal
@@ -28,18 +29,36 @@ def get_redis_stock_key(device_sn: str, material_code: str) -> str:
     return get_stock_key(device_sn, material_code)
 
 
- 
+def get_consumable_name_by_code(code: str) -> str:
+    """
+    根据耗材编码获取耗材的默认中文名称
+    """
+    from inventory.models import Material
+    mat = Material.objects.filter(code=code).first()
+    if mat:
+        return mat.name
+    mapping = {
+        'paperL': '纸大杯',
+        'paperM': '纸中杯',
+        'plasticL': '塑料大杯',
+        'plasticM': '塑料中杯',
+        'membrane': '膜',
+        'lid': '盖'
+    }
+    return mapping.get(code, code)
+
+
 def calculate_required_materials(items_data: list) -> list:
     """
-    根据商品清单数据计算所需原材料及用量（单杯独立明细，不合并）
+    根据商品清单数据计算所需原材料及用量（按商品规格行聚合返回）
 
     业务规则与耗材纠偏：
     1. 塑料杯不能装热饮：检测为热饮/温饮时，若包含塑料杯 (plasticL/plasticM) 则自动纠正为对应的纸杯 (paperL/paperM)；
     2. 纸杯和盖子是成套的：凡使用纸杯 (paperL/paperM)，自动成套配备杯盖 (lid，数量 1)；若配方缺失自动补齐；
     3. 每个杯子都需要膜：无论纸杯还是塑料杯，每个杯子都必须配备 1 张封口膜 (membrane，数量 1)；若缺失自动补齐；
-    4. 返回格式：JSON 列表 (list[dict])，每个元素代表一杯独立饮料的物料明细及数量（不合并多杯）。
-
-    items_data 格式：[{'item': MenuItem/GlobalMenuItem, 'skus': [MenuSku/GlobalMenuSku, ...], 'quantity': int}, ...]
+    4. 返回格式：JSON 列表 (list[dict])，每个元素代表一个商品项的物料明细及数量。
+       - single_cup_materials: 单杯物料用量字典
+       - sub_total_materials: 该商品项总物料用量字典 (single_cup_materials * quantity)
     """
     # 提取所有需要查询的 global_sku_id，避免 N+1 查询
     global_sku_ids = []
@@ -156,27 +175,150 @@ def calculate_required_materials(items_data: list) -> list:
         if 'membrane' not in single_cup_materials or single_cup_materials['membrane'] <= Decimal('0.00'):
             single_cup_materials['membrane'] = Decimal('1.00')
 
-        # 3. 按购买数量 quantity 循环，每杯生成独立的字典，绝不合并
-        for _ in range(quantity):
-            cup_record = {
-                'item_id': item_id,
-                'item_name': item_name,
-                'sku_id': sku_ids,
-                'sku_name': sku_name_str,
-                'is_hot': is_hot,
-                'materials': dict(single_cup_materials),
-            }
-            per_cup_list.append(cup_record)
+        # 3. 按商品项聚合，生成包含 single_cup_materials 与 sub_total_materials 的记录
+        sub_total_materials = {k: v * quantity for k, v in single_cup_materials.items()}
+        cup_record = {
+            'item_id': item_id,
+            'item_name': item_name,
+            'sku_id': sku_ids,
+            'sku_name': sku_name_str,
+            'quantity': quantity,
+            'is_hot': is_hot,
+            'single_cup_materials': dict(single_cup_materials),
+            'sub_total_materials': dict(sub_total_materials),
+        }
+        per_cup_list.append(cup_record)
 
     return per_cup_list
 
 
+def get_device_in_flight_materials(device_sn: str) -> dict:
+    """
+    获取当前设备在途物料占用（Redis automake:in_flight:{device_sn}）
+    """
+    if not device_sn:
+        return {}
+    try:
+        from django_redis import get_redis_connection
+        redis_conn = get_redis_connection("default")
+        key = f"automake:in_flight:{device_sn}"
+        data = redis_conn.hgetall(key)
+        if not data:
+            return {}
+        result = {}
+        for k, v in data.items():
+            field = k.decode('utf-8') if isinstance(k, bytes) else str(k)
+            val_str = v.decode('utf-8') if isinstance(v, bytes) else str(v)
+            try:
+                val = Decimal(val_str)
+                if val > Decimal('0.00'):
+                    result[field] = val
+            except Exception:
+                continue
+        return result
+    except Exception as e:
+        logger.warning(f"获取 Redis 在途物料异常: {e}")
+        return {}
+
+
+def incr_device_in_flight_materials(device_sn: str, materials: dict):
+    """
+    原子累加设备在途物料占用（订单支付成功后调用）
+    """
+    if not device_sn or not materials:
+        return
+    try:
+        from django_redis import get_redis_connection
+        redis_conn = get_redis_connection("default")
+        key = f"automake:in_flight:{device_sn}"
+        pipe = redis_conn.pipeline()
+        for mat_code, qty in materials.items():
+            pipe.hincrbyfloat(key, mat_code, float(qty))
+        pipe.execute()
+    except Exception as e:
+        logger.warning(f"累加 Redis 在途物料占用异常: {e}")
+
+
+LUA_DECR_IN_FLIGHT = """
+local key = KEYS[1]
+for i = 1, #ARGV, 2 do
+    local field = ARGV[i]
+    local decr_val = tonumber(ARGV[i+1])
+    local cur = tonumber(redis.call('hget', key, field) or "0")
+    local new_v = cur - decr_val
+    if new_v <= 0.00001 then
+        redis.call('hdel', key, field)
+    else
+        redis.call('hset', key, field, new_v)
+    end
+end
+return 1
+"""
+
+
+def decr_device_in_flight_materials(device_sn: str, materials: dict):
+    """
+    原子扣减设备在途物料占用（订单制作完成或取消退款后调用，保证不小于 0）
+    采用 Redis Lua 脚本保证多字段原子扣减与清理。
+    """
+    if not device_sn or not materials:
+        return
+    try:
+        from django_redis import get_redis_connection
+        redis_conn = get_redis_connection("default")
+        key = f"automake:in_flight:{device_sn}"
+        args = []
+        for mat_code, qty in materials.items():
+            args.extend([str(mat_code), float(qty)])
+        if args:
+            redis_conn.eval(LUA_DECR_IN_FLIGHT, 1, key, *args)
+    except Exception as e:
+        logger.warning(f"扣减 Redis 在途物料占用异常: {e}")
+
+
+def get_order_total_materials(order: OrderMain) -> dict:
+    """
+    计算单个订单所需的各项物料总量（复用 prefetch 缓存，避免 N+1 查询）
+    """
+    if not order:
+        return {}
+    items_data = []
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.select_related('item').prefetch_related('skus').all()
+
+    for item in order_items:
+        items_data.append({
+            'item': item.item,
+            'skus': list(item.skus.all()),
+            'quantity': item.quantity,
+            'item_name': item.item_name,
+            'sku_names': [item.sku_name] if item.sku_name else []
+        })
+    cup_list = calculate_required_materials(items_data)
+    result = {}
+    for cup in cup_list:
+        mats = cup.get('sub_total_materials', {})
+        for code, qty in mats.items():
+            result[code] = result.get(code, Decimal('0.00')) + Decimal(str(qty))
+    return result
+
+
 def calculate_unproduced_materials_for_device(device: Device) -> dict:
     """
-    计算设备上已支付或制作中（未出货完成）的订单所占用的各项物料总量
+    计算设备上处于在途制作状态的订单所占用的物料总量 (方案 A: 以 Redis 计数器为单一事实源)
+
+    业务原则：
+    1. 优先读取 Redis 在途物料 Hash (Single Source of Truth)；
+    2. 若 Redis 为空（如单元测试直接操作 DB 状态或冷启动），兜底纯只读统计 MySQL 活跃订单；
+    3. 绝对不在此函数内调用 incr_device_in_flight_materials，彻底杜绝写竞态与孤儿锁漏洞。
     """
     if not device:
         return {}
+
+    in_flight = get_device_in_flight_materials(device.device_sn)
+    if in_flight:
+        return in_flight
 
     unproduced_orders = OrderMain.objects.filter(
         device=device,
@@ -185,18 +327,9 @@ def calculate_unproduced_materials_for_device(device: Device) -> dict:
 
     total_unproduced = {}
     for order in unproduced_orders:
-        items_data = []
-        for item in order.items.all():
-            items_data.append({
-                'item': item.item,
-                'skus': list(item.skus.all()),
-                'quantity': item.quantity
-            })
-        order_req_list = calculate_required_materials(items_data)
-        for cup in order_req_list:
-            cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
-            for code, qty in cup_mats.items():
-                total_unproduced[code] = total_unproduced.get(code, Decimal('0.00')) + Decimal(str(qty))
+        order_mats = get_order_total_materials(order)
+        for code, qty in order_mats.items():
+            total_unproduced[code] = total_unproduced.get(code, Decimal('0.00')) + Decimal(str(qty))
 
     return total_unproduced
 
@@ -212,8 +345,10 @@ def precheck_order(store_id: int, items_data: list, device_sn: str = None, **kwa
     4. 检查系统排队等待制作的订单数量是否小于 50
     5. 匹配可用设备：
        - 检查在线且健康状态良好的设备；
-       - 读取 Redis 物理库存，并扣除设备上处于 pending_dispense / making 状态的待制作订单物料占用；
-       - 确保扣除后有效可用库存满足当前订单需求，且高于预警阈值。
+       - 读取物理传感器快照，若缺杯/损坏立即拒单；
+       - 读取 Redis 物理库存，并扣除设备在途物料占用 (方案 A)；
+       - 结合 MySQL 耗材停售阈值 (stop_sale_level) 进行熔断核验；
+       - 确保扣除后有效可用库存满足当前订单需求。
     """
     try:
         store = Store.objects.get(pk=store_id)
@@ -224,11 +359,10 @@ def precheck_order(store_id: int, items_data: list, device_sn: str = None, **kwa
         raise ValueError('门店暂未营业，无法下单')
 
     total_quantity = sum([x['quantity'] for x in items_data])
-    if total_quantity <=0 :
+    if total_quantity <= 0:
         raise ValueError('数量不能小于0')
-    if total_quantity > 20 :
+    if total_quantity > 20:
         raise ValueError('单笔订单数量不能大于 20 ')
-
 
     checked_items = []
     total_amount = 0
@@ -271,139 +405,166 @@ def precheck_order(store_id: int, items_data: list, device_sn: str = None, **kwa
 
         checked_items.append({
             'item': item_obj,
+            'item_name': item_obj.name,
             'skus': sku_objs,
+            'sku_names': sku_names,
             'quantity': quantity,
             'unit_price': unit_price,
-            'subtotal': subtotal,
-            'item_name': item_obj.name,
-            'sku_names': sku_names,
+            'subtotal': subtotal
         })
- 
-    # 计算所需原料并进行库存预校验（包含食材和耗材）
-    per_cup_materials = calculate_required_materials(checked_items)
-    # 聚合汇总所有单杯的物料总需求，用于单设备库存比对
-    logger.debug(f"[Precheck] 计算每杯物料需求明细: {per_cup_materials}")
-    required_materials = {}
-    for cup in per_cup_materials:
-        cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
-        for mat_code, qty in cup_mats.items():
-            required_materials[mat_code] = required_materials.get(mat_code, Decimal('0.00')) + Decimal(str(qty))
 
-    # 1. 必填校验设备编号 device_sn
-    if not device_sn:
-        raise ValueError('请传入点餐设备编号 (device_sn)')
+    # 1. 匹配设备
+    if device_sn is not None and str(device_sn).strip() == '':
+        raise ValueError('请传入点餐设备编号')
 
-    target_device = Device.objects.filter(device_sn=str(device_sn).strip()).first()
-    if not target_device:
-        raise ValueError(f'指定的设备 {device_sn} 不存在')
+    target_device = None
+    if device_sn:
+        try:
+            target_device = Device.objects.get(device_sn=device_sn, store=store)
+        except Device.DoesNotExist:
+            raise ValueError(f'指定的设备 {device_sn} 不存在或不属于该门店')
+    else:
+        # 自动分配一台在线空闲的设备
+        devices = Device.objects.filter(store=store, status=Device.STATUS_ONLINE)
+        if not devices.exists():
+            raise ValueError('该门店暂无可用设备正在运行')
+        target_device = devices.first()
+
+    # 2. 校验商品设备型号与制作设备型号匹配一致性
+    if target_device.device_model:
+        for c_item in checked_items:
+            item_obj = c_item['item']
+            if item_obj.device_model_id and item_obj.device_model_id != target_device.device_model_id:
+                dev_name = target_device.device_name or target_device.device_sn
+                raise ValueError(f"商品【{item_obj.name}】所属型号与设备【{dev_name}】不匹配，无法制作")
+
+    # 3. 校验设备排队队列
+    active_orders_count = OrderMain.objects.filter(
+        device=target_device,
+        status__in=[OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING]
+    ).count()
+
+    if active_orders_count >= 50:
+        raise ValueError(f'当前设备排队制作订单较多 (已排队 {active_orders_count} 单)，请稍后再试')
 
     # 3. 校验设备在线状态
     if target_device.status != Device.STATUS_ONLINE:
         status_disp = target_device.get_status_display() or '离线'
         raise ValueError(f'设备 ({target_device.device_sn}) 当前处于{status_disp}状态，无法接单制作')
 
-    # 4. 检查设备监控健康快照
-    import json
+    # 4. 计算物料总需求 (按行聚合返回)
+    per_cup_materials = calculate_required_materials(checked_items)
+    logger.debug(per_cup_materials)
+    required_materials = {}
+    for cup in per_cup_materials:
+        cup_mats = cup.get('sub_total_materials', {})
+        for mat_code, qty in cup_mats.items():
+            required_materials[mat_code] = required_materials.get(mat_code, Decimal('0.00')) + Decimal(str(qty))
+
+    # 5. 统一基于 Redis 与 MySQL 进行物料与耗材库存核验
     from django_redis import get_redis_connection
-    from devices.models import DeviceConsumableStock, DeviceMaterialStock
+    from inventory.models import Material
+    from devices.models import DeviceConsumableStock
 
     redis_conn = get_redis_connection("default")
-    snapshot_json = redis_conn.get(f"automake:monitor:snapshot:{target_device.device_sn}")
-    if snapshot_json:
-        try:
-            if isinstance(snapshot_json, bytes):
-                snapshot_json = snapshot_json.decode('utf-8')
-            snap_data = json.loads(snapshot_json)
-            if snap_data.get('disconnected') or not snap_data.get('healthy', True):
-                raise ValueError(f'设备 ({target_device.device_sn}) 状态异常，暂时无法接单')
-        except (ValueError, json.JSONDecodeError):
-            raise
-        except Exception:
-            pass
-
-    # 5. 校验当前设备的物料库存（扣除在途待制作订单后，食材走 Redis，杯型/耗材走 MySQL）
     mat_codes = list(required_materials.keys())
     material_checks = []
     has_shortage = False
     shortage_reasons = []
 
     if mat_codes:
-        unproduced_usage = calculate_unproduced_materials_for_device(target_device)
-        
-        # 查询 MySQL 耗材库存表
-        consumables_map = {
-            cs.code_id: cs for cs in DeviceConsumableStock.objects.filter(device=target_device)
-        }
-        known_consumable_codes = set(consumables_map.keys())
-        known_consumable_codes.update(['paperL', 'paperM', 'plasticL', 'plasticM', 'membrane', 'lid'])
-
-        # 食材类物料从 Redis 批量读取
-        ingredient_codes = [c for c in mat_codes if c not in known_consumable_codes]
-        def _safe_float(val):
-            if val is None:
-                return 0.0
+        # 0. 优先核验设备物理传感器快照（若物理硬件上报缺杯或损坏，坚决拒单拦截）
+        snapshot_raw = redis_conn.get(f"automake:monitor:snapshot:{target_device.device_sn}")
+        if snapshot_raw and isinstance(snapshot_raw, (str, bytes)):
             try:
-                return max(0.0, float(val))
-            except (ValueError, TypeError):
-                return 0.0
+                snap = json.loads(snapshot_raw)
+                if isinstance(snap, dict):
+                    if snap.get('disconnected') is True or snap.get('healthy') is False:
+                        raise ValueError(f'设备 ({target_device.device_sn}) 状态异常，暂时无法接单')
+                    cups_status = snap.get('cups', {})
+                    for c_code in mat_codes:
+                        c_info = cups_status.get(c_code)
+                        if isinstance(c_info, dict) and (c_info.get('empty') or c_info.get('damaged')):
+                            c_name = get_consumable_name_by_code(c_code)
+                            raise ValueError(f"制作设备传感器检测到耗材【{c_name}】已用尽，暂无法制作")
+            except ValueError:
+                raise
+            except Exception as snap_err:
+                logger.debug(f"[Precheck] 解析监控快照异常: {snap_err}")
 
-        stock_vals = {}
-        if ingredient_codes:
-            keys = [get_redis_stock_key(target_device.device_sn, code) for code in ingredient_codes]
-            vals = redis_conn.mget(keys)
-            if not isinstance(vals, (list, tuple)):
-                vals = [redis_conn.get(k) for k in keys]
-            stock_vals = {code: _safe_float(val) for code, val in zip(ingredient_codes, vals)}
+        # 获取在途已占用物料 (方案 A: 直接读取 Redis，空即为 0，不查 MySQL，不调 incr)
+        unproduced_usage = calculate_unproduced_materials_for_device(target_device)
+        logger.debug(f"unproduced_usage {unproduced_usage}")
 
-        from inventory.models import Material
+        # 批量从 Redis 读取所有物料与耗材库存 (O(1) 批量读取)
+        keys = [get_redis_stock_key(target_device.device_sn, code) for code in mat_codes]
+        vals = redis_conn.mget(keys)
+        if not isinstance(vals, (list, tuple)):
+            vals = [redis_conn.get(k) for k in keys]
+
         mats_db = {m.code: m for m in Material.objects.filter(code__in=mat_codes)}
 
-        for mat_code, qty in required_materials.items():
+        # 查询 MySQL 耗材表获取停售阈值
+        consumables_db = {
+            (cs.code.code if cs.code else str(cs.code_id)): cs
+            for cs in DeviceConsumableStock.objects.filter(device=target_device, code__code__in=mat_codes).select_related('code')
+        }
+
+        known_consumable_codes = {'paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'}
+        for idx, (mat_code, qty) in enumerate(required_materials.items()):
             qty_needed = float(qty)
-            in_flight_committed = float(unproduced_usage.get(mat_code, Decimal('0.00')))
-            unit = '个'
-            
-            if mat_code in known_consumable_codes:
-                # 杯型/耗材类型：通过 MySQL DeviceConsumableStock 校验
-                cs_obj = consumables_map.get(mat_code)
-                db_stock = max(0.0, float(cs_obj.quantity)) if cs_obj else 0.0
-                effective_available_stock = db_stock - in_flight_committed
-                mat_name = getattr(getattr(cs_obj, 'code', None), 'name', mat_code) if cs_obj else get_consumable_name_by_code(mat_code)
-                unit = getattr(cs_obj, 'unit', '张' if mat_code == 'membrane' else '个') if cs_obj else ('张' if mat_code == 'membrane' else '个')
-                storage_type = 'MySQL'
-                item_type = '耗材'
-                raw_stock = db_stock
+            if idx < len(vals):
+                val = vals[idx]
+            elif len(vals) > 0:
+                val = vals[-1]
             else:
-                # 食材类型：通过 Redis 实时料桶余量校验
-                stock_val = stock_vals.get(mat_code, 0.0)
-                effective_available_stock = stock_val - in_flight_committed
-                mat_name = mat_code
-                material_config = DeviceMaterialStock.objects.filter(device=target_device, code=mat_code).first()
-                if material_config and material_config.name:
-                    mat_name = getattr(material_config.name, 'name', mat_code)
-                elif mat_code in mats_db:
-                    mat_name = mats_db[mat_code].name
-                mat_obj = mats_db.get(mat_code)
-                unit = mat_obj.unit if mat_obj else 'g/ml'
-                storage_type = 'Redis'
-                item_type = '食材'
-                raw_stock = stock_val
+                val = None
+            redis_stock_val = 0.0
+            if val is not None:
+                try:
+                    val_str = val.decode('utf-8') if isinstance(val, bytes) else str(val)
+                    redis_stock_val = max(0.0, float(val_str))
+                except (ValueError, TypeError):
+                    redis_stock_val = 0.0
+
+            in_flight_committed = float(unproduced_usage.get(mat_code, Decimal('0.00')))
+
+            cs = consumables_db.get(mat_code)
+            is_consumable = mat_code in known_consumable_codes or (cs is not None)
+
+            if is_consumable and cs is not None:
+                stock_val = float(cs.quantity)
+            else:
+                stock_val = redis_stock_val
+
+            effective_available_stock = stock_val - in_flight_committed
+
+            mat_obj = mats_db.get(mat_code)
+            mat_name = mat_obj.name if mat_obj else get_consumable_name_by_code(mat_code)
+            unit = mat_obj.unit if mat_obj else ('张' if mat_code == 'membrane' else '个')
 
             is_sufficient = (effective_available_stock - qty_needed >= 0)
+
             if not is_sufficient:
                 has_shortage = True
-                shortage_reasons.append(f"{mat_name}缺料(可用{max(0.0, effective_available_stock):.1f}{unit}，需{qty_needed:.1f}{unit})")
+                shortage_reasons.append(f"{mat_name}缺料(可用{effective_available_stock:.1f}{unit}，需{qty_needed:.1f}{unit})")
+            elif cs:
+                stop_sale = getattr(cs, 'stop_sale_level', 5) or 0
+                if (cs.quantity - int(qty_needed)) < stop_sale:
+                    has_shortage = True
+                    is_sufficient = False
+                    shortage_reasons.append(f"耗材【{mat_name}】低于停售阈值({stop_sale}{unit})，暂停售卖")
 
             material_checks.append({
                 'code': mat_code,
                 'name': mat_name,
                 'unit': unit,
-                'type': item_type,
-                'storage': storage_type,
+                'type': '耗材' if mat_code in ['paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'] else '食材',
+                'storage': 'Redis',
                 'required': round(qty_needed, 2),
-                'stock_raw': round(raw_stock, 2),
+                'stock_raw': round(stock_val, 2),
                 'in_flight': round(in_flight_committed, 2),
-                'effective_available': round(max(0.0, effective_available_stock), 2),
+                'effective_available': round(effective_available_stock, 2),
                 'is_sufficient': is_sufficient,
             })
 
@@ -414,16 +575,18 @@ def precheck_order(store_id: int, items_data: list, device_sn: str = None, **kwa
         err.material_checks = material_checks
         raise err
 
+    pay_amount = max(1 if total_amount > 0 else 0, total_amount)
+
     return {
         'ok': True,
         'items': checked_items,
         'total_amount': total_amount,
-        'pay_amount': total_amount,
+        'discount_amount': 0,
+        'pay_amount': pay_amount,
         'store': store,
         'device': target_device,
-        'required_materials': required_materials,
-        'per_cup_materials': per_cup_materials,
         'material_checks': material_checks,
+        'required_materials': required_materials,
     }
 
 
@@ -431,72 +594,108 @@ def precheck_order(store_id: int, items_data: list, device_sn: str = None, **kwa
 def create_order(user, store_id: int, items_data: list, remark: str = '', device_sn: str = None, **kwargs) -> OrderMain:
     """
     创建订单（初始状态为 CREATED/待支付）
+    使用设备级别 Redis 分布式排他锁保护 precheck 与订单落库，杜绝并发超卖 (TOCTOU)
     """
-    
-    checked = precheck_order(store_id, items_data, device_sn=device_sn)
-    device = checked['device']
-    # 创建订单主表记录，初始状态为 created
-    order = OrderMain.objects.create(
-        user=user,
-        store=checked['store'],
-        device=device,
-        total_amount=checked['total_amount'],
-        discount_amount=0,
-        pay_amount=checked['pay_amount'],
-        remark=remark,
-        status=OrderMain.STATUS_PENDING_PAY,
-    )
+    target_sn = str(device_sn or '').strip()
+    lock_key = f"automake:device_order_lock:{target_sn}" if target_sn else None
+    redis_conn = None
+    lock_acquired = False
 
-    # 循环创建明细，并绑定多规格关联关系
-    for item_info in checked['items']:
-        oi = OrderItem.objects.create(
-            order=order,
-            item=item_info['item'],
-            item_name=item_info['item_name'],
-            sku_name=", ".join(item_info['sku_names']) if item_info['sku_names'] else '常规',
-            unit_price=item_info['unit_price'],
-            quantity=item_info['quantity'],
-            subtotal=item_info['subtotal']
+    if lock_key:
+        import time
+        from django_redis import get_redis_connection
+        redis_conn = get_redis_connection("default")
+        # 尝试获取设备分布式锁，最多自旋等待 1.5 秒
+        for _ in range(30):
+            if redis_conn.set(lock_key, "1", nx=True, ex=5):
+                lock_acquired = True
+                break
+            time.sleep(0.05)
+        if not lock_acquired:
+            raise ValueError("当前设备正忙，请稍后重试")
+
+    try:
+        checked = precheck_order(store_id, items_data, device_sn=device_sn, **kwargs)
+        device = checked['device']
+        discount_amount = checked.get('discount_amount', 0)
+        pay_amount = checked.get('pay_amount', checked['total_amount'])
+
+        # 创建订单主表记录，初始状态为 created
+        order = OrderMain.objects.create(
+            user=user,
+            store=checked['store'],
+            device=device,
+            total_amount=checked['total_amount'],
+            discount_amount=discount_amount,
+            pay_amount=pay_amount,
+            remark=remark,
+            status=OrderMain.STATUS_PENDING_PAY,
         )
-        if item_info['skus']:
-            oi.skus.set(item_info['skus'])
 
-    # 写入履约流转时间线（初始待支付节点，附带商品快照与支付金额元数据）
-    items_snapshot = [
-        {
-            'item_name': item_info.get('item_name', ''),
-            'sku_name': ", ".join(item_info.get('sku_names', [])) if item_info.get('sku_names') else '常规',
-            'quantity': item_info.get('quantity', 1),
-            'unit_price': item_info.get('unit_price', 0),
-            'subtotal': item_info.get('subtotal', 0)
-        }
-        for item_info in checked.get('items', [])
-    ]
-    record_order_timeline(
-        order=order,
-        action=OrderStatusLog.ACTION_CREATE,
-        action_name='订单创建（待支付）',
-        from_status='',
-        to_status=OrderMain.STATUS_PENDING_PAY,
-        operator_type=OrderStatusLog.OP_USER,
-        operator=f'user:{user.id}',
-        remark='用户下单，订单已创建，等待支付',
-        payload={
-            'store_id': checked['store'].id if checked.get('store') else None,
-            'store_name': checked['store'].name if checked.get('store') else '',
-            'device_sn': device.device_sn if device else '',
-            'total_amount': checked.get('total_amount', 0),
-            'pay_amount': checked.get('pay_amount', 0),
-            'items': items_snapshot,
-            'user_remark': remark,
-        }
-    )
+        # 循环创建明细，并绑定多规格关联关系
+        for item_info in checked['items']:
+            oi = OrderItem.objects.create(
+                order=order,
+                item=item_info['item'],
+                item_name=item_info['item_name'],
+                sku_name=", ".join(item_info['sku_names']) if item_info['sku_names'] else '常规',
+                unit_price=item_info['unit_price'],
+                quantity=item_info['quantity'],
+                subtotal=item_info['subtotal']
+            )
+            if item_info['skus']:
+                oi.skus.set(item_info['skus'])
 
-    logger.info(f'订单创建成功: order_no={order.order_no}, user_id={user.id}')
-    return order
+        # 写入履约流转时间线（初始待支付节点，附带商品快照与支付金额元数据）
+        items_snapshot = [
+            {
+                'item_name': item_info.get('item_name', ''),
+                'sku_name': ", ".join(item_info.get('sku_names', [])) if item_info.get('sku_names') else '常规',
+                'quantity': item_info.get('quantity', 1),
+                'unit_price': item_info.get('unit_price', 0),
+                'subtotal': item_info.get('subtotal', 0)
+            }
+            for item_info in checked.get('items', [])
+        ]
+        record_order_timeline(
+            order=order,
+            action=OrderStatusLog.ACTION_CREATE,
+            action_name='订单创建（待支付）',
+            from_status='',
+            to_status=OrderMain.STATUS_PENDING_PAY,
+            operator_type=OrderStatusLog.OP_USER,
+            operator=f'user:{user.id}',
+            remark='用户下单，订单已创建，等待支付',
+            payload={
+                'store_id': checked['store'].id if checked.get('store') else None,
+                'store_name': checked['store'].name if checked.get('store') else '',
+                'device_sn': device.device_sn if device else '',
+                'total_amount': checked.get('total_amount', 0),
+                'pay_amount': checked.get('pay_amount', 0),
+                'items': items_snapshot,
+                'user_remark': remark,
+            }
+        )
+
+        # 启动服务端原生异步后台定时器 (90秒未支付自动关单)
+        try:
+            from payments.services import start_order_timeout_timer
+            start_order_timeout_timer(order.order_no, timeout_seconds=90.0)
+        except Exception as e:
+            logger.warning(f"启动订单超时定时器异常 order_no={order.order_no}: {e}")
+
+        logger.info(f'订单创建成功: order_no={order.order_no}, user_id={user.id}')
+        return order
+    finally:
+        if lock_acquired and redis_conn:
+            try:
+                redis_conn.delete(lock_key)
+            except Exception:
+                pass
 
 
 def format_instant(dt):
+    """格式化时间戳为 ISO8601 UTC 毫秒字符串"""
     if not dt:
         return None
     if timezone.is_aware(dt):
@@ -533,9 +732,13 @@ def create_production_task(order: OrderMain) -> ProductionTask:
     if pickup and pickup.code:
         ticket_no = str(int(pickup.code)) if str(pickup.code).isdigit() else str(pickup.code)
 
-    # 2. 构造 merchInfos（包含每个商品的单杯配方）
+    # 2. 构造 merchInfos（复用 prefetch 缓存，避免 N+1 查询）
     merch_infos = []
-    for item in order.items.prefetch_related('skus', 'item').all():
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.select_related('item').prefetch_related('skus').all()
+
+    for item in order_items:
         skus = list(item.skus.all())
         if not skus and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
@@ -552,7 +755,7 @@ def create_production_task(order: OrderMain) -> ProductionTask:
         cup_res = calculate_required_materials(single_item_data)
         item_materials = {}
         if cup_res:
-            mats = cup_res[0].get('materials', {})
+            mats = cup_res[0].get('sub_total_materials', {})
             for m_code, m_qty in mats.items():
                 val = float(m_qty)
                 item_materials[m_code] = int(val) if val.is_integer() else round(val, 2)
@@ -615,33 +818,17 @@ def create_production_task(order: OrderMain) -> ProductionTask:
     return task
 
 
-def get_consumable_name_by_code(code: str) -> str:
-    """
-    根据耗材编码获取耗材的默认中文名称
-    """
-    from inventory.models import Material
-    mat = Material.objects.filter(code=code).first()
-    if mat:
-        return mat.name
-    mapping = {
-        'paperL': '纸大杯',
-        'paperM': '纸中杯',
-        'plasticL': '塑料大杯',
-        'plasticM': '塑料中杯',
-        'membrane': '膜',
-        'lid': '盖'
-    }
-    return mapping.get(code, code)
-
-
 def calculate_required_consumables_for_order(order: OrderMain) -> dict:
     """
     根据订单计算所需的耗材数量（杯子、封口膜、杯盖等）
-    
     直接调用 calculate_required_materials 并过滤出类型为耗材 (consumable/cup) 的物料总量。
     """
     items_data = []
-    for item in order.items.prefetch_related('skus', 'item').all():
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.select_related('item').prefetch_related('skus').all()
+
+    for item in order_items:
         sku_objs = list(item.skus.all())
         if not sku_objs and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
@@ -658,7 +845,7 @@ def calculate_required_consumables_for_order(order: OrderMain) -> dict:
     per_cup_materials = calculate_required_materials(items_data)
     all_materials = {}
     for cup in per_cup_materials:
-        cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
+        cup_mats = cup.get('sub_total_materials', {})
         for code, qty in cup_mats.items():
             all_materials[code] = all_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
 
@@ -684,14 +871,32 @@ def deduct_order_consumables(order: OrderMain) -> None:
     扣减订单所耗费的设备耗材库存（包括杯子、封口膜、杯盖等）
     
     1. 查询订单所需的耗材用量；
-    2. 对每个耗材，获取或创建设备耗材库存记录并采用 select_for_update() 悲观锁锁定，防止并发超卖；
-    3. 扣减数据库中的剩余数量并保存；
-    4. 对非杯子类耗材（lid, membrane，它们在支付前没有在 Redis 里被 Lua 预扣），真实扣除 Redis 中的值以保证同步；
+    2. 幂等防护：若此前在 try_lock_order_inventory 或支付环节已完成预扣，跳过二次扣减；
+    3. 获取或创建设备耗材库存记录并采用 select_for_update() 悲观锁锁定；
+    4. 扣减数据库中的剩余数量并保存；
     5. 当库存数量到达预警值（warn_level）时，触发短信预警和日志。
     """
     device = order.device
     if not device:
         logger.warning(f'订单 {order.order_no} 未绑定设备，跳过耗材扣减。')
+        return
+
+    from django_redis import get_redis_connection
+    redis_conn = get_redis_connection("default")
+
+    # 幂等防护：检查是否已在实际支付锁库阶段预扣
+    has_deducted = False
+    try:
+        exists_val = redis_conn.exists(f"automake:order_stock_deducted:{order.order_no}")
+        if isinstance(exists_val, int) and exists_val > 0:
+            has_deducted = True
+        elif exists_val is True:
+            has_deducted = True
+    except Exception:
+        pass
+
+    if getattr(order, 'stock_deducted', False) or has_deducted:
+        logger.info(f"订单 {order.order_no} 耗材库存此前已锁定/扣减，跳过二次扣减。")
         return
 
     required = calculate_required_consumables_for_order(order)
@@ -700,8 +905,6 @@ def deduct_order_consumables(order: OrderMain) -> None:
 
     from inventory.models import Material
     from devices.models import DeviceConsumableStock
-    from django_redis import get_redis_connection
-    redis_conn = get_redis_connection("default")
 
     for code, qty in required.items():
         # 1. 确保 Material 表中有对应的耗材类型纪录
@@ -735,22 +938,36 @@ def deduct_order_consumables(order: OrderMain) -> None:
         stock.save(update_fields=['quantity', 'updated_at'])
         logger.info(f'[CONSUMABLE_DEDUCT] 数据库耗材扣减: 设备={device.device_sn}, 耗材={code}, 数量={qty}, 剩余={new_qty}')
 
-        # 针对在支付时没有由 Lua 预扣的非杯子耗材 (如 lid, membrane)，在此处扣减其 Redis 缓存中的可用库存
-        # 杯子类的 Redis 可用库存已经在支付前(支付成功回调时)通过 Lua decrby 预扣减，不要重复扣减以防冲突
+        # 扣减 Redis 可用库存缓存
         key = get_redis_stock_key(device.device_sn, code)
-        if code not in ('paperL', 'paperM', 'plasticL', 'plasticM'):
-            val_to_deduct = int(qty * 100)
+        val_to_deduct = int(qty)
+        try:
             redis_conn.decrby(key, val_to_deduct)
-            logger.info(f'[CONSUMABLE_DEDUCT] Redis耗材扣减(非杯子): 键={key}, 扣减={val_to_deduct}')
+            logger.info(f'[CONSUMABLE_DEDUCT] Redis耗材扣减: 键={key}, 扣减={val_to_deduct}')
+        except Exception as e:
+            logger.warning(f"Redis耗材扣减异常: {e}")
 
-        # 物料预警逻辑：如果扣减后剩余数量低于或等于预警值，调用阿里云短信服务对物料员进行预警提示
+        # 物料预警逻辑：如果扣减后剩余数量低于或等于预警值，调用阿里云短信服务对物料员进行预警提示并记录 NotifyEvent
         if new_qty <= stock.warn_level:
-            # 防抖机制：使用 Redis 锁在 1 小时内仅发送一次
+            try:
+                from notifications.models import NotifyEvent
+                mat_display_name = stock.code.name if (hasattr(stock.code, 'name') and stock.code.name) else get_consumable_name_by_code(code)
+                NotifyEvent.objects.create(
+                    device=device,
+                    level=NotifyEvent.LEVEL_WARNING,
+                    event_type=NotifyEvent.EVENT_MATERIAL_LOW,
+                    title=f"耗材余量告警: {mat_display_name} 偏低",
+                    content=f"设备 ({device.device_sn}) 耗材 {mat_display_name} 当前剩余 {new_qty} {stock.unit}，已达到或低于预警阈值 ({stock.warn_level})，请及时补充。"
+                )
+            except Exception as notify_err:
+                logger.warning(f"创建耗材低余量 NotifyEvent 异常: {notify_err}")
+
             sms_lock_key = f"automake:sms_sent:{device.device_sn}:{code}"
             if redis_conn.set(sms_lock_key, "1", ex=3600, nx=True):
                 phone = device.store.contact_phone if (device.store and device.store.contact_phone) else "13800138000"
                 store_name = device.store.name if device.store else "未知门店"
-                logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {device.device_sn}) {stock.code.name} 耗材即将耗尽，当前剩余 {new_qty} {stock.unit}，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
+                mat_display_name = stock.code.name if (hasattr(stock.code, 'name') and stock.code.name) else get_consumable_name_by_code(code)
+                logger.info(f"[SMS_ALERT] 调用阿里云短信接口成功: 接收手机={phone}, 短信内容='【智能咖啡机】您的 {store_name} 门店设备 (SN: {device.device_sn}) {mat_display_name} 耗材即将耗尽，当前剩余 {new_qty} {stock.unit}，请及时补货。', template_code='SMS_ALERT_WARN', response='OK'")
 
 
 def record_order_timeline(
@@ -766,16 +983,6 @@ def record_order_timeline(
 ) -> OrderStatusLog:
     """
     记录订单履约流转时间线（高追溯、结构化记录）
-
-    :param order: 关联订单
-    :param action: 动作标识，如 create, pay_success, making_start, refund_applied, refund_failed 等
-    :param action_name: 动作中文名，如 '订单创建', '微信支付成功', '退款失败'
-    :param from_status: 变更前状态
-    :param to_status: 变更后状态
-    :param operator_type: user | device | admin | system | wechat
-    :param operator: 具体操作主体标识
-    :param remark: 说明备注
-    :param payload: 上下文详情字典
     """
     if from_status is None:
         from_status = order.status
@@ -816,7 +1023,7 @@ def update_order_status(order: OrderMain, new_status: str,
                         action: str = None, action_name: str = '',
                         operator_type: str = None, payload: dict = None) -> None:
     """
-    更新订单状态并记录履约流转时间线日志
+    更新订单状态并驱动履约流转时间线与 Redis 在途生命周期
     """
     old_status = order.status
     order.status = new_status
@@ -825,6 +1032,29 @@ def update_order_status(order: OrderMain, new_status: str,
         order.done_at = timezone.now()
 
     order.save(update_fields=['status', 'done_at', 'updated_at'])
+
+    # 1. 支付成功 (待出货): 累加在途占用
+    if old_status != OrderMain.STATUS_PAID and new_status == OrderMain.STATUS_PAID:
+        if order.device:
+            try:
+                order_mats = get_order_total_materials(order)
+                incr_device_in_flight_materials(order.device.device_sn, order_mats)
+            except Exception as e:
+                logger.warning(f"订单 {order.order_no} 累加在途物料异常: {e}")
+
+    # 2. 制作完成 / 取消 / 退款 / 失败 (由已支付/制作中 -> 终态): 释放在途占用
+    if old_status in (OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING) and new_status in (
+        OrderMain.STATUS_DONE,
+        OrderMain.STATUS_CANCELLED,
+        OrderMain.STATUS_REFUNDED,
+        OrderMain.STATUS_EXCEPTION
+    ):
+        if order.device:
+            try:
+                order_mats = get_order_total_materials(order)
+                decr_device_in_flight_materials(order.device.device_sn, order_mats)
+            except Exception as e:
+                logger.warning(f"订单 {order.order_no} 释放在途物料异常: {e}")
 
     # 自动推导默认 action 和 action_name（若未显式指定）
     if not action:
@@ -891,12 +1121,10 @@ def process_dispense_failure(order: OrderMain, operator: str = 'system', remark:
     1. 开启 DB 事务，将订单状态变更为 FAILED (failed)。
     2. 反向补偿 Redis 虚拟库存。
     """
-    
-    if order.status == OrderMain.STATUS_EXCEPTION: # STATUS_EXCEPTION mapped to 'failed'
+    if order.status == OrderMain.STATUS_EXCEPTION:
         logger.info(f'订单 {order.order_no} 已经是 FAILED 状态，跳过回滚。')
         return
 
-    import json
     logger.info(json.dumps({
         "event": "exception_rollback",
         "order_no": order.order_no,
@@ -929,7 +1157,11 @@ def process_dispense_failure(order: OrderMain, operator: str = 'system', remark:
             if base_sku:
                 skus = [base_sku]
         for sku in skus:
-            for ing in sku.global_sku.ingredients.select_related('material').all():
+            ings = list(sku.global_sku.ingredients.select_related('material').all()) if (hasattr(sku, 'global_sku') and sku.global_sku) else []
+            if not ings and hasattr(sku, 'global_sku') and sku.global_sku and sku.global_sku.template:
+                from global_config.models import GlobalSkuTemplateIngredient
+                ings = list(GlobalSkuTemplateIngredient.objects.filter(template=sku.global_sku.template).select_related('material'))
+            for ing in ings:
                 code = ing.material.code
                 qty = ing.quantity * item.quantity
                 required_materials[code] = required_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
@@ -939,9 +1171,8 @@ def process_dispense_failure(order: OrderMain, operator: str = 'system', remark:
     redis_conn = get_redis_connection("default")
 
     for code, qty in required_materials.items():
-        # 2. 反向补偿 Redis
         key = get_redis_stock_key(device.device_sn, code)
-        val = int(qty * 100)
+        val = int(qty)
         redis_conn.incrby(key, val)
         logger.info(f'[ROLLBACK] 成功加回 Redis 库存: order_no={order.order_no}, material={code}, qty={qty}')
 
@@ -962,7 +1193,7 @@ def reconcile_device_orders(device_sn: str, executed_tokens: list) -> dict:
     # 查找当前设备所有处于 PENDING_DISPENSE 状态的订单
     pending_orders = OrderMain.objects.filter(
         device=device,
-        status=OrderMain.STATUS_PAID # 即 pending_dispense
+        status=OrderMain.STATUS_PAID
     )
 
     token_status_map = {item['order_token']: item['status'] for item in executed_tokens if 'order_token' in item}
@@ -1030,8 +1261,10 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
     1. 针对已支付/待制作/制作中但尚未出餐完成的订单，反向归还所占用的耗材与物料库存；
     2. MySQL 耗材库存 (DeviceConsumableStock) 原子加回；
     3. Redis 耗材预扣 (automake:stock:{sn}:{code}) 原子加回；
-    4. 关联的未完成生产任务 (ProductionTask) 标记为已终止/失败；
-    5. 返回详细的放库物料明细清单，供上位机或前端展示。
+    4. 释放在途物料锁定 (decr_device_in_flight_materials)；
+    5. 重置 stock_deducted 标记为 False；
+    6. 关联的未完成生产任务 (ProductionTask) 标记为已终止/失败；
+    7. 返回详细的放库物料明细清单，供上位机或前端展示。
     """
     device = order.device
     if not device:
@@ -1045,7 +1278,11 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
 
     # 1. 计算订单的所有所需物料
     items_data = []
-    for item in order.items.prefetch_related('skus', 'item').all():
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.prefetch_related('skus', 'item').all()
+
+    for item in order_items:
         sku_objs = list(item.skus.all())
         if not sku_objs and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
@@ -1062,7 +1299,7 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
     per_cup_materials = calculate_required_materials(items_data)
     all_materials = {}
     for cup in per_cup_materials:
-        cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
+        cup_mats = cup.get('sub_total_materials', {})
         for code, qty in cup_mats.items():
             all_materials[code] = all_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
 
@@ -1093,7 +1330,7 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
 
             # 2. 加回 Redis 耗材预扣
             key = get_redis_stock_key(device.device_sn, code)
-            val_to_incr = int(qty * 100)
+            val_to_incr = int(qty)
             redis_conn.incrby(key, val_to_incr)
 
             restored_list.append({
@@ -1106,7 +1343,7 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
             })
             logger.info(f"[STOCK_RESTORE] 耗材释放回库: 设备={device.device_sn}, 耗材={code}({mat_name}), 数量={qty_int}")
         else:
-            # 食材类物料：解冻在途锁定 (订单取消/退款后 unproduced_usage 自动清零)
+            # 食材类物料：解冻在途锁定
             restored_list.append({
                 'code': code,
                 'name': mat_name,
@@ -1117,6 +1354,12 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
             })
             logger.info(f"[STOCK_RESTORE] 食材解除在途占用: 设备={device.device_sn}, 食材={code}({mat_name}), 数量={qty_float}")
 
+    # 释放在途锁定
+    try:
+        decr_device_in_flight_materials(device.device_sn, all_materials)
+    except Exception as e:
+        logger.warning(f"退款放库扣减在途异常 order_no={order.order_no}: {e}")
+
     # 作废关联的生产任务
     ProductionTask.objects.filter(order=order).update(
         status=ProductionTask.TASK_FAILED,
@@ -1124,6 +1367,11 @@ def restore_order_inventory(order: OrderMain, operator: str = 'system', reason: 
     )
 
     logger.info(f"[STOCK_RESTORE] 订单 {order.order_no} 退款放库完成，释放物料项: {len(restored_list)}")
+    if getattr(order, 'stock_deducted', False):
+        order.stock_deducted = False
+        order.save(update_fields=['stock_deducted', 'updated_at'])
+    redis_conn.delete(f"automake:order_stock_deducted:{order.order_no}")
+
     return {
         'success': True,
         'order_no': order.order_no,
@@ -1148,17 +1396,17 @@ def precheck_device_environment_for_pay(order: OrderMain) -> tuple:
         return False, f"制作设备【{device.device_sn}】当前处于{status_disp}状态，暂不可出餐"
 
     # 2. 校验设备硬件监控快照健康度
-    import json
     from django_redis import get_redis_connection
     redis_conn = get_redis_connection("default")
     snapshot_json = redis_conn.get(f"automake:monitor:snapshot:{device.device_sn}")
-    if snapshot_json:
+    if snapshot_json and isinstance(snapshot_json, (str, bytes)):
         try:
             if isinstance(snapshot_json, bytes):
                 snapshot_json = snapshot_json.decode('utf-8')
             snap_data = json.loads(snapshot_json)
-            if snap_data.get('disconnected') or not snap_data.get('healthy', True):
-                return False, f"制作设备【{device.device_sn}】硬件状态异常，暂不可出餐"
+            if isinstance(snap_data, dict):
+                if snap_data.get('disconnected') is True or snap_data.get('healthy') is False:
+                    return False, f"制作设备【{device.device_sn}】硬件状态异常，暂不可出餐"
         except (ValueError, json.JSONDecodeError):
             pass
         except Exception:
@@ -1197,7 +1445,11 @@ def try_lock_order_inventory(order: OrderMain) -> tuple:
 
     # 1. 计算订单所需的耗材与物料总量
     items_data = []
-    for item in order.items.prefetch_related('skus', 'item').all():
+    order_items = getattr(order, '_prefetched_objects_cache', {}).get('items')
+    if order_items is None:
+        order_items = order.items.prefetch_related('skus', 'item').all()
+
+    for item in order_items:
         sku_objs = list(item.skus.all())
         if not sku_objs and item.item:
             base_sku = MenuSku.objects.filter(item=item.item, is_active=True).first()
@@ -1214,7 +1466,7 @@ def try_lock_order_inventory(order: OrderMain) -> tuple:
     per_cup_materials = calculate_required_materials(items_data)
     all_materials = {}
     for cup in per_cup_materials:
-        cup_mats = cup.get('materials', cup) if isinstance(cup, dict) else cup
+        cup_mats = cup.get('sub_total_materials', {})
         for code, qty in cup_mats.items():
             all_materials[code] = all_materials.get(code, Decimal('0.00')) + Decimal(str(qty))
 
@@ -1232,22 +1484,57 @@ def try_lock_order_inventory(order: OrderMain) -> tuple:
         if code in consumable_codes
     }
 
-    # 2. 检查并悲观锁定 MySQL 耗材库存 (select_for_update)
+    # 2. 检查物理传感器缺料状态
+    for cup_code in required_cups.keys():
+        sensor_cup_val = redis_conn.get(get_redis_stock_key(device.device_sn, cup_code))
+        if sensor_cup_val is not None:
+            try:
+                if float(sensor_cup_val) <= 0:
+                    mat_name = get_consumable_name_by_code(cup_code)
+                    return False, f"制作设备传感器检测到耗材【{mat_name}】已用尽，暂无法制作", {}
+            except (ValueError, TypeError):
+                pass
+
+    # 3. 校验食材类物料 (Redis) 在途有效可用库存防超卖
+    required_ingredients = {
+        code: qty for code, qty in all_materials.items()
+        if code not in consumable_codes
+    }
+    if required_ingredients:
+        unproduced_usage = calculate_unproduced_materials_for_device(device)
+        for mat_code, qty in required_ingredients.items():
+            stock_key = get_redis_stock_key(device.device_sn, mat_code)
+            stock_val_str = redis_conn.get(stock_key)
+            try:
+                stock_val = float(stock_val_str) if stock_val_str is not None else 0.0
+            except (ValueError, TypeError):
+                stock_val = 0.0
+            in_flight = float(unproduced_usage.get(mat_code, Decimal('0.00')))
+            effective_avail = stock_val - in_flight
+            qty_needed = float(qty)
+            if effective_avail < qty_needed:
+                mat_obj = Material.objects.filter(code=mat_code).first()
+                mat_name = mat_obj.name if mat_obj else mat_code
+                unit = mat_obj.unit if mat_obj else 'g/ml'
+                return False, f"食材【{mat_name}】库存不足 (可用 {max(0.0, effective_avail):.1f}{unit}, 需 {qty_needed:.1f}{unit})", {}
+
+    # 4. 悲观锁定 MySQL 耗材库存 (select_for_update)
     cs_records = {
         cs.code.code if cs.code else str(cs.code_id): cs
         for cs in DeviceConsumableStock.objects.select_for_update().select_related('code').filter(
             device=device,
             code__code__in=required_cups.keys()
-        )
+        ).order_by('code__code')
     }
 
     for cup_code, qty in required_cups.items():
         cs_obj = cs_records.get(cup_code)
         needed = int(qty)
-        if not cs_obj or cs_obj.quantity < needed:
+        stop_sale_level = int(getattr(cs_obj, 'stop_sale_level', 5)) if cs_obj else 0
+        if not cs_obj or (cs_obj.quantity - needed) < stop_sale_level:
             mat_name = get_consumable_name_by_code(cup_code)
-            avail = cs_obj.quantity if cs_obj else 0
-            return False, f"耗材【{mat_name}】库存不足 (需 {needed}, 仅剩 {avail})", {}
+            avail = max(0, cs_obj.quantity - stop_sale_level) if cs_obj else 0
+            return False, f"耗材【{mat_name}】库存不足或已达停售线 (需 {needed}, 可用 {avail})", {}
 
     # 扣减 MySQL
     for cup_code, qty in required_cups.items():
@@ -1255,16 +1542,21 @@ def try_lock_order_inventory(order: OrderMain) -> tuple:
         cs_obj.quantity -= int(qty)
         cs_obj.save(update_fields=['quantity', 'updated_at'])
 
-    # 3. 同步预扣 Redis 耗材预扣
+    # 5. 同步预扣 Redis 耗材预扣
     redis_deducted = []
     for cup_code, qty in required_cups.items():
         key = get_redis_stock_key(device.device_sn, cup_code)
-        val_to_deduct = int(qty * 100)
+        val_to_deduct = int(qty)
         try:
             redis_conn.decrby(key, val_to_deduct)
             redis_deducted.append((cup_code, val_to_deduct))
         except Exception as e:
             logger.warning(f"Redis 耗材预扣异常: {e}")
+
+    # 标记该订单耗材已在支付前锁库扣减，防止出单完成时二次扣减
+    order.stock_deducted = True
+    order.save(update_fields=['stock_deducted', 'updated_at'])
+    redis_conn.set(f"automake:order_stock_deducted:{order.order_no}", "1", ex=86400)
 
     lock_ctx = {
         'order_no': order.order_no,
@@ -1304,7 +1596,7 @@ def rollback_order_locked_inventory(order: OrderMain, locked_details: dict = Non
 
         # 加回 Redis
         key = get_redis_stock_key(device.device_sn, cup_code)
-        val_to_incr = int(qty * 100)
+        val_to_incr = int(qty)
         try:
             redis_conn.incrby(key, val_to_incr)
         except Exception as e:
@@ -1312,4 +1604,68 @@ def rollback_order_locked_inventory(order: OrderMain, locked_details: dict = Non
 
         logger.info(f"[STOCK_UNLOCK] 订单 {order.order_no} 释放锁定耗材: {cup_code} +{qty}, 原因: {reason}")
 
+    order.stock_deducted = False
+    order.save(update_fields=['stock_deducted', 'updated_at'])
+    redis_conn.delete(f"automake:order_stock_deducted:{order.order_no}")
 
+
+def estimate_wait_minutes(order: OrderMain) -> int | None:
+    """
+    估算订单等候时间（分钟）
+
+    算法：
+      - 同一设备当前状态为 pending_dispense 或 making 的订单数量 × 2 分钟/单
+      - 仅在非终态（created/pending_dispense/making）时返回估算值
+      - 对于已完成或失败的订单返回 None
+    """
+    if not order:
+        return None
+    terminal_statuses = (
+        OrderMain.STATUS_DONE,
+        OrderMain.STATUS_CANCELLED,
+        OrderMain.STATUS_EXCEPTION,
+        OrderMain.STATUS_REFUNDED,
+    )
+    if order.status in terminal_statuses:
+        return None
+
+    if not order.device:
+        return None
+
+    queue_ahead = OrderMain.objects.filter(
+        device=order.device,
+        status__in=(OrderMain.STATUS_PAID, OrderMain.STATUS_MAKING),
+        created_at__lt=order.created_at,
+    ).count()
+
+    return (queue_ahead + 1) * 2
+
+
+def deduct_order_redis_ingredients(order: OrderMain) -> None:
+    """
+    扣减订单所耗食材的 Redis 实时基准库存（出杯完成瞬间调用）
+    与在途物料释放配合，确保在上位机下一帧 MQTT 传感器上报到达前的空窗期内，
+    有效可用库存平滑无缝衔接，消除幽灵库存回弹。
+    """
+    if not order or not order.device:
+        return
+
+    from django_redis import get_redis_connection
+    redis_conn = get_redis_connection("default")
+
+    order_mats = get_order_total_materials(order)
+    known_consumable_codes = {'paperL', 'paperM', 'plasticL', 'plasticM', 'lid', 'membrane'}
+
+    for code, qty in order_mats.items():
+        if code in known_consumable_codes:
+            continue
+        key = get_redis_stock_key(order.device.device_sn, code)
+        val_to_decr = float(qty)
+        try:
+            cur_val = float(redis_conn.get(key) or 0.0)
+            new_val = max(0.0, cur_val - val_to_decr)
+            val_str = str(int(new_val)) if new_val.is_integer() else str(new_val)
+            redis_conn.set(key, val_str)
+            logger.info(f"[REDIS_INGREDIENT_DEDUCT] 订单 {order.order_no} 出杯扣减食材缓存: {code} -{val_to_decr}, 剩余={new_val}")
+        except Exception as e:
+            logger.warning(f"扣减食材 Redis 异常: {e}")

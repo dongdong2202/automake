@@ -56,7 +56,6 @@ urlpatterns = [
 
     # 支付模块
     path('api/pay/', include('payments.urls')),
-    path('payment-test/', __import__('payments.views', fromlist=['PaymentTestPageView']).PaymentTestPageView.as_view(), name='payment-test-page'),
 
     # 设备模块（上位机调用）
     path('api/device/', include('devices.urls')),

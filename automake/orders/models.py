@@ -91,6 +91,8 @@ class OrderMain(models.Model):
     discount_amount = models.IntegerField(default=0, verbose_name='优惠金额（分）')
     # 实付金额 = total_amount - discount_amount
     pay_amount = models.IntegerField(default=0, verbose_name='实付金额（分）')
+    # 耗材库存是否已扣减 (事务级持久化防二次扣减标记)
+    stock_deducted = models.BooleanField(default=False, db_index=True, verbose_name='耗材库存是否已扣减')
     # 备注（用户下单时填写）
     remark = models.CharField(max_length=256, blank=True, verbose_name='备注')
     # 支付时间
@@ -211,8 +213,22 @@ class OrderStatusLog(models.Model):
         verbose_name_plural = '订单状态日志'
         ordering = ['created_at']
 
+    @property
+    def from_status_display(self):
+        status_map = dict(OrderMain.STATUS_CHOICES)
+        return status_map.get(self.from_status, self.from_status)
+
+    @property
+    def to_status_display(self):
+        status_map = dict(OrderMain.STATUS_CHOICES)
+        return status_map.get(self.to_status, self.to_status)
+
+    @property
+    def status_flow_display(self):
+        return f"{self.from_status_display} ➔ {self.to_status_display}"
+
     def __str__(self):
-        return f'{self.order.order_no}: {self.from_status} → {self.to_status} ({self.action_name or self.action or "update"})'
+        return f'{self.order.order_no}: {self.from_status_display} → {self.to_status_display} ({self.action_name or self.action or "update"})'
 
 
 class ProductionTask(models.Model):
@@ -304,7 +320,7 @@ class OrderInvoice(models.Model):
     email = models.EmailField(verbose_name='接收邮箱')
     amount = models.IntegerField(verbose_name='开票金额（分）')
     status = models.CharField(
-        max_length=20, choices=STATUS_CHOICES, default=STATUS_ISSUED, verbose_name='开票状态'
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_ISSUED, db_index=True, verbose_name='开票状态'
     )
     invoice_url = models.URLField(max_length=512, blank=True, default='', verbose_name='电子发票下载链接')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='申请时间')
@@ -319,85 +335,3 @@ class OrderInvoice(models.Model):
     def __str__(self):
         return f"{self.order.order_no} - {self.title} ({self.get_status_display()})"
 
-
-class UserCoupon(models.Model):
-    """
-    用户优惠券表
-    """
-    TYPE_REDUCTION = 'reduction'      # 满减券
-    TYPE_DIRECT = 'direct'            # 无门槛立减券
-    TYPE_DISCOUNT = 'discount'        # 折扣券
-    TYPE_CHOICES = [
-        (TYPE_REDUCTION, '满减券'),
-        (TYPE_DIRECT, '无门槛立减券'),
-        (TYPE_DISCOUNT, '折扣券'),
-    ]
-
-    STATUS_AVAILABLE = 'available'
-    STATUS_USED = 'used'
-    STATUS_EXPIRED = 'expired'
-    STATUS_CHOICES = [
-        (STATUS_AVAILABLE, '可使用'),
-        (STATUS_USED, '已使用'),
-        (STATUS_EXPIRED, '已过期'),
-    ]
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
-        related_name='coupons', verbose_name='所属用户'
-    )
-    title = models.CharField(max_length=128, verbose_name='优惠券名称')
-    coupon_type = models.CharField(
-        max_length=20, choices=TYPE_CHOICES, default=TYPE_DIRECT, verbose_name='优惠类型'
-    )
-    # 优惠金额（分，立减或满减券有效）
-    amount = models.IntegerField(default=500, verbose_name='面额（分）')
-    # 最低消费门槛（分，0表示无门槛）
-    min_spend = models.IntegerField(default=0, verbose_name='使用门槛（分）')
-    # 折扣率（80 表示 8折，仅在 discount 券有效）
-    discount_rate = models.IntegerField(default=100, verbose_name='折扣率(%)')
-    status = models.CharField(
-        max_length=20, choices=STATUS_CHOICES, default=STATUS_AVAILABLE, db_index=True, verbose_name='状态'
-    )
-    expires_at = models.DateTimeField(verbose_name='有效期至')
-    used_order = models.ForeignKey(
-        OrderMain, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='used_coupons', verbose_name='核销订单'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='领取时间')
-
-    class Meta:
-        db_table = 'user_coupon'
-        verbose_name = '用户优惠券'
-        verbose_name_plural = '用户优惠券列表'
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.user} - {self.title} ({self.get_status_display()})"
-
-
-class UserPointLog(models.Model):
-    """
-    用户积分变动流水
-    """
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
-        related_name='point_logs', verbose_name='用户'
-    )
-    points = models.IntegerField(verbose_name='积分变动(正加负减)')
-    balance_after = models.IntegerField(default=0, verbose_name='变动后积分余额')
-    action = models.CharField(max_length=128, verbose_name='变动说明')
-    order = models.ForeignKey(
-        OrderMain, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='point_logs', verbose_name='关联订单'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='发生时间')
-
-    class Meta:
-        db_table = 'user_point_log'
-        verbose_name = '积分流水'
-        verbose_name_plural = '积分流水列表'
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.user} {self.action}: {self.points}"

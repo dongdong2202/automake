@@ -143,16 +143,20 @@ class ComprehensiveMaterialTester:
         # 5. 配置关键多料桶字典 DeviceBarrelDict (b01 和 b02 均为鲜牛奶)
         DeviceBarrelDict.objects.filter(device=self.device).delete()
         self.barrel_b01 = DeviceBarrelDict.objects.create(
-            device=self.device, barrel_code="b01", material=self.mat_milk, created_by=self.user
+            device=self.device, barrel_code="b01", material=self.mat_milk,
+            alarm_threshold_1=Decimal('0.00'), alarm_threshold_2=Decimal('0.00'), created_by=self.user
         )
         self.barrel_b02 = DeviceBarrelDict.objects.create(
-            device=self.device, barrel_code="b02", material=self.mat_milk, created_by=self.user
+            device=self.device, barrel_code="b02", material=self.mat_milk,
+            alarm_threshold_1=Decimal('0.00'), alarm_threshold_2=Decimal('0.00'), created_by=self.user
         )
         self.barrel_b03 = DeviceBarrelDict.objects.create(
-            device=self.device, barrel_code="b03", material=self.mat_bean, created_by=self.user
+            device=self.device, barrel_code="b03", material=self.mat_bean,
+            alarm_threshold_1=Decimal('0.00'), alarm_threshold_2=Decimal('0.00'), created_by=self.user
         )
         self.barrel_b09 = DeviceBarrelDict.objects.create(
-            device=self.device, barrel_code="b09", material=self.mat_syrup, created_by=self.user
+            device=self.device, barrel_code="b09", material=self.mat_syrup,
+            alarm_threshold_1=Decimal('0.00'), alarm_threshold_2=Decimal('0.00'), created_by=self.user
         )
 
         print(f"   ✓ 设备 [{self.device.device_sn}] 料桶映射已就绪：")
@@ -236,10 +240,11 @@ class ComprehensiveMaterialTester:
             cs, _ = DeviceConsumableStock.objects.get_or_create(
                 device=self.device,
                 code=mat_obj,
-                defaults={"quantity": qty, "init_quantity": 100, "unit": unit, "warn_level": 10}
+                defaults={"quantity": qty, "init_quantity": 100, "unit": unit, "warn_level": 10, "stop_sale_level": 0}
             )
             cs.quantity = qty
-            cs.save(update_fields=['quantity', 'updated_at'])
+            cs.stop_sale_level = 0
+            cs.save(update_fields=['quantity', 'stop_sale_level', 'updated_at'])
 
     def clean_unproduced_orders(self):
         """清理已有的在途待制作测试订单，避免测试间干扰"""

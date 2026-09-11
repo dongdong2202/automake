@@ -74,48 +74,22 @@
           <el-table-column prop="store_name" label="所属门店" width="140">
             <template #default="{ row }">{{ row.store_name || '未分配' }}</template>
           </el-table-column>
-          <el-table-column prop="province" label="省份" width="100">
-            <template #default="{ row }">{{ row.province || '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="city" label="城市" width="100">
-            <template #default="{ row }">{{ row.city || '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="device_model_name" label="设备型号" width="130">
-            <template #default="{ row }">
-              <el-tag v-if="row.device_model_name" size="small" type="primary">{{ row.device_model_name }}</el-tag>
-              <span v-else style="color: #c0c4cc;">-</span>
-            </template>
-          </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
               <StatusBadge :status="row.status" />
             </template>
           </el-table-column>
-          <el-table-column prop="firmware_version" label="固件版本" width="110">
-            <template #default="{ row }">{{ row.firmware_version || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="经纬度坐标" width="160" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span v-if="row.lng !== undefined && row.lng !== null && row.lat !== undefined && row.lat !== null" style="font-family: monospace; font-size: 12px;">
-                {{ row.lng }}, {{ row.lat }}
-              </span>
-              <span v-else-if="row.gps_coordinate" style="font-family: monospace; font-size: 12px;">
-                {{ row.gps_coordinate }}
-              </span>
-              <span v-else style="color: #c0c4cc;">-</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="address" label="详细布设地址" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.address || '-' }}</template>
-          </el-table-column>
           <el-table-column prop="last_heartbeat_at" label="最后心跳" width="170" />
-          <el-table-column label="操作" width="230" fixed="right">
+          <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
               <el-button type="success" link size="small" @click="viewDeviceStock(row.device_sn)">
                 库存
               </el-button>
               <el-button type="primary" link size="small" @click="$router.push(`/monitor/${row.device_sn}`)">
                 监控
+              </el-button>
+              <el-button type="success" link size="small" @click="openConsumableDialog(row)">
+                耗材录入
               </el-button>
               <el-button type="primary" link size="small" @click="openEditDeviceDialog(row)">
                 编辑
@@ -610,6 +584,56 @@
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- ============================================================ -->
+    <!-- 对话框 0: 设备耗材补货与库存调整 -->
+    <!-- ============================================================ -->
+    <el-dialog
+      v-model="showConsumableDialog"
+      title="设备耗材库存补货 / 盘点录入"
+      width="600px"
+      destroy-on-close
+    >
+      <div style="margin-bottom: 14px; font-size: 13px; color: #606266;">
+        当前设备: <strong>{{ currentConsumableDevice?.device_name || currentConsumableDevice?.device_sn }}</strong> 
+        <el-tag size="small" type="info" style="margin-left: 8px;">{{ currentConsumableDevice?.device_sn }}</el-tag>
+      </div>
+      <el-alert
+        title="耗材（纸杯、塑料杯、杯盖、封口膜）由人工维护，提交后将实时写入数据库并 1:1 同步刷新 Redis 可用库存。"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 16px;"
+      />
+      <el-table :data="consumableFormList" border size="small">
+        <el-table-column prop="name" label="耗材类型" min-width="140">
+          <template #default="{ row }">
+            <span style="font-weight: 500;">{{ row.name }}</span>
+            <div style="font-size: 12px; color: #909399;">{{ row.code }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="unit" label="单位" width="80" align="center" />
+        <el-table-column label="最新库存 (实盘录入)" width="200" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.quantity"
+              :min="0"
+              :max="5000"
+              :step="10"
+              size="small"
+              controls-position="right"
+              style="width: 150px;"
+            />
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="showConsumableDialog = false">取消</el-button>
+        <el-button type="primary" :loading="submittingConsumables" @click="submitConsumableUpdate">
+          确认录入并同步
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- ============================================================ -->
     <!-- 对话框 1: 录入/编辑设备档案 -->
@@ -1207,6 +1231,8 @@ import {
   updatePosterApi,
   deletePosterApi,
   getDeviceInventoryRecordsApi,
+  getDeviceStocksOverviewApi,
+  updateDeviceConsumablesApi,
 } from '@/api/devices'
 import {
   getDeviceModelsApi,
@@ -1255,6 +1281,56 @@ const showDeviceDialog = ref(false)
 const isEditDevice = ref(false)
 const submitDeviceLoading = ref(false)
 const currentDeviceSn = ref('')
+
+// 耗材补货与盘点录入
+const showConsumableDialog = ref(false)
+const submittingConsumables = ref(false)
+const currentConsumableDevice = ref<any>(null)
+const consumableFormList = ref([
+  { code: 'paperL', name: '大号纸杯', unit: '个', quantity: 100 },
+  { code: 'paperM', name: '中号纸杯', unit: '个', quantity: 100 },
+  { code: 'plasticL', name: '大号塑料杯', unit: '个', quantity: 100 },
+  { code: 'plasticM', name: '中号塑料杯', unit: '个', quantity: 100 },
+  { code: 'lid', name: '杯盖', unit: '个', quantity: 150 },
+  { code: 'membrane', name: '封口膜', unit: '张', quantity: 500 },
+])
+
+const openConsumableDialog = async (device: any) => {
+  currentConsumableDevice.value = device
+  showConsumableDialog.value = true
+  try {
+    const res = await getDeviceStocksOverviewApi({ device_sn: device.device_sn })
+    if (res.data && res.data.length > 0 && res.data[0].consumables) {
+      const dbCons = res.data[0].consumables
+      consumableFormList.value.forEach(item => {
+        const found = dbCons.find((c: any) => c.code === item.code)
+        if (found) {
+          item.quantity = found.quantity
+        }
+      })
+    }
+  } catch (err) {
+    console.error('加载当前耗材库存失败:', err)
+  }
+}
+
+const submitConsumableUpdate = async () => {
+  if (!currentConsumableDevice.value) return
+  submittingConsumables.value = true
+  try {
+    const items = consumableFormList.value.map(item => ({
+      code: item.code,
+      quantity: item.quantity,
+    }))
+    await updateDeviceConsumablesApi(currentConsumableDevice.value.device_sn, items)
+    ElMessage.success('耗材库存已成功录入并实时同步至 Redis！')
+    showConsumableDialog.value = false
+  } catch (err: any) {
+    ElMessage.error(err?.message || '耗材库存更新失败')
+  } finally {
+    submittingConsumables.value = false
+  }
+}
 
 const deviceFormData = reactive({
   device_sn: '',

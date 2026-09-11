@@ -57,25 +57,29 @@ class StoreMenuView(APIView):
             # 获取该门店关联的首台设备
             device = store.devices.select_related('device_model').first()
 
-        # 超级管理员 cxd 或 super_admin 可以查看任意门店菜单，且不受营业状态限制
-        is_cxd = False
+        # 超级管理员可以查看任意门店菜单，且不受营业状态限制
+        is_super_admin = False
         if request.user and request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
-                is_cxd = True
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+                is_super_admin = True
 
-        if not store.is_open and not is_cxd:
+        if not store.is_open and not is_super_admin:
             return error('门店暂未营业', code=3002, status=400)
 
-        # 获取该设备或门店所有上架的 MenuItem
-        items_query = MenuItem.objects.filter(store=store, is_active=True)
-        if device and device.device_model:
-            # 如果该设备有关联的特定设备型号，且该型号在当前门店有上架商品，则优先按型号筛选
-            matched_items = items_query.filter(device_model=device.device_model)
-            if matched_items.exists():
-                items_query = matched_items
+        # 校验设备及其所属设备型号（菜单类型）：只有属于特定型号的设备才可以拉起菜单
+        if not device or not device.device_model:
+            return error('该设备未配置所属设备型号（菜单类型），无法拉取菜单', code=3004, status=400)
 
+        # 严格限定只拉取属于当前设备型号的已上架商品（杜绝跨设备型号借调兜底）
         local_items = (
-            items_query
+            MenuItem.objects.filter(
+                store=store,
+                device_model=device.device_model,
+                global_item__category__device_model=device.device_model,
+                is_active=True,
+                global_item__is_active=True,
+                global_item__category__is_active=True
+            )
             .select_related('global_item', 'global_item__category', 'device_model')
             .prefetch_related('skus', 'skus__global_sku')
             .order_by('sort_order', 'id')
@@ -89,7 +93,7 @@ class StoreMenuView(APIView):
             if not g_item.is_active:
                 continue
             g_cat = g_item.category
-            if not g_cat.is_active:
+            if not g_cat.is_active or g_cat.device_model_id != device.device_model_id:
                 continue
 
             # 按全局分类进行归类分组

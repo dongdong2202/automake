@@ -8,10 +8,11 @@
 """
 
 import logging
+import threading
 from rest_framework.views import APIView
 from utils.permissions import IsAdmin
 from utils.response import ok, error
-from orders.models import OrderMain
+from orders.models import OrderMain, OrderStatusLog
 from payments.services import refund_order
 from ..serializers import OrderAdminSerializer
 from ..filters import StandardPagination
@@ -95,10 +96,15 @@ class OrderDetailView(APIView):
                 'action': log.action,
                 'action_name': log.action_name,
                 'from_status': log.from_status,
+                'from_status_display': log.from_status_display,
                 'to_status': log.to_status,
+                'to_status_display': log.to_status_display,
+                'status_flow_display': log.status_flow_display,
                 'operator_type': log.operator_type,
                 'operator': log.operator,
                 'remark': log.remark,
+                'pay_method': (log.payload or {}).get('pay_method', ''),
+                'pay_method_display': (log.payload or {}).get('pay_method_display', ''),
                 'payload': log.payload or {},
                 'created_at': log.created_at.isoformat()
             }
@@ -107,165 +113,280 @@ class OrderDetailView(APIView):
         return ok(data)
 
 
-class OrderRefundActionView(APIView):
-    """
-    管理员退款操作接口
+def _get_admin_order_for_refund(request, order_no: str):
+    """退款前置鉴权与订单状态校验（提炼共用，避免冗余）"""
+    order = OrderMain.objects.filter(order_no=order_no).first()
+    if not order:
+        logger.warning(f"[AdminOrderRefund] 退款订单不存在: order_no={order_no}")
+        return None, error('订单不存在', code=4041)
 
-    POST /api/admin/orders/<str:order_no>/refund/
-    """
-    permission_classes = [IsAdmin]
+    if not request.user.is_super_admin and not request.user.stores.filter(id=order.store_id).exists():
+        logger.warning(f"[AdminOrderRefund] 无权操作该订单退款: order_no={order_no}, user={request.user.username}")
+        return None, error('无权操作该订单', code=4031)
 
-    def post(self, request, order_no):
-        order = OrderMain.objects.filter(order_no=order_no).first()
+    if order.status in [OrderMain.STATUS_REFUNDED, OrderMain.STATUS_REFUNDING]:
+        return None, error('该订单已处于退款或退款中状态，请勿重复操作', code=4004)
+
+    return order, None
+
+
+def _async_execute_auto_refund(order_id: int, admin_username: str, reason: str, funds_account: str = None, status_mode: str = 'paid'):
+    """
+    后台异步执行自动退款全流程，并将详细轨迹与每一步状态写入履约流转时间线（零 HTTP 阻塞）
+    """
+    from orders.models import OrderMain, OrderStatusLog, ProductionTask
+    from orders.services import record_order_timeline, restore_order_inventory
+    from payments.models import PaymentRecord, get_pay_method_display
+
+    try:
+        order = OrderMain.objects.filter(id=order_id).select_related('device').first()
         if not order:
-            logger.warning(f"[AdminOrderRefund] 退款订单不存在: order_no={order_no}")
-            return error('订单不存在', code=4041)
+            logger.error(f"[AsyncAutoRefund] 未找到订单: id={order_id}")
+            return
 
-        if not request.user.is_super_admin and not request.user.stores.filter(id=order.store_id).exists():
-            logger.warning(f"[AdminOrderRefund] 无权操作该订单退款: order_no={order_no}, user={request.user.username}")
-            return error('无权操作该订单', code=4031)
+        payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_SUCCESS).first()
+        pay_method_str = getattr(payment, 'pay_method', 'wechat_jsapi') if payment else ''
+        pay_method_text = get_pay_method_display(pay_method_str) if payment else '微信支付'
 
-        refund_type = request.data.get('refund_type', 'auto')
-        reason = request.data.get('reason', '') or ('自动退款放库' if refund_type == 'auto' else '管理员强制退款')
-        offline = bool(request.data.get('offline', False))
-        funds_account = request.data.get('funds_account', None)
-
-        if order.status in [OrderMain.STATUS_REFUNDED, OrderMain.STATUS_REFUNDING]:
-            return error('该订单已处于退款或退款中状态，请勿重复操作', code=4004)
-
-        if refund_type == 'auto':
-            # 自动退款：必须为未制作完成订单（出杯完成物料已被物理消耗，不能放库存）
-            if order.status == OrderMain.STATUS_DONE:
-                return error('该订单已制作出杯完成，物料已被物理消耗，无法使用自动退款（放库存），请使用【强制退款】', code=4003)
-
-            from orders.services import restore_order_inventory
-            res_restore = restore_order_inventory(
-                order=order,
-                operator=request.user.username,
-                reason=f"自动退款放库: {reason}"
-            )
-
-            if offline:
-                from payments.models import RefundRecord, PaymentRecord
-                from orders.models import OrderStatusLog
-                import uuid
-                from django.utils import timezone
-
-                payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_SUCCESS).first()
-                if not payment:
-                    return error('订单无成功支付记录，无法退款', code=4002)
-
-                out_refund_no = f"RF-OFFLINE-{uuid.uuid4().hex[:12]}"
-                RefundRecord.objects.create(
-                    order=order,
-                    payment=payment,
-                    refund_id=f"offline_{uuid.uuid4().hex[:12]}",
-                    out_refund_no=out_refund_no,
-                    refund_amount=payment.amount,
-                    reason=f"[线下自动退款] {reason}",
-                    status=RefundRecord.STATUS_SUCCESS,
-                    refunded_at=timezone.now()
+        # 情况 2：制作中 (STATUS_MAKING)，先向下位机下发 MQTT cancel 并阻塞等待应答
+        if status_mode == 'making':
+            logger.info(f"[AsyncAutoRefund] 开始向下位机发送 MQTT cancel 确认停机: order_no={order.order_no}")
+            if order.device:
+                from mqtt import issue_cancel_command_with_ack
+                is_ok, msg = issue_cancel_command_with_ack(
+                    device_sn=order.device.device_sn,
+                    order_no=order.order_no,
+                    reason=reason,
+                    timeout=5.0
                 )
-                old_status = order.status
-                order.status = OrderMain.STATUS_REFUNDED
-                order.save(update_fields=['status', 'updated_at'])
-                from orders.services import record_order_timeline
-                record_order_timeline(
-                    order=order,
-                    action=OrderStatusLog.ACTION_REFUND_SUCCESS,
-                    action_name='线下自动退款完成',
-                    from_status=old_status,
-                    to_status=order.status,
-                    operator_type=OrderStatusLog.OP_ADMIN,
-                    operator=request.user.username,
-                    remark=f"线下自动退款: {out_refund_no}, 原因: {reason}（已释放库存）",
-                    payload={
-                        'out_refund_no': out_refund_no,
-                        'refund_amount': payment.amount,
-                        'reason': reason,
-                        'mode': 'offline_auto',
-                        'operator_admin': request.user.username
-                    }
-                )
-                logger.info(f"[AdminOrderRefund] 管理员 {request.user.username} 标记订单 {order_no} 线下自动退款完成")
-                return ok(message='线下退款已成功记录（自动退款：物料库存已释放归还）')
+                if not is_ok:
+                    logger.warning(f"[AsyncAutoRefund] 上位机拒绝取消或响应超时: order_no={order.order_no}, msg={msg}")
+                    record_order_timeline(
+                        order=order,
+                        action=OrderStatusLog.ACTION_REFUND_FAILED,
+                        action_name='自动退款被拒',
+                        from_status=OrderMain.STATUS_MAKING,
+                        to_status=OrderMain.STATUS_MAKING,
+                        operator_type=OrderStatusLog.OP_DEVICE,
+                        operator=order.device.device_sn,
+                        remark=f'上位机拒绝取消或响应超时 ({msg})，自动退款中止，设备继续制作。若需强退请使用【强制退款】',
+                        payload={
+                            'reason': reason,
+                            'refuse_msg': msg,
+                            'pay_method': pay_method_str,
+                            'pay_method_display': pay_method_text
+                        }
+                    )
+                    return
 
-            logger.info(f"[AdminOrderRefund] 管理员 {request.user.username} 对订单 {order_no} 发起【自动退款(放库存)】, 原因: {reason}")
-            try:
-                refund_order(order, reason=f"[自动退款] {reason}", funds_account=funds_account)
-                restored_mats = res_restore.get('restored_materials', [])
-                mats_str = "，".join([f"{m['name']} x{m['quantity']}{m.get('unit', '')}" for m in restored_mats]) if restored_mats else "无"
-                logger.info(f"[AdminOrderRefund] 订单 {order_no} 自动退款处理成功，归还物料: {mats_str}")
-                return ok(message=f'自动退款成功！资金已原路退回，并释放归还物料：{mats_str}')
-            except Exception as e:
-                logger.exception(f"[AdminOrderRefund] 自动退款处理异常: order_no={order_no}, error={e}")
-                return error(f'退款处理异常: {str(e)}', code=4001)
-
-        elif refund_type == 'force':
-            # 强制退款：不归还物料库存（适用于客诉、制作失败、杯体损耗等场景）
-            from orders.models import ProductionTask
+            # 上位机同意取消：关停生产任务
             ProductionTask.objects.filter(
                 order=order,
                 status__in=[ProductionTask.TASK_PENDING, ProductionTask.TASK_SENT, ProductionTask.TASK_MAKING]
             ).update(
                 status=ProductionTask.TASK_FAILED,
-                failure_reason=f"强制退款: {reason}"
+                failure_reason=f"制作中自动退款取消: {reason}"
             )
 
-            if offline:
-                from payments.models import RefundRecord, PaymentRecord
-                from orders.models import OrderStatusLog
-                import uuid
-                from django.utils import timezone
+        # 执行微信原路退款 (待制作或制作中上位机已同意停机)
+        refund_order(order, reason=f"[自动退款] {reason}", funds_account=funds_account, skip_device_cancel=True)
 
-                payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_SUCCESS).first()
-                if not payment:
-                    return error('订单无成功支付记录，无法退款', code=4002)
+        # 释放物料库存
+        res_restore = restore_order_inventory(
+            order=order,
+            operator=admin_username,
+            reason=f"自动退款放库: {reason}"
+        )
+        restored_mats = res_restore.get('restored_materials', []) if res_restore else []
+        mats_str = "，".join([f"{m['name']} x{m['quantity']}{m.get('unit', '')}" for m in restored_mats]) if restored_mats else "无"
+        logger.info(f"[AsyncAutoRefund] 订单 {order.order_no} 自动退款异步处理成功，已退款并归还物料: {mats_str}")
 
-                out_refund_no = f"RF-OFFLINE-{uuid.uuid4().hex[:12]}"
-                RefundRecord.objects.create(
-                    order=order,
-                    payment=payment,
-                    refund_id=f"offline_{uuid.uuid4().hex[:12]}",
-                    out_refund_no=out_refund_no,
-                    refund_amount=payment.amount,
-                    reason=f"[线下强制退款] {reason}",
-                    status=RefundRecord.STATUS_SUCCESS,
-                    refunded_at=timezone.now()
-                )
-                old_status = order.status
-                order.status = OrderMain.STATUS_REFUNDED
-                order.save(update_fields=['status', 'updated_at'])
-                from orders.services import record_order_timeline
+    except Exception as e:
+        logger.exception(f"[AsyncAutoRefund] 自动退款异步处理异常: order_id={order_id}, error={e}")
+        try:
+            order = OrderMain.objects.filter(id=order_id).first()
+            if order:
                 record_order_timeline(
                     order=order,
-                    action=OrderStatusLog.ACTION_REFUND_SUCCESS,
-                    action_name='线下强制退款完成',
-                    from_status=old_status,
+                    action=OrderStatusLog.ACTION_REFUND_FAILED,
+                    action_name='自动退款异常',
+                    from_status=order.status,
                     to_status=order.status,
-                    operator_type=OrderStatusLog.OP_ADMIN,
-                    operator=request.user.username,
-                    remark=f"线下强制退款: {out_refund_no}, 原因: {reason}（未释放库存）",
-                    payload={
-                        'out_refund_no': out_refund_no,
-                        'refund_amount': payment.amount,
-                        'reason': reason,
-                        'mode': 'offline_force',
-                        'operator_admin': request.user.username
-                    }
+                    operator_type=OrderStatusLog.OP_SYSTEM,
+                    operator='system',
+                    remark=f'自动退款后台异步处理异常: {str(e)}',
+                    payload={'error': str(e)}
                 )
-                logger.info(f"[AdminOrderRefund] 管理员 {request.user.username} 标记订单 {order_no} 线下强制退款完成")
-                return ok(message='线下退款已成功记录（强制退款：未释放物料库存）')
+        except Exception:
+            pass
 
-            logger.info(f"[AdminOrderRefund] 管理员 {request.user.username} 对订单 {order_no} 发起【强制退款(不退库存)】, 原因: {reason}")
-            try:
-                refund_order(order, reason=f"[强制退款] {reason}", funds_account=funds_account)
-                logger.info(f"[AdminOrderRefund] 订单 {order_no} 强制退款处理成功")
-                return ok(message='强制退款成功！资金已原路退回（未归还物料库存）')
-            except Exception as e:
-                logger.exception(f"[AdminOrderRefund] 强制退款处理异常: order_no={order_no}, error={e}")
-                return error(f'退款处理异常: {str(e)}', code=4001)
 
+class OrderAutoRefundView(APIView):
+    """
+    独立接口 1：自动退款接口（异步执行，退款成功后放库存，轨迹实时写入时间线）
+    POST /api/admin/orders/<str:order_no>/refund/auto/
+
+    规则：
+    1. STATUS_PAID ('pending_dispense'，已支付待制作)：
+       - 不调用上位机 MQTT，立即关停生产任务；
+       - 后台异步执行微信线上退款与释放库存，订单关闭；
+       - 接口即刻返回，避免任何 HTTP 阻塞。
+    2. STATUS_MAKING ('making'，制作中)：
+       - 立即在履约时间线记录一条【申请自动退款】日志（记录当前制作中状态与微信支付方式）；
+       - 后台异步调用上位机 MQTT cancel，等待上位机通过 MQTT 返回值；
+       - 若返回值表示可以取消 (1 / ok / true)：终止生产任务，执行微信线上退款并释放归还物料库存；
+       - 若返回值表示不可 (0 / fail / 拒绝) 或 5 秒超时：拒绝退款，不放库存，在时间线沉淀被拒说明；
+       - 接口即刻返回，避免任何 HTTP 阻塞。
+    3. 其他状态：
+       - 直接拒绝退款。
+    """
+    permission_classes = [IsAdmin]
+
+    def post(self, request, order_no):
+        order, err_resp = _get_admin_order_for_refund(request, order_no)
+        if err_resp:
+            return err_resp
+
+        reason = request.data.get('reason', '') or '自动退款放库'
+        funds_account = request.data.get('funds_account', None)
+        from orders.models import ProductionTask
+
+        # =========================================================================
+        # 情况 1：STATUS_PAID (待制作)
+        # 上位机尚未制作，无需与硬件通讯。立即关停任务，启动异步退款与库存释放
+        # =========================================================================
+        if order.status == OrderMain.STATUS_PAID:
+            logger.info(f"[AdminAutoRefund] 订单 {order_no} 处于待制作状态，关停任务并触发异步退款")
+            # 1. 关停生产任务，防止后续下发制作
+            ProductionTask.objects.filter(
+                order=order,
+                status__in=[ProductionTask.TASK_PENDING, ProductionTask.TASK_SENT]
+            ).update(
+                status=ProductionTask.TASK_FAILED,
+                failure_reason=f"待制作自动退款取消: {reason}"
+            )
+
+            # 2. 异步执行微信退款与库存释放
+            run_sync = bool(request.data.get('sync', False))
+            if run_sync:
+                _async_execute_auto_refund(order.id, request.user.username, reason, funds_account, 'paid')
+            else:
+                threading.Thread(
+                    target=_async_execute_auto_refund,
+                    args=(order.id, request.user.username, reason, funds_account, 'paid'),
+                    daemon=True
+                ).start()
+
+            return ok(message='已提交待制作自动退款申请，系统正在后台执行微信原路退款与库存释放，流转结果请查看履约时间线。')
+
+        # =========================================================================
+        # 情况 2：STATUS_MAKING (制作中)
+        # 设备已在制作，写入申请时间线，后台异步向设备发送 cancel 并等待 5s
+        # =========================================================================
+        elif order.status == OrderMain.STATUS_MAKING:
+            logger.info(f"[AdminAutoRefund] 订单 {order_no} 处于制作中，写入申请时间线并触发异步确认停机...")
+            from payments.models import PaymentRecord, get_pay_method_display
+            payment = PaymentRecord.objects.filter(order=order, status=PaymentRecord.STATUS_SUCCESS).first()
+            pay_method_str = getattr(payment, 'pay_method', 'wechat_jsapi') if payment else ''
+            pay_method_text = get_pay_method_display(pay_method_str) if payment else '微信支付'
+
+            # 记录一条时间线：管理员提交申请，系统正在向设备确认停机
+            from orders.services import record_order_timeline
+            record_order_timeline(
+                order=order,
+                action=OrderStatusLog.ACTION_REFUND_APPLIED,
+                action_name='申请自动退款',
+                from_status=OrderMain.STATUS_MAKING,
+                to_status=OrderMain.STATUS_MAKING,
+                operator_type=OrderStatusLog.OP_ADMIN,
+                operator=request.user.username,
+                remark=f'管理员 {request.user.username} 提交自动退款申请，系统正在后台向设备确认停机...',
+                payload={
+                    'reason': reason,
+                    'pay_method': pay_method_str,
+                    'pay_method_display': pay_method_text
+                }
+            )
+
+            # 启动异步线程向设备确认停机并退款
+            run_sync = bool(request.data.get('sync', False))
+            if run_sync:
+                _async_execute_auto_refund(order.id, request.user.username, reason, funds_account, 'making')
+            else:
+                threading.Thread(
+                    target=_async_execute_auto_refund,
+                    args=(order.id, request.user.username, reason, funds_account, 'making'),
+                    daemon=True
+                ).start()
+
+            return ok(message='已提交制作中自动停机退款申请，系统正在与设备确认停机，处理结果已实时写入履约流转时间线。')
+
+        # =========================================================================
+        # 情况 3：其他状态，一律不允许自动退款
+        # =========================================================================
         else:
-            return error(f'未知的退款类型: {refund_type}，支持 auto 或 force', code=4000)
+            logger.warning(f"[AdminAutoRefund] 订单 {order_no} 处于[{order.get_status_display()}]阶段，拒绝自动退款")
+            return error(
+                f'当前订单状态为[{order.get_status_display()}]，不支持自动退款（自动退款仅支持待制作或制作中订单）。若需退款请使用【强制退款】。',
+                code=4003
+            )
+
+
+class OrderForceRefundView(APIView):
+    """
+    独立接口 2：强制退款接口（不放库存）
+    POST /api/admin/orders/<str:order_no>/refund/force/
+
+    规则：
+    1. 管理员最高权限，理论上必须成功；
+    2. 无视设备制作状态与网络连接，完全跳过上位机 MQTT 等待 (skip_device_cancel=True)；
+    3. 不释放物料库存（物料作为损耗）；
+    4. 终止关联的未完成生产任务，微信线上原路退回资金。
+    """
+    permission_classes = [IsAdmin]
+
+    def post(self, request, order_no):
+        order, err_resp = _get_admin_order_for_refund(request, order_no)
+        if err_resp:
+            return err_resp
+
+        reason = request.data.get('reason', '') or '管理员强制退款'
+        funds_account = request.data.get('funds_account', None)
+
+        # 1. 终止未完成的生产任务
+        from orders.models import ProductionTask
+        ProductionTask.objects.filter(
+            order=order,
+            status__in=[ProductionTask.TASK_PENDING, ProductionTask.TASK_SENT, ProductionTask.TASK_MAKING]
+        ).update(
+            status=ProductionTask.TASK_FAILED,
+            failure_reason=f"强制退款: {reason}"
+        )
+
+        # 2. 线上强制退款：不调上位机、不放库存、直接调用微信原路退款
+        logger.info(f"[AdminForceRefund] 管理员 {request.user.username} 对订单 {order_no} 发起【强制退款(不退库存)】, 原因: {reason}")
+        try:
+            refund_order(order, reason=f"[强制退款] {reason}", funds_account=funds_account, skip_device_cancel=True)
+            logger.info(f"[AdminForceRefund] 订单 {order_no} 强制退款成功 (已跳过上位机等待，未释放库存)")
+            return ok(message='强制退款成功！资金已原路退回（未归还物料库存）')
+        except Exception as e:
+            logger.exception(f"[AdminForceRefund] 强制退款异常: order_no={order_no}, error={e}")
+            return error(f'强制退款异常: {str(e)}', code=4001)
+
+
+class OrderRefundActionView(APIView):
+    """
+    通用退款分发接口（兼容旧路由调用），内部根据 refund_type 转发至对应独立接口
+    POST /api/admin/orders/<str:order_no>/refund/
+    """
+    permission_classes = [IsAdmin]
+
+    def post(self, request, order_no):
+        refund_type = request.data.get('refund_type', 'auto')
+        if refund_type == 'force':
+            return OrderForceRefundView().post(request, order_no)
+        elif refund_type == 'auto':
+            return OrderAutoRefundView().post(request, order_no)
+        else:
+            return error(f'未知的退款类型: {refund_type}，请使用 auto 或 force', code=4000)
 

@@ -368,13 +368,14 @@ class WechatPayV3:
         logger.info('微信回调签名验证通过（待完善平台证书验证）')
         return True
 
-    def create_native_order(self, out_trade_no: str, amount: int, description: str) -> dict:
+    def create_native_order(self, out_trade_no: str, amount: int, description: str, time_expire: str = None) -> dict:
         """
         创建 Native 扫码支付订单 (用户扫商户二维码)
 
         :param out_trade_no: 商户订单号（全局唯一）
         :param amount: 支付金额（分）
         :param description: 商品描述
+        :param time_expire: 订单失效时间，RFC3339 格式 (例如 2026-09-11T13:55:00+08:00)
         :return: 包含 code_url 的字典，例如 {'code_url': 'weixin://wxpay/bizpayurl?pr=...'}
         """
         path = '/v3/pay/transactions/native'
@@ -386,6 +387,8 @@ class WechatPayV3:
             'notify_url': self.notify_url,
             'amount': {'total': amount, 'currency': 'CNY'},
         }
+        if time_expire:
+            data['time_expire'] = time_expire
         return self._request('POST', path, data)
 
     def query_order(self, out_trade_no: str) -> dict:
@@ -409,7 +412,8 @@ class WechatPayV3:
         return self._request('POST', path, data)
 
     def create_codepay_order(self, out_trade_no: str, amount: int, auth_code: str,
-                             description: str, spbill_create_ip: str = '127.0.0.1') -> dict:
+                             description: str, spbill_create_ip: str = '127.0.0.1',
+                             time_expire: str = None) -> dict:
         """
         发起付款码支付 / 被扫支付 (商户扫用户微信付款码)
 
@@ -418,6 +422,7 @@ class WechatPayV3:
         :param auth_code: 用户出示的 18 位付款码 (敏感凭证，严禁日志明文输出)
         :param description: 商品描述
         :param spbill_create_ip: 终端IP
+        :param time_expire: 订单失效时间，格式 yyyyMMddHHmmss (例如 20260911135500)
         :return: 解析后的支付结果字典
         """
         import xml.etree.ElementTree as ET
@@ -437,6 +442,8 @@ class WechatPayV3:
             'spbill_create_ip': spbill_create_ip or '127.0.0.1',
             'auth_code': str(auth_code).strip(),
         }
+        if time_expire:
+            params['time_expire'] = time_expire
 
         # MD5 签名
         sorted_keys = sorted(params.keys())

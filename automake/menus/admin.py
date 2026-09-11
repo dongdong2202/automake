@@ -46,7 +46,7 @@ class MenuItemAdmin(ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return qs
             if getattr(request.user, 'role', None) == 'admin':
                 if request.user.store:
@@ -60,7 +60,7 @@ class MenuItemAdmin(ModelAdmin):
 
     def has_view_permission(self, request, obj=None):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 if obj is not None and obj.store != request.user.store:
@@ -70,7 +70,7 @@ class MenuItemAdmin(ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 if obj is not None and obj.store != request.user.store:
@@ -80,7 +80,7 @@ class MenuItemAdmin(ModelAdmin):
 
     def has_module_permission(self, request):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 return True
@@ -108,7 +108,7 @@ class MenuSkuAdmin(ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return qs
             if getattr(request.user, 'role', None) == 'admin':
                 if request.user.store:
@@ -126,7 +126,7 @@ class MenuSkuAdmin(ModelAdmin):
 
     def has_view_permission(self, request, obj=None):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 if obj is not None and obj.item.store != request.user.store:
@@ -136,7 +136,7 @@ class MenuSkuAdmin(ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 if obj is not None and obj.item.store != request.user.store:
@@ -146,7 +146,7 @@ class MenuSkuAdmin(ModelAdmin):
 
     def has_module_permission(self, request):
         if request.user.is_authenticated:
-            if request.user.username == 'cxd' or request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
+            if request.user.is_superuser or getattr(request.user, 'role', None) == 'super_admin':
                 return True
             if getattr(request.user, 'role', None) == 'admin':
                 return True

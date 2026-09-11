@@ -12,13 +12,16 @@ from .serializers import DeviceMonitorSnapshotSerializer
 logger = logging.getLogger('monitor')
 
 
-def get_device_monitor_data_from_redis_or_db(device_sn: str, device_obj: Device = None) -> dict:
+def get_device_monitor_data_from_redis_or_db(device_sn: str, device_obj: Device = None, cached_raw=None) -> dict:
     """
     辅助函数：优先从 Redis 读取设备的实时监控快照，无缓存时回退到 MySQL 数据库
+    支持传入 cached_raw 避免批量请求时产生 Redis N+1。
     """
-    redis_conn = get_redis_connection("default")
-    snapshot_key = f"automake:monitor:snapshot:{device_sn}"
-    cached_data = redis_conn.get(snapshot_key)
+    cached_data = cached_raw
+    if cached_data is None:
+        redis_conn = get_redis_connection("default")
+        snapshot_key = f"automake:monitor:snapshot:{device_sn}"
+        cached_data = redis_conn.get(snapshot_key)
 
     if cached_data:
         try:
@@ -81,15 +84,24 @@ class DeviceMonitorListView(APIView):
     """
     GET /api/monitor/devices/
     返回所有设备的最新监控快照（包含状态、物料、异常信息）。
-    优先直接从 Redis 高速读取。
+    采用 Redis MGET 批量高速读取，消除循环单次请求开销。
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
-        devices = Device.objects.all().select_related('store').order_by('device_sn')
+        devices = list(Device.objects.all().select_related('store').order_by('device_sn'))
+        if not devices:
+            return ok([])
+
+        redis_conn = get_redis_connection("default")
+        keys = [f"automake:monitor:snapshot:{dev.device_sn}" for dev in devices]
+        cached_list = redis_conn.mget(*keys) if keys else []
+        cached_map = dict(zip([dev.device_sn for dev in devices], cached_list))
+
         results = []
         for dev in devices:
-            info = get_device_monitor_data_from_redis_or_db(dev.device_sn, dev)
+            raw = cached_map.get(dev.device_sn)
+            info = get_device_monitor_data_from_redis_or_db(dev.device_sn, dev, cached_raw=raw)
             results.append(info)
         return ok(results)
 
